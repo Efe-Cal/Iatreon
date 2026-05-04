@@ -1,7 +1,8 @@
 import json
+from dataclasses import asdict
 
 from .books import NCBIBooksClient
-from .models import Article
+from .models import Article, Book
 from .openalex import OpenAlexClient
 from .pmc import PMCClient
 from .pubmed import PubMedClient
@@ -29,13 +30,12 @@ class MedicalKnowledgePipeline:
 
         articles = self.pmc.enrich_articles_with_fulltext(articles)
         articles = self.openalex.enrich_articles(articles)
-        articles = self.ranker.rank(articles)
 
         books = []
         if include_books:
             books = self.ncbi_books.search_books(query, max_results=3)
-            statpearls = self.ncbi_books.get_statpearls_article(query)
-            books = statpearls + books
+
+        articles = self.ranker.rank(articles)
 
         full_text_count = sum(1 for a in articles if a.full_text_available)
         pdf_count = sum(1 for a in articles if a.pdf_url and not a.full_text_available)
@@ -58,8 +58,8 @@ class MedicalKnowledgePipeline:
 
     def get_best_context(self, query: str, max_articles: int = 5) -> str:
         results = self.search(query, max_results=max_articles * 2)
-        articles = results["articles"][:max_articles]
-        books = results["books"][:2]
+        articles: list[Article] = results["articles"][:max_articles]
+        books: list[Book] = results["books"][:2]
 
         context_parts = []
 
@@ -72,9 +72,12 @@ class MedicalKnowledgePipeline:
             section += f"\nCitations: {article.citation_count}"
             section += f"\nQuality Score: {article.quality_score}"
             section += f"\nSource: {article.source}"
+            section += f"\nFull Text Available: {article.full_text_available}"
             if article.doi:
                 section += f"\nDOI: {article.doi}"
-
+            if article.pdf_url:
+                section += f"\nPDF Link: {article.pdf_url}"
+    
             if article.full_text:
                 content = article.full_text[:3000] + "..." if len(article.full_text) > 3000 else article.full_text
                 section += f"\n\nFull Text:\n{content}"
@@ -84,19 +87,27 @@ class MedicalKnowledgePipeline:
             context_parts.append(section)
 
         for book in books:
-            section = f"[Textbook] {book.get('title', 'Medical Reference')}"
-            section += f"\nSource: {book.get('source', 'NCBI Bookshelf')}"
-            text = book.get("text", "")
+            section = f"[Textbook] {book.title or 'Medical Reference'}"
+            section += f"\nSource: {book.source or 'NCBI Bookshelf'}"
+            section += f"\nText Source: {book.text_source}"
+            section += f"\nPDF URL Found: {book.pdf_url_found}"
+            section += f"\nPDF Text Extracted: {book.pdf_text_extracted}"
+            text = book.text
             if text:
                 section += f"\n\n{text[:2000]}..."
             context_parts.append(section)
-
+            print(book)
         return "\n\n" + ("─" * 60 + "\n\n").join(context_parts)
 
     def to_json(self, results: dict) -> str:
         serializable = {
             "query": results["query"],
-            "articles": [vars(article) for article in results["articles"]],
-            "books": results["books"],
+            "articles": [asdict(article) for article in results["articles"]],
+            "books": [asdict(book) for book in results["books"]],
         }
         return json.dumps(serializable, indent=2, ensure_ascii=False)
+    
+if __name__ == "__main__":
+    pipeline = MedicalKnowledgePipeline()
+    context = pipeline.get_best_context("inguinal hernia", max_articles=5)
+    print(context)

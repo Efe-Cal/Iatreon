@@ -24,3 +24,21 @@ class Article:
     quality_score: float = 0.0
     full_text_available: bool = False
     source: str = ""
+
+
+@dataclass
+class Book:
+    accession_id: str = ""
+    title: str = ""
+    source: str = ""
+    text_source: str = "unknown"
+
+    text: str = ""
+    page_url: str = ""
+    url: str = ""
+    pdf_url: str = ""
+
+    pdf_url_found: bool = False
+    pdf_text: str = ""
+    pdf_text_extracted: bool = False
+    full_text_available: bool = False

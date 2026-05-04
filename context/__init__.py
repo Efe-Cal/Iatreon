@@ -1,5 +1,5 @@
 from .books import NCBIBooksClient
-from .models import Article
+from .models import Article, Book
 from .openalex import OpenAlexClient
 from .pipeline import MedicalKnowledgePipeline
 from .pmc import PMCClient
@@ -8,6 +8,7 @@ from .ranking import QualityRanker
 
 __all__ = [
     "Article",
+    "Book",
     "PubMedClient",
     "PMCClient",
     "OpenAlexClient",

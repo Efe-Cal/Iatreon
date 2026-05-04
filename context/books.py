@@ -8,10 +8,11 @@ from typing import Optional
 import requests
 
 from .config import NCBI_API_KEY, NCBI_BASE, RATE_LIMIT_DELAY
+from .models import Book
 
 
 class NCBIBooksClient:
-    def search_books(self, query: str, max_results: int = 5) -> list[dict]:
+    def search_books(self, query: str, max_results: int = 5) -> list[Book]:
         print(f"\n[NCBI Books] Searching: '{query}'")
 
         params = {
@@ -37,7 +38,7 @@ class NCBIBooksClient:
         candidate_ids = ids[:max_results]
         return self.fetch_book_sections(candidate_ids)[:max_results]
 
-    def fetch_book_sections(self, book_ids: list[str]) -> list[dict]:
+    def fetch_book_sections(self, book_ids: list[str]) -> list[Book]:
         if not book_ids:
             return []
 
@@ -66,7 +67,7 @@ class NCBIBooksClient:
 
             section = self._fetch_book_section_from_summary(record)
             if section:
-                dedupe_key = section.get("pdf_url") or section.get("url")
+                dedupe_key = section.pdf_url or section.url
                 if dedupe_key and dedupe_key in seen_urls:
                     continue
                 if dedupe_key:
@@ -75,7 +76,7 @@ class NCBIBooksClient:
 
         return sections
 
-    def _fetch_book_section_from_summary(self, record: dict) -> Optional[dict]:
+    def _fetch_book_section_from_summary(self, record: dict) -> Optional[Book]:
         page_accession = (
             record.get("chapteraccessionid")
             or record.get("accessionid")
@@ -109,18 +110,22 @@ class NCBIBooksClient:
         source = f"NCBI Bookshelf - {source_title}" if source_title else "NCBI Bookshelf"
         pdf_url = self._discover_pdf_url(r.text, page_accession)
         pdf_text = self._fetch_pdf_text(pdf_url) if pdf_url else ""
+        text_source = "html"
 
-        return {
-            "title": record.get("title") or "Section",
-            "text": text,
-            "pdf_text": pdf_text,
-            "source": source,
-            "type": "textbook",
-            "url": page_url,
-            "page_url": page_url,
-            "pdf_url": pdf_url,
-            "accession_id": page_accession,
-        }
+        return Book(
+            accession_id=page_accession,
+            title=record.get("title") or "Section",
+            source=source,
+            text_source=text_source,
+            text=text,
+            page_url=page_url,
+            url=page_url,
+            pdf_url=pdf_url,
+            pdf_url_found=bool(pdf_url),
+            pdf_text=pdf_text,
+            pdf_text_extracted=bool(pdf_text),
+            full_text_available=bool(text or pdf_text),
+        )
 
     def _extract_section_id(self, rid: str) -> str:
         if "/" not in rid:
@@ -176,7 +181,7 @@ class NCBIBooksClient:
             candidate = self._build_pdf_url(page_accession)
             if candidate in html_text:
                 return candidate
-
+        print(f"[NCBI Books] No PDF link found in HTML for accession {page_accession}")
         return ""
 
     def _normalize_pdf_url(self, pdf_url: str) -> str:
@@ -240,7 +245,7 @@ class NCBIBooksClient:
 
         return ""
 
-    def _parse_book_xml(self, xml_text: str) -> list[dict]:
+    def _parse_book_xml(self, xml_text: str) -> list[Book]:
         sections = []
         try:
             root = ET.fromstring(xml_text)
@@ -258,12 +263,15 @@ class NCBIBooksClient:
                     paragraphs.append(text)
 
             if paragraphs:
-                sections.append({
-                    "title": title,
-                    "text": "\n".join(paragraphs),
-                    "source": "NCBI Bookshelf",
-                    "type": "textbook",
-                })
+                sections.append(
+                    Book(
+                        title=title,
+                        text="\n".join(paragraphs),
+                        source="NCBI Bookshelf",
+                        text_source="xml",
+                        full_text_available=True,
+                    )
+                )
 
         return sections
 
@@ -387,11 +395,14 @@ if __name__ == "__main__":
     client = NCBIBooksClient()
     results = client.search_books("hernia")
     for res in results:
-        print(f"Title: {res['title']}")
-        print(f"Source: {res['source']}")
-        print(f"URL: {res['url']}")
-        if res.get("pdf_url"):
-            print(f"PDF: {res['pdf_url']}")
-        print(f"Text: {res['text'][:200]}...")
-        print(f"Text length: {len(res['text'])} characters")
+        print(f"Title: {res.title}")
+        print(f"Source: {res.source}")
+        print(f"Text source: {res.text_source}")
+        print(f"URL: {res.url}")
+        print(f"PDF URL found: {res.pdf_url_found}")
+        print(f"PDF text extracted: {res.pdf_text_extracted}")
+        if res.pdf_url:
+            print(f"PDF: {res.pdf_url}")
+        print(f"Text: {res.text[:200]}...")
+        print(f"Text length: {len(res.text)} characters")
         print("-" * 60)
