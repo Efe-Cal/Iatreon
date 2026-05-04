@@ -1,0 +1,102 @@
+import json
+
+from .books import NCBIBooksClient
+from .models import Article
+from .openalex import OpenAlexClient
+from .pmc import PMCClient
+from .pubmed import PubMedClient
+from .ranking import QualityRanker
+
+
+class MedicalKnowledgePipeline:
+    def __init__(self):
+        self.pubmed = PubMedClient()
+        self.pmc = PMCClient()
+        self.openalex = OpenAlexClient()
+        self.ncbi_books = NCBIBooksClient()
+        self.ranker = QualityRanker()
+
+    def search(self, query: str, max_results: int = 10, include_books: bool = True) -> dict:
+        print(f"\n{'='*60}")
+        print(f"MEDICAL PIPELINE — Query: '{query}'")
+        print(f"{'='*60}")
+
+        pubmed_ids = self.pubmed.search(query, max_results=max_results)
+        articles = self.pubmed.fetch_abstracts(pubmed_ids)
+
+        for article in articles:
+            article.source = "PubMed Abstract"
+
+        articles = self.pmc.enrich_articles_with_fulltext(articles)
+        articles = self.openalex.enrich_articles(articles)
+        articles = self.ranker.rank(articles)
+
+        books = []
+        if include_books:
+            books = self.ncbi_books.search_books(query, max_results=3)
+            statpearls = self.ncbi_books.get_statpearls_article(query)
+            books = statpearls + books
+
+        full_text_count = sum(1 for a in articles if a.full_text_available)
+        pdf_count = sum(1 for a in articles if a.pdf_url and not a.full_text_available)
+        abstract_count = len(articles) - full_text_count - pdf_count
+
+        print(f"\n{'='*60}")
+        print("RESULTS SUMMARY")
+        print(f"  Total articles : {len(articles)}")
+        print(f"  Full text (PMC): {full_text_count}")
+        print(f"  PDF links (OA) : {pdf_count}")
+        print(f"  Abstract only  : {abstract_count}")
+        print(f"  Book sections  : {len(books)}")
+        print(f"{'='*60}\n")
+
+        return {
+            "query": query,
+            "articles": articles,
+            "books": books,
+        }
+
+    def get_best_context(self, query: str, max_articles: int = 5) -> str:
+        results = self.search(query, max_results=max_articles * 2)
+        articles = results["articles"][:max_articles]
+        books = results["books"][:2]
+
+        context_parts = []
+
+        for i, article in enumerate(articles, 1):
+            section = f"[Article {i}] {article.title}"
+            if article.authors:
+                section += f"\nAuthors: {', '.join(article.authors[:3])}"
+            section += f"\nJournal: {article.journal} ({article.year})"
+            section += f"\nStudy Type: {article.study_type}"
+            section += f"\nCitations: {article.citation_count}"
+            section += f"\nQuality Score: {article.quality_score}"
+            section += f"\nSource: {article.source}"
+            if article.doi:
+                section += f"\nDOI: {article.doi}"
+
+            if article.full_text:
+                content = article.full_text[:3000] + "..." if len(article.full_text) > 3000 else article.full_text
+                section += f"\n\nFull Text:\n{content}"
+            elif article.abstract:
+                section += f"\n\nAbstract:\n{article.abstract}"
+
+            context_parts.append(section)
+
+        for book in books:
+            section = f"[Textbook] {book.get('title', 'Medical Reference')}"
+            section += f"\nSource: {book.get('source', 'NCBI Bookshelf')}"
+            text = book.get("text", "")
+            if text:
+                section += f"\n\n{text[:2000]}..."
+            context_parts.append(section)
+
+        return "\n\n" + ("─" * 60 + "\n\n").join(context_parts)
+
+    def to_json(self, results: dict) -> str:
+        serializable = {
+            "query": results["query"],
+            "articles": [vars(article) for article in results["articles"]],
+            "books": results["books"],
+        }
+        return json.dumps(serializable, indent=2, ensure_ascii=False)
