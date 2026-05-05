@@ -56,10 +56,10 @@ class MedicalKnowledgePipeline:
             "books": books,
         }
 
-    def get_best_context(self, query: str, max_articles: int = 5) -> str:
-        results = self.search(query, max_results=max_articles * 2)
+    def get_best_context(self, query: str, max_articles: int = 5, include_books: bool = False) -> str:
+        results = self.search(query, max_results=max_articles, include_books=include_books)
         articles: list[Article] = results["articles"][:max_articles]
-        books: list[Book] = results["books"][:2]
+        books: list[Book] = results["books"]
 
         context_parts = []
 
@@ -99,15 +99,13 @@ class MedicalKnowledgePipeline:
             print(book)
         return "\n\n" + ("─" * 60 + "\n\n").join(context_parts)
 
-    def to_json(self, results: dict) -> str:
-        serializable = {
-            "query": results["query"],
-            "articles": [asdict(article) for article in results["articles"]],
-            "books": [asdict(book) for book in results["books"]],
-        }
-        return json.dumps(serializable, indent=2, ensure_ascii=False)
+    def get_json_content(self, query: str, max_articles: int = 5, include_books: bool = False) -> str:
+        results = self.search(query, max_results=max_articles, include_books=include_books)
+        articles = [asdict(a) for a in results["articles"][:max_articles]]
+        books = [asdict(b) for b in results["books"]]
+        return json.dumps({"query": query, "articles": articles, "books": books}, indent=2)
     
 if __name__ == "__main__":
     pipeline = MedicalKnowledgePipeline()
-    context = pipeline.get_best_context("inguinal hernia", max_articles=5)
+    context = pipeline.get_json_content("inguinal hernia", max_articles=5)
     print(context)

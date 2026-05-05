@@ -24,7 +24,12 @@ class PubMedClient:
 
         r = requests.get(f"{NCBI_BASE}/esearch.fcgi", params=params)
         r.raise_for_status()
-        ids = r.json()["esearchresult"]["idlist"]
+        try:
+            ids = r.json()["esearchresult"]["idlist"]
+        except requests.exceptions.JSONDecodeError:
+            print(f"Error decoding JSON for query: {query}")
+            print(f"Response content: {r.text}")
+            return []
         print(f"[PubMed] Found {len(ids)} articles")
         return ids
 
