@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 from typing import Optional
@@ -5,6 +6,9 @@ from urllib.parse import quote
 
 import requests
 
+from context.pmc import PMCClient
+
+from .pdf_utils import PDFClient, _extract_pmc_id
 
 from .models import Article
 
@@ -13,6 +17,10 @@ OPENALEX_EMAIL = os.getenv("OPENALEX_EMAIL", "")
 RATE_LIMIT_DELAY = 2
 
 class OpenAlexClient:
+    def __init__(self):
+        self.pdf_client = PDFClient()
+        self.pmc_client = PMCClient()
+        
     def _headers(self):
         h = {}
         if OPENALEX_EMAIL:
@@ -89,6 +97,17 @@ class OpenAlexClient:
                 a.pdf_url = oa["oa_url"]
                 a.source = "OpenAlex OA PDF"
 
+            #TODO: Do the same for books (_extract_bookshelf_accession) when books work properly
+            if not a.pdf_url and not a.full_text_available:
+                if pmc_id := _extract_pmc_id(oa.get("oa_url", "")):
+                    a.full_text = self.pmc_client.fetch_full_text(pmc_id)
+                    a.full_text_available = bool(a.full_text)
+                    a.source = "PMC XML Fetch"
+
+            if a.pdf_url and not a.full_text_available:
+                a.full_text = asyncio.run(self.pdf_client.get_pdf_content(a.pdf_url))
+                a.full_text_available = bool(a.full_text)
+                
             for auth in item.get("authorships", [])[:5]:
                 name = auth.get("author", {}).get("display_name", "")
                 if name:

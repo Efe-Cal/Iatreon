@@ -1,6 +1,8 @@
+import asyncio
 import json
 from dataclasses import asdict
 
+from .pdf_utils import PDFClient
 from .books import NCBIBooksClient
 from .models import Article, Book
 from .openalex import OpenAlexClient
@@ -16,6 +18,7 @@ class MedicalKnowledgePipeline:
         self.openalex = OpenAlexClient()
         self.ncbi_books = NCBIBooksClient()
         self.ranker = QualityRanker()
+        self.pdf_client = PDFClient()
 
     def search(self, query: str, max_results: int = 10, include_books: bool = True) -> dict:
         print(f"\n{'='*60}")
@@ -30,6 +33,10 @@ class MedicalKnowledgePipeline:
 
         articles = self.pmc.enrich_articles_with_fulltext(articles)
         articles = self.openalex.enrich_articles(articles)
+        for article in articles:
+            if not article.full_text_available and article.pdf_url:
+                article.full_text = asyncio.run(self.pdf_client.get_pdf_content(article.pdf_url))
+                article.full_text_available = bool(article.full_text)
 
         books = []
         if include_books:
@@ -79,10 +86,10 @@ class MedicalKnowledgePipeline:
                 section += f"\nPDF Link: {article.pdf_url}"
     
             if article.full_text:
-                content = article.full_text[:3000] + "..." if len(article.full_text) > 3000 else article.full_text
+                content = article.full_text[:200] + "..." if len(article.full_text) > 200 else article.full_text
                 section += f"\n\nFull Text:\n{content}"
             elif article.abstract:
-                section += f"\n\nAbstract:\n{article.abstract}"
+                section += f"\n\nAbstract:\n{article.abstract[:200]}"
 
             context_parts.append(section)
 
@@ -99,13 +106,15 @@ class MedicalKnowledgePipeline:
             print(book)
         return "\n\n" + ("─" * 60 + "\n\n").join(context_parts)
 
-    def get_json_content(self, query: str, max_articles: int = 5, include_books: bool = False) -> str:
+    def get_json_content(self, query: str, max_articles: int = 5, include_books: bool = False) -> dict:
         results = self.search(query, max_results=max_articles, include_books=include_books)
         articles = [asdict(a) for a in results["articles"][:max_articles]]
         books = [asdict(b) for b in results["books"]]
-        return json.dumps({"query": query, "articles": articles, "books": books}, indent=2)
+        return {"query": query, "articles": articles, "books": books}
     
 if __name__ == "__main__":
     pipeline = MedicalKnowledgePipeline()
-    context = pipeline.get_json_content("inguinal hernia", max_articles=5)
-    print(context)
+    context = pipeline.get_json_content("inguinal hernia", max_articles=10)
+    for article in context["articles"]:
+        article["full_text"] = article["full_text"][:300] + "..." if article["full_text"] else None
+    print(json.dumps(context, indent=2))

@@ -1,6 +1,7 @@
 from .books import NCBIBooksClient
 from .models import Article, Book
 from .openalex import OpenAlexClient
+from .pdf_utils import PDFClient
 from .pipeline import MedicalKnowledgePipeline
 from .pmc import PMCClient
 from .pubmed import PubMedClient
@@ -12,6 +13,7 @@ __all__ = [
     "PubMedClient",
     "PMCClient",
     "OpenAlexClient",
+    "PDFClient",
     "NCBIBooksClient",
     "QualityRanker",
     "MedicalKnowledgePipeline",
