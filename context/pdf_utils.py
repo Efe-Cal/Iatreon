@@ -7,14 +7,11 @@ import tempfile
 from playwright.async_api import async_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 from playwright_stealth import Stealth
 
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 from pypdf import PdfReader
 
 DOI_PATTERN = re.compile(r"10\.\d{4,9}/[-._;()/:A-Z0-9]+", re.IGNORECASE)
-
-def _extract_pmc_id(url: str) -> str:
-    match = re.search(r"/(?:pmc/)?articles/(PMC)?(\d+)", url, re.IGNORECASE)
-    return f"PMC{match.group(2)}" if match else ""
+PDF_TEXT_MARKERS = re.compile(r"pdf|download|full\s*text", re.IGNORECASE)
 
 HEADERS = {
     "Accept": "application/pdf,text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -45,8 +42,14 @@ class PDFClient:
             or "download=1" in query
         )
     
+    @staticmethod
+    def _extract_pmc_id(url: str) -> str:
+        match = re.search(r"/(?:pmc/)?articles/(PMC)?(\d+)", url, re.IGNORECASE)
+        return f"PMC{match.group(2)}" if match else ""
+    
+    
     def _special_case_pdf_url(self, url: str) -> str:
-        pmc_id = _extract_pmc_id(url)
+        pmc_id = self._extract_pmc_id(url)
         if pmc_id:
             return f"https://pmc.ncbi.nlm.nih.gov/articles/{pmc_id}/pdf/"
 
@@ -55,8 +58,53 @@ class PDFClient:
             return f"https://www.ncbi.nlm.nih.gov/books/{book_accession}/pdf/Bookshelf_{book_accession}.pdf"
 
         return url
+    
+    async def search_page_for_pdf_links(self, page) -> list[str]:
+        pdf_links = set()
+        await page.wait_for_timeout(1500)
+        try:
+            controls = await page.query_selector_all("a, button")
+        except Exception:
+            print("[PDFClient] Error while searching for PDF links on the page.")
+            return []
+
+        for control in controls:
+            try:
+                href = await control.get_attribute("href") or ""
+                label = " ".join(
+                    part for part in [
+                        await control.inner_text() or "",
+                        await control.get_attribute("aria-label") or "",
+                        await control.get_attribute("title") or "",
+                    ] if part
+                )
+            except Exception:
+                continue
+            
+            if re.match(r"here|click|go", href, re.IGNORECASE):
+                print("here")
+                try:
+                    await control.click()
+                    await page.wait_for_timeout(2000)  # wait for potential navigation or content load
+                    new_url = page.url
+                    if self._is_probable_pdf_url(new_url):
+                        pdf_links.add(new_url)
+                except Exception:
+                    continue
 
 
+            if not PDF_TEXT_MARKERS.search(f"{href} {label}"):
+                continue
+            
+            if not href.startswith("http"):
+                href = urljoin(page.url, href.strip())
+                
+            print(f"[PDFClient] Found potential PDF link: {href} (label: {label})")
+            
+            if self._is_probable_pdf_url(href):
+                pdf_links.add(href)
+        
+        return list(pdf_links)
 
     def _extract_bookshelf_accession(self, url: str) -> str:
         match = re.search(r"/books/([A-Za-z0-9_]+)/?", url, re.IGNORECASE)
@@ -71,9 +119,8 @@ class PDFClient:
     async def download_pdf(self, page, url: str) -> str:
         print(f"[PDFClient] Downloading PDF from: {url}")
         await Stealth().apply_stealth_async(page)
-        
         try:
-            async with page.expect_download(timeout=15000) as download_info:
+            async with page.expect_download(timeout=10000) as download_info:
                 try:
                     await page.goto(url)
                 except PlaywrightError as e:
@@ -82,7 +129,7 @@ class PDFClient:
         except PlaywrightTimeoutError:
             print(f"[PDFClient] Timeout while waiting for download to start for URL: {url}")
             return None
-
+    
         download = await download_info.value
         suggested_filename = download.suggested_filename or f"downloaded_{os.urandom(16).hex()}.pdf"
         
@@ -121,6 +168,18 @@ class PDFClient:
             page = await context.new_page()
             
             pdf_path = await self.download_pdf(page, self._special_case_pdf_url(url))
+            
+            if not pdf_path:
+                print("[PDFClient] No PDF download initiated, searching page for PDF links...")
+                await page.goto(url)
+                pdf_links = await self.search_page_for_pdf_links(page)
+                print(f"[PDFClient] Found {len(pdf_links)} potential PDF links on the page.")
+                
+                pdf_links = sorted(pdf_links, key=lambda x: x.endswith(".pdf"), reverse=True)
+                for link in pdf_links:
+                    pdf_path = await self.download_pdf(page, self._special_case_pdf_url(link))
+                    if pdf_path:
+                        break
             
             content = self.extract_text_from_pdf(pdf_path) if pdf_path else None
             

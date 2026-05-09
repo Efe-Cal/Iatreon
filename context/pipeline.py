@@ -1,6 +1,8 @@
 import asyncio
 import json
 from dataclasses import asdict
+import re
+import unicodedata
 
 from .pdf_utils import PDFClient
 from .books import NCBIBooksClient
@@ -64,6 +66,7 @@ class MedicalKnowledgePipeline:
         }
 
     def get_best_context(self, query: str, max_articles: int = 5, include_books: bool = False) -> str:
+        # For human-readable context output, debugging
         results = self.search(query, max_results=max_articles, include_books=include_books)
         articles: list[Article] = results["articles"][:max_articles]
         books: list[Book] = results["books"]
@@ -106,15 +109,79 @@ class MedicalKnowledgePipeline:
             print(book)
         return "\n\n" + ("─" * 60 + "\n\n").join(context_parts)
 
-    def get_json_content(self, query: str, max_articles: int = 5, include_books: bool = False) -> dict:
+
+    def get_json_content(
+        self,
+        query: str,
+        max_articles: int = 5,
+        include_books: bool = False,
+    ) -> dict:
         results = self.search(query, max_results=max_articles, include_books=include_books)
         articles = [asdict(a) for a in results["articles"][:max_articles]]
         books = [asdict(b) for b in results["books"]]
         return {"query": query, "articles": articles, "books": books}
+
+def clean_text_for_llm(text):
+    if not isinstance(text, str):
+        if text is None:
+            return ""
+        text = str(text)
+
+    # Normalize Unicode
+    text = unicodedata.normalize('NFKC', text)
     
-if __name__ == "__main__":
+    # Remove control characters except newlines/tabs
+    text = ''.join(c for c in text if unicodedata.category(c)[0] != 'C' or c in '\n\r\t')
+    
+    # Remove zero-width characters
+    text = re.sub(r'[\u200b-\u200d\ufeff]', '', text)
+    
+    # Normalize horizontal whitespace (spaces, tabs) to a single space
+    text = re.sub(r'[ \t]+', ' ', text)
+    
+    # Normalize multiple newlines to a maximum of two (paragraph break)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    return text.strip()
+
+def normalize_articles(articles:dict) -> str:
+    for article in articles:
+        if len(article.get("full_text", "")) < 100:
+            article["full_text"] = "FULL TEXT NOT AVAILABLE"
+        for key in ["title", "abstract", "full_text"]:
+            article[key] = clean_text_for_llm(article.get(key, ""))
+    return articles
+        
+def run_pipeline(query: str):
+    """
+    Run the medical knowledge pipeline with a given query.
+    """
+
     pipeline = MedicalKnowledgePipeline()
-    context = pipeline.get_json_content("inguinal hernia", max_articles=10)
-    for article in context["articles"]:
-        article["full_text"] = article["full_text"][:300] + "..." if article["full_text"] else None
-    print(json.dumps(context, indent=2))
+    context = pipeline.get_json_content(
+        query,
+        max_articles=3,
+        include_books=False,
+    )["articles"]
+
+    context = [a for a in context if a["full_text_available"] or a["abstract"]]
+    context = normalize_articles(context)
+    fields = [
+        "title",
+        "abstract",
+        "full_text",
+        "year",
+        "mesh_terms",
+        "study_type",
+    ]
+    
+    filtered_context = []
+    for article in context:
+        filtered_article = {field: article.get(field) for field in fields if field in article}
+        filtered_context.append(filtered_article)
+
+    return filtered_context
+
+if __name__ == "__main__":
+    context = run_pipeline("inguinal hernia repair")
+    print(json.dumps(context, indent=2, ensure_ascii=False))

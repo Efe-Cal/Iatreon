@@ -33,7 +33,7 @@ class QualityRanker:
         if article.citation_count > 0:
             score += min(25, math.log10(article.citation_count + 1) * 10)
 
-        current_year = 2025
+        current_year = 2026
         if article.year > 0:
             age = current_year - article.year
             if age <= 2:
@@ -45,8 +45,6 @@ class QualityRanker:
 
         if article.full_text_available:
             score += 10
-        elif article.pdf_url:
-            score += 5
 
         return round(score, 2)
 

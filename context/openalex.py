@@ -8,7 +8,7 @@ import requests
 
 from context.pmc import PMCClient
 
-from .pdf_utils import PDFClient, _extract_pmc_id
+from .pdf_utils import PDFClient
 
 from .models import Article
 
@@ -98,8 +98,9 @@ class OpenAlexClient:
                 a.source = "OpenAlex OA PDF"
 
             #TODO: Do the same for books (_extract_bookshelf_accession) when books work properly
-            if not a.pdf_url and not a.full_text_available:
-                if pmc_id := _extract_pmc_id(oa.get("oa_url", "")):
+            if not a.full_text_available:
+                if pmc_id := PDFClient._extract_pmc_id(oa.get("oa_url", "")):
+                    print(f"[OpenAlex] Found PMC ID {pmc_id}, getting full text...")
                     a.full_text = self.pmc_client.fetch_full_text(pmc_id)
                     a.full_text_available = bool(a.full_text)
                     a.source = "PMC XML Fetch"
@@ -107,6 +108,10 @@ class OpenAlexClient:
             if a.pdf_url and not a.full_text_available:
                 a.full_text = asyncio.run(self.pdf_client.get_pdf_content(a.pdf_url))
                 a.full_text_available = bool(a.full_text)
+                if not a.full_text_available:
+                    a.source = "PDF Download Failed"
+                    if a.abstract:
+                        a.source += " (has abstract)"
                 
             for auth in item.get("authorships", [])[:5]:
                 name = auth.get("author", {}).get("display_name", "")
@@ -148,4 +153,4 @@ if __name__ == "__main__":
     client = OpenAlexClient()
     data = client.search_directly("inguinal hernia", max_results=5)
     for article in data:
-        print(f"\nTitle: {article.title}\nDOI: {article.doi}\nCitations: {article.citation_count}\nPDF: {article.pdf_url}")
+        print(f"\nTitle: {article.title}\nDOI: {article.doi}\nCitations: {article.citation_count}\nPDF: {article.pdf_url}\nFull Text Available: {article.full_text_available}\nSource: {article.source}\n\n---------------------\n\n")
