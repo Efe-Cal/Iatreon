@@ -1,3 +1,5 @@
+# Deprecated
+
 import time
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
@@ -393,7 +395,7 @@ class _BookshelfHTMLParser(HTMLParser):
         
 if __name__ == "__main__":
     client = NCBIBooksClient()
-    results = client.search_books("hernia", max_results=20)
+    results = client.search_books("hernia", max_results=5)
     for res in results:
         print(f"Title: {res.title}")
         print(f"Source: {res.source}")

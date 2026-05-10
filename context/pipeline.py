@@ -5,12 +5,12 @@ import re
 import unicodedata
 
 from .pdf_utils import PDFClient
-from .books import NCBIBooksClient
 from .models import Article, Book
 from .openalex import OpenAlexClient
 from .pmc import PMCClient
 from .pubmed import PubMedClient
 from .ranking import QualityRanker
+from .get_ncbi_books import BookshelfClient
 
 
 class MedicalKnowledgePipeline:
@@ -18,7 +18,7 @@ class MedicalKnowledgePipeline:
         self.pubmed = PubMedClient()
         self.pmc = PMCClient()
         self.openalex = OpenAlexClient()
-        self.ncbi_books = NCBIBooksClient()
+        self.bookshelf = BookshelfClient()
         self.ranker = QualityRanker()
         self.pdf_client = PDFClient()
 
@@ -42,7 +42,7 @@ class MedicalKnowledgePipeline:
 
         books = []
         if include_books:
-            books = self.ncbi_books.search_books(query, max_results=3)
+            books = self.bookshelf.get_book_contents(query, num_results=3)
 
         articles = self.ranker.rank(articles)
 
@@ -160,7 +160,7 @@ def run_pipeline(query: str):
     pipeline = MedicalKnowledgePipeline()
     context = pipeline.get_json_content(
         query,
-        max_articles=3,
+        max_articles=10,
         include_books=False,
     )["articles"]
 
@@ -173,6 +173,7 @@ def run_pipeline(query: str):
         "year",
         "mesh_terms",
         "study_type",
+        # "pdf_url",
     ]
     
     filtered_context = []
@@ -184,4 +185,5 @@ def run_pipeline(query: str):
 
 if __name__ == "__main__":
     context = run_pipeline("inguinal hernia repair")
+
     print(json.dumps(context, indent=2, ensure_ascii=False))

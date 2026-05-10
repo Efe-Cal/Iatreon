@@ -72,15 +72,18 @@ def fetch_web_content(url: str) -> str:
     Returns:
         The content of the web page.
     """
-    response = exa.get_contents(url).results[0].text
-    return response
+    
+    response = exa.get_contents(url, livecrawl="preferred", text=TextContentsOptions())
+    if response.statuses[0].status != "success":
+        return "Failed to fetch content."
+    return response.results[0].text
 
 if __name__ == "__main__":
-    results = web_search("inguinal hernia repair", num_results=3)
-    for r in results:
-        print(f"Title: {r.get('title')}")
-        print(f"URL: {r.get('url')}")
-        print(f"Highlights: {r.get('highlights')}")
-        print("-" * 80)
-    # content = fetch_web_content("https://www.uptodate.com/contents/open-surgical-repair-of-inguinal-and-femoral-hernia-in-adults")
-    # print(content)
+    # results = web_search("inguinal hernia repair", num_results=3)
+    # for r in results:
+    #     print(f"Title: {r.get('title')}")
+    #     print(f"URL: {r.get('url')}")
+    #     print(f"Highlights: {r.get('highlights')}")
+    #     print("-" * 80)
+    content = fetch_web_content("https://emedicine.medscape.com/article/189563-overview")
+    print(content)
