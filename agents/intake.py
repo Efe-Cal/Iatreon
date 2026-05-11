@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langchain.tools import tool
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.config import RunnableConfig
 
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -50,10 +52,14 @@ def end_of_intake():
     """Tool to signal the end of the intake process."""
     return "Intake process has been completed."
 
+checkpointer = InMemorySaver()
+
+config: RunnableConfig = {"configurable": {"thread_id": "1"}}
 
 agent = create_agent(model=model,
                      tools=[end_of_intake],
-                     system_prompt=system_prompt)
+                     system_prompt=system_prompt,
+                     checkpointer=checkpointer)
 
 messages = [
     {"role": "assistant", "content": "What brings you in today?"}
@@ -61,19 +67,16 @@ messages = [
 
 print("Assistant: What brings you in today? (Type 'quit' to exit)")
 
+agent.update_state(config=config, values={"messages": messages})
+
 while True:
     user_input = input("Patient: ")
     if user_input.lower() in ["quit", "exit"]:
         break
-    
-    messages.append({"role": "user", "content": user_input})
-    
-    # Run the agent with the updated list of messages
+
     try:
-        response = agent.invoke({"messages": messages})
-        
-        print(f"\n[DEBUG] Raw response from agent: {response}\n")  # Debugging line to check raw response
-        
+        response = agent.invoke({"messages": user_input}, config=config)
+                
         tool_called = False
         if "messages" in response:
             for msg in response["messages"]:
@@ -86,14 +89,9 @@ while True:
         if tool_called:
             print("\nAssistant: Thank you for your time. The intake is now complete.")
             break
+        
+        response["messages"][-1].pretty_print() 
 
-        # Extract output and append to messages for the next turn
-        output_text = response.get("output", response.get("messages", [])[-1].content) if isinstance(response, dict) else str(response)
-        
-        print(f"\nAssistant: {output_text}\n")
-        
-        messages.append({"role": "assistant", "content": output_text})
-        
     except Exception as e:
         print(f"\nError: {e}\n")
 
@@ -105,11 +103,16 @@ structured_model = model.with_structured_output(PatientInfo)
 
 try:
     # We pass the entire conversation history to generate the final structured output
-    final_patient_data = structured_model.invoke(messages)
+    conversation_state = agent.get_state(config=config)
+    final_patient_data = structured_model.invoke(conversation_state.values["messages"])
     print("=== FINAL PATIENT INFO (JSON) ===")
     print(final_patient_data.model_dump_json(indent=2))
     
-    # print("\n=== MEDICAL SUMMARY ===")
-    # print(final_patient_data.medical_summary)
 except Exception as e:
     print(f"\nFailed to generate final report: {e}")
+
+# # Output Specifications
+# Your final output for this task is a **Dense Medical Summary**.
+# - **Content:** Include EVERY piece of information provided by the patient.
+# - **Format:** Use clinical terminology and a professional medical structure
+# - **Style:** Synthesize the findings into concise, high-density medical information for a clinician to review.
