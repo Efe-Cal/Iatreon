@@ -50,6 +50,11 @@ How would you describe the pain?
 </question>
 ```
 
-# ENDING THE INTAKE
+# Ending the Intake
 YOU MUST END THE INTAKE by calling the `end_of_intake` tool once you have collected all relevant information, or if the patient indicates they have no more information to provide.
 REMEMBER: You MUST call `end_of_intake` to finalize the intake process.
+
+# ALWAYS REMEMBER
+- Ask questions in the specified format.
+- Monitor for Red Flags at ALL TIMES.
+- End the intake with the `end_of_intake` tool when appropriate.

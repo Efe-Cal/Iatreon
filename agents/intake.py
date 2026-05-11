@@ -10,15 +10,15 @@ from langgraph.config import RunnableConfig
 from pydantic import BaseModel, Field
 from typing import Optional
 
-load_dotenv()
+from .mock_patient import mock_patient_response
 
-DATABASE = {}
+load_dotenv()
 
 
 model = ChatOpenAI(model="gemini-3-flash-preview",
                    base_url="https://ai.hackclub.com/proxy/v1",
                    api_key=os.getenv("HCAI_API_KEY"),
-                   temperature=0.5)
+                   temperature=0.7)
 
 with open(os.path.join(__file__, "..", "prompts", "intake_agent_system_prompt.txt")) as f:
     system_prompt = f.read()
@@ -70,9 +70,10 @@ print("Assistant: What brings you in today? (Type 'quit' to exit)")
 agent.update_state(config=config, values={"messages": messages})
 
 while True:
-    user_input = input("Patient: ")
-    if user_input.lower() in ["quit", "exit"]:
-        break
+    user_input = mock_patient_response(agent.get_state(config=config).values["messages"].copy())
+    print(f"\nPatient: {user_input}\n")
+    # if user_input.lower() in ["quit", "exit"]:
+    #     break
 
     try:
         response = agent.invoke({"messages": user_input}, config=config)
@@ -99,6 +100,7 @@ print("\n--- INTAKE COMPLETE ---")
 print("Compiling dense medical summary and structured patient data...\n")
 
 # Use with_structured_output to enforce the PatientInfo format ONLY at the end
+model.temperature = 0.3  # Lower temperature for more deterministic output
 structured_model = model.with_structured_output(PatientInfo)
 
 try:
