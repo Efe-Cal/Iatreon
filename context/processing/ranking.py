@@ -1,6 +1,6 @@
 import math
 
-from .models import Article
+from ..models import Article
 
 
 class QualityRanker:

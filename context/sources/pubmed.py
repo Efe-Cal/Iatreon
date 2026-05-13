@@ -3,8 +3,8 @@ import xml.etree.ElementTree as ET
 
 import requests
 
-from .config import NCBI_API_KEY, NCBI_BASE, RATE_LIMIT_DELAY
-from .models import Article
+from ..config import NCBI_API_KEY, NCBI_BASE, RATE_LIMIT_DELAY
+from ..models import Article
 
 
 class PubMedClient:

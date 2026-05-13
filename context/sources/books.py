@@ -9,8 +9,8 @@ from typing import Optional
 
 import requests
 
-from .config import NCBI_API_KEY, NCBI_BASE, RATE_LIMIT_DELAY
-from .models import Book
+from ..config import NCBI_API_KEY, NCBI_BASE, RATE_LIMIT_DELAY
+from ..models import Book
 
 
 class NCBIBooksClient:

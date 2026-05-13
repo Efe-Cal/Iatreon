@@ -5,12 +5,12 @@ import re
 import unicodedata
 
 from .pdf_utils import PDFClient
-from .models import Article, Book
-from .openalex import OpenAlexClient
-from .pmc import PMCClient
-from .pubmed import PubMedClient
+from ..models import Article, Book
+from ..sources.openalex import OpenAlexClient
+from ..sources.pmc import PMCClient
+from ..sources.pubmed import PubMedClient
 from .ranking import QualityRanker
-from .get_ncbi_books import BookshelfClient
+from ..sources.get_ncbi_books import BookshelfClient
 
 
 class MedicalKnowledgePipeline:

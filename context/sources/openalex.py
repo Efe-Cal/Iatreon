@@ -3,18 +3,18 @@ import os
 import time
 from typing import Optional
 from urllib.parse import quote
-
+from dotenv import load_dotenv
 import requests
 
-from context.pmc import PMCClient
+from .pmc import PMCClient
+from ..processing.pdf_utils import PDFClient
+from ..models import Article
+from ..config import RATE_LIMIT_DELAY
 
-from .pdf_utils import PDFClient
-
-from .models import Article
+load_dotenv()
 
 OPENALEX_BASE = "https://api.openalex.org"
 OPENALEX_EMAIL = os.getenv("OPENALEX_EMAIL", "")
-RATE_LIMIT_DELAY = 2
 
 class OpenAlexClient:
     def __init__(self):

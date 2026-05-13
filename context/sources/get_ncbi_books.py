@@ -7,7 +7,9 @@ from bs4 import BeautifulSoup
 import requests
 from markdownify import markdownify as md
 
-from .config import RATE_LIMIT_DELAY 
+from context.models import Book
+
+from ..config import RATE_LIMIT_DELAY 
 
 load_dotenv()
 
@@ -32,7 +34,7 @@ class BookshelfClient:
         self.exa = Exa(api_key=os.getenv("HCAI_API_KEY"), base_url="https://ai.hackclub.com/proxy/v1/exa")
         self.exa.headers["Authorization"] = f"Bearer {self.exa.headers['x-api-key']}"
 
-    def get_ncbi_books(self, query: str, num_results: int = 5) -> str:
+    def get_ncbi_books(self, query: str, num_results: int = 5) -> list[dict]:
         response = self.exa.search(
             query, 
             num_results=num_results,
@@ -46,6 +48,8 @@ class BookshelfClient:
             book = {
                 "title": result.title,
                 "url": result.url,
+                "accession_id": result.url.split("/")[-1],
+                "source": "NCBI Bookshelf",
             }
             books.append(book)
         return books
@@ -92,12 +96,15 @@ class BookshelfClient:
         else:
             return "Failed to extract content."
 
-    def get_book_contents(self, query: str, num_results: int = 5) -> list[dict]:
+    def get_book_contents(self, query: str, num_results: int = 5) -> list[Book]:
         books = self.get_ncbi_books(query, num_results)
         for book in books:
             html_content = self.get_book_html_content(book["url"])
             book["text"] = self._html_to_md(html_content)
-        return books
+            if book["text"] and book["text"] != "Failed to extract content.":
+                book["full_text_available"] = True
+        
+        return [Book(**book) for book in books]
 
 if __name__ == "__main__":
     client = BookshelfClient()
