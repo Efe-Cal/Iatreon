@@ -10,11 +10,11 @@ from typing import Optional
 import requests
 
 from ..config import NCBI_API_KEY, NCBI_BASE, RATE_LIMIT_DELAY
-from ..models import Book
+from ..models import BookSection
 
 
 class NCBIBooksClient:
-    def search_books(self, query: str, max_results: int = 5) -> list[Book]:
+    def search_books(self, query: str, max_results: int = 5) -> list[BookSection]:
         print(f"\n[NCBI Books] Searching: '{query}'")
 
         params = {
@@ -40,7 +40,7 @@ class NCBIBooksClient:
         candidate_ids = ids[:max_results]
         return self.fetch_book_sections(candidate_ids)[:max_results]
 
-    def fetch_book_sections(self, book_ids: list[str]) -> list[Book]:
+    def fetch_book_sections(self, book_ids: list[str]) -> list[BookSection]:
         if not book_ids:
             return []
 
@@ -69,7 +69,7 @@ class NCBIBooksClient:
 
             section = self._fetch_book_section_from_summary(record)
             if section:
-                dedupe_key = section.pdf_url or section.url
+                dedupe_key = section.url
                 if dedupe_key and dedupe_key in seen_urls:
                     continue
                 if dedupe_key:
@@ -78,7 +78,7 @@ class NCBIBooksClient:
 
         return sections
 
-    def _fetch_book_section_from_summary(self, record: dict) -> Optional[Book]:
+    def _fetch_book_section_from_summary(self, record: dict) -> Optional[BookSection]:
         page_accession = (
             record.get("chapteraccessionid")
             or record.get("accessionid")
@@ -112,20 +112,13 @@ class NCBIBooksClient:
         source = f"NCBI Bookshelf - {source_title}" if source_title else "NCBI Bookshelf"
         pdf_url = self._discover_pdf_url(r.text, page_accession)
         pdf_text = self._fetch_pdf_text(pdf_url) if pdf_url else ""
-        text_source = "html"
 
-        return Book(
+        return BookSection(
             accession_id=page_accession,
             title=record.get("title") or "Section",
             source=source,
-            text_source=text_source,
             text=text,
-            page_url=page_url,
             url=page_url,
-            pdf_url=pdf_url,
-            pdf_url_found=bool(pdf_url),
-            pdf_text=pdf_text,
-            pdf_text_extracted=bool(pdf_text),
             full_text_available=bool(text or pdf_text),
         )
 
@@ -247,7 +240,7 @@ class NCBIBooksClient:
 
         return ""
 
-    def _parse_book_xml(self, xml_text: str) -> list[Book]:
+    def _parse_book_xml(self, xml_text: str) -> list[BookSection]:
         sections = []
         try:
             root = ET.fromstring(xml_text)
@@ -266,11 +259,10 @@ class NCBIBooksClient:
 
             if paragraphs:
                 sections.append(
-                    Book(
+                    BookSection(
                         title=title,
                         text="\n".join(paragraphs),
                         source="NCBI Bookshelf",
-                        text_source="xml",
                         full_text_available=True,
                     )
                 )
@@ -399,12 +391,7 @@ if __name__ == "__main__":
     for res in results:
         print(f"Title: {res.title}")
         print(f"Source: {res.source}")
-        print(f"Text source: {res.text_source}")
         print(f"URL: {res.url}")
-        print(f"PDF URL found: {res.pdf_url_found}")
-        print(f"PDF text extracted: {res.pdf_text_extracted}")
-        if res.pdf_url:
-            print(f"PDF: {res.pdf_url}")
         print(f"Text: {res.text[:200]}...")
         print(f"Text length: {len(res.text)} characters")
         print("-" * 60)

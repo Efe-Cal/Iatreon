@@ -7,7 +7,7 @@ from langchain.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import RunnableConfig
 
-from ..patient.profile import PatientInfo
+from ..db.schemas import IntakeProfile
 
 from .mock_patient import mock_patient_response
 
@@ -75,9 +75,9 @@ while True:
 print("\n--- INTAKE COMPLETE ---")
 print("Compiling dense medical summary and structured patient data...\n")
 
-# Use with_structured_output to enforce the PatientInfo format ONLY at the end
+# Use with_structured_output to enforce the IntakeProfile format ONLY at the end
 model.temperature = 0.3  # Lower temperature for more deterministic output
-structured_model = model.with_structured_output(PatientInfo)
+structured_model = model.with_structured_output(IntakeProfile)
 
 try:
     # We pass the entire conversation history to generate the final structured output

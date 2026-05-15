@@ -1,5 +1,5 @@
 from .sources.books import NCBIBooksClient
-from .models import Article, Book
+from .models import Article, BookSection
 from .sources.openalex import OpenAlexClient
 from .processing.pdf_utils import PDFClient
 from .processing.pipeline import MedicalKnowledgePipeline
@@ -9,7 +9,7 @@ from .processing.ranking import QualityRanker
 
 __all__ = [
     "Article",
-    "Book",
+    "BookSection",
     "PubMedClient",
     "PMCClient",
     "OpenAlexClient",

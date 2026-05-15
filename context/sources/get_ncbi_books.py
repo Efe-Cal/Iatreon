@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 import requests
 from markdownify import markdownify as md
 
-from context.models import Book
+from context.models import BookSection
 
 from ..config import RATE_LIMIT_DELAY 
 
@@ -96,7 +96,7 @@ class BookshelfClient:
         else:
             return "Failed to extract content."
 
-    def get_book_contents(self, query: str, num_results: int = 5) -> list[Book]:
+    def get_book_contents(self, query: str, num_results: int = 5) -> list[BookSection]:
         books = self.get_ncbi_books(query, num_results)
         for book in books:
             html_content = self.get_book_html_content(book["url"])
@@ -104,7 +104,7 @@ class BookshelfClient:
             if book["text"] and book["text"] != "Failed to extract content.":
                 book["full_text_available"] = True
         
-        return [Book(**book) for book in books]
+        return [BookSection(**book) for book in books]
 
 if __name__ == "__main__":
     client = BookshelfClient()

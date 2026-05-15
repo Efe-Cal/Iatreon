@@ -97,7 +97,6 @@ class OpenAlexClient:
                 a.pdf_url = oa["oa_url"]
                 a.source = "OpenAlex OA PDF"
 
-            #TODO: Do the same for books (_extract_bookshelf_accession) when books work properly
             if not a.full_text_available:
                 if pmc_id := PDFClient._extract_pmc_id(oa.get("oa_url", "")):
                     print(f"[OpenAlex] Found PMC ID {pmc_id}, getting full text...")

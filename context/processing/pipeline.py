@@ -5,7 +5,7 @@ import re
 import unicodedata
 
 from .pdf_utils import PDFClient
-from ..models import Article, Book
+from ..models import Article, BookSection
 from ..sources.openalex import OpenAlexClient
 from ..sources.pmc import PMCClient
 from ..sources.pubmed import PubMedClient
@@ -69,7 +69,7 @@ class MedicalKnowledgePipeline:
         # For human-readable context output, debugging
         results = self.search(query, max_results=max_articles, include_books=include_books)
         articles: list[Article] = results["articles"][:max_articles]
-        books: list[Book] = results["books"]
+        books: list[BookSection] = results["books"]
 
         context_parts = []
 
@@ -99,9 +99,6 @@ class MedicalKnowledgePipeline:
         for book in books:
             section = f"[Textbook] {book.title or 'Medical Reference'}"
             section += f"\nSource: {book.source or 'NCBI Bookshelf'}"
-            section += f"\nText Source: {book.text_source}"
-            section += f"\nPDF URL Found: {book.pdf_url_found}"
-            section += f"\nPDF Text Extracted: {book.pdf_text_extracted}"
             text = book.text
             if text:
                 section += f"\n\n{text[:2000]}..."
