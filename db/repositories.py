@@ -9,6 +9,18 @@ class IntakeRepo:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    @staticmethod
+    def _serialize_transcript(transcript: list) -> list[dict]:
+        serialized_transcript = []
+        for message in transcript:
+            if hasattr(message, "model_dump"):
+                serialized_transcript.append(message.model_dump())
+            elif isinstance(message, dict):
+                serialized_transcript.append(message)
+            else:
+                serialized_transcript.append({"type": message.__class__.__name__, "content": str(message)})
+        return serialized_transcript
+
     async def create_session(self, user_id: uuid.UUID) -> IntakeSession:
         session = IntakeSession(user_id=user_id, status="in_progress", raw_transcript=[])
         self.db.add(session)
@@ -16,13 +28,13 @@ class IntakeRepo:
         await self.db.refresh(session)
         return session
 
-    async def update_session(self, session_id: uuid.UUID, profile: IntakeProfile, transcript: list, medical_summary: str):
+    async def update_session(self, session_id: uuid.UUID, profile: IntakeProfile, transcript: list):
         session = await self.db.get(IntakeSession, session_id)
         session.chief_complaint = profile.chief_complaint
         session.symptoms = [s.model_dump() for s in profile.symptoms]
         session.red_flags = profile.red_flags
-        session.medical_summary = medical_summary
-        session.raw_transcript = transcript
+        session.medical_summary = profile.medical_summary
+        session.raw_transcript = self._serialize_transcript(transcript)
         await self.db.commit()
 
     async def complete_session(self, session_id: uuid.UUID):
@@ -30,6 +42,9 @@ class IntakeRepo:
         session.status = "complete"
         session.completed_at = datetime.utcnow()
         await self.db.commit()
+    
+    async def get_session(self, session_id: uuid.UUID) -> IntakeSession | None:
+        return await self.db.get(IntakeSession, session_id)
 
 
 class ArticleRepo:

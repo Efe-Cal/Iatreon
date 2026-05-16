@@ -7,7 +7,7 @@ from langchain.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import RunnableConfig
 
-from ..db.schemas import IntakeProfile
+from db.schemas import IntakeProfile
 
 from .mock_patient import mock_patient_response
 
@@ -41,51 +41,54 @@ messages = [
     {"role": "assistant", "content": "What brings you in today?"}
 ]
 
-print("Assistant: What brings you in today? (Type 'quit' to exit)")
-
 agent.update_state(config=config, values={"messages": messages})
 
-while True:
-    user_input = mock_patient_response(agent.get_state(config=config).values["messages"].copy())
-    print(f"\nPatient: {user_input}\n")
-    # if user_input.lower() in ["quit", "exit"]:
-    #     break
+def run_intake() -> tuple[IntakeProfile, list[dict[str,str]]]:
+    print("Assistant: What brings you in today? (Type 'quit' to exit)")
+    
+    while True:
+        user_input = mock_patient_response(agent.get_state(config=config).values["messages"].copy())
+        print(f"\nPatient: {user_input}\n")
+        # if user_input.lower() in ["quit", "exit"]:
+        #     break
+
+        try:
+            response = agent.invoke({"messages": user_input}, config=config)
+                    
+            end_intake_called = False
+            if "messages" in response:
+                for msg in response["messages"]:
+                    if getattr(msg, "tool_calls", None):
+                        for call in msg.tool_calls:
+                            if call.get("name") == "end_of_intake":
+                                end_intake_called = True
+                                break
+            
+            if end_intake_called:
+                print("\nAssistant: Thank you for your time. The intake is now complete.")
+                break
+            
+            response["messages"][-1].pretty_print() 
+
+        except Exception as e:
+            print(f"\nError: {e}\n")
+
+    print("\n--- INTAKE COMPLETE ---")
+    print("Compiling dense medical summary and structured patient data...\n")
+
+    # Use with_structured_output to enforce the IntakeProfile format ONLY at the end
+    model.temperature = 0.3  # Lower temperature for more deterministic output
+    structured_model = model.with_structured_output(IntakeProfile)
 
     try:
-        response = agent.invoke({"messages": user_input}, config=config)
-                
-        end_intake_called = False
-        if "messages" in response:
-            for msg in response["messages"]:
-                if getattr(msg, "tool_calls", None):
-                    for call in msg.tool_calls:
-                        if call.get("name") == "end_of_intake":
-                            end_intake_called = True
-                            break
+        # We pass the entire conversation history to generate the final structured output
+        conversation_state = agent.get_state(config=config)
+        final_patient_data = structured_model.invoke(conversation_state.values["messages"])
+        print("=== FINAL PATIENT INFO (JSON) ===")
+        print(final_patient_data.model_dump_json(indent=2))
         
-        if end_intake_called:
-            print("\nAssistant: Thank you for your time. The intake is now complete.")
-            break
-        
-        response["messages"][-1].pretty_print() 
-
     except Exception as e:
-        print(f"\nError: {e}\n")
-
-print("\n--- INTAKE COMPLETE ---")
-print("Compiling dense medical summary and structured patient data...\n")
-
-# Use with_structured_output to enforce the IntakeProfile format ONLY at the end
-model.temperature = 0.3  # Lower temperature for more deterministic output
-structured_model = model.with_structured_output(IntakeProfile)
-
-try:
-    # We pass the entire conversation history to generate the final structured output
-    conversation_state = agent.get_state(config=config)
-    final_patient_data = structured_model.invoke(conversation_state.values["messages"])
-    print("=== FINAL PATIENT INFO (JSON) ===")
-    print(final_patient_data.model_dump_json(indent=2))
+        print(f"\nFailed to generate final report: {e}")
     
-except Exception as e:
-    print(f"\nFailed to generate final report: {e}")
+    return final_patient_data, agent.get_state(config=config).values["messages"]
 
