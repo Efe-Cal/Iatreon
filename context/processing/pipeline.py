@@ -3,6 +3,7 @@ import json
 from dataclasses import asdict
 import re
 import unicodedata
+import uuid
 
 from .pdf_utils import PDFClient
 from ..models import Article, BookSection
@@ -39,6 +40,9 @@ class MedicalKnowledgePipeline:
             if not article.full_text_available and article.pdf_url:
                 article.full_text = asyncio.run(self.pdf_client.get_pdf_content(article.pdf_url))
                 article.full_text_available = bool(article.full_text)
+
+        openalex_articles = self.openalex.search_directly(query, max_results=int(max_results*0.6))
+        articles.extend(openalex_articles)
 
         books = []
         if include_books:
@@ -148,21 +152,46 @@ def normalize_articles(articles:dict) -> str:
         for key in ["title", "abstract", "full_text"]:
             article[key] = clean_text_for_llm(article.get(key, ""))
     return articles
+
+def deduplicate_articles(articles: list[dict]) -> list[dict]:
+    seen = set()
+    unique_articles = []
+    for article in articles:
+        identifier = (article.get("title", uuid.uuid4().hex).lower(), article.get("doi", uuid.uuid4().hex).lower())
+        if identifier not in seen:
+            seen.add(identifier)
+            unique_articles.append(article)
+    return unique_articles
         
-def run_pipeline(query: str):
+def run_pipeline(query: str, max_articles: int = 5, include_books: bool = False) -> dict:
     """
     Run the medical knowledge pipeline with a given query.
+    
+    This function orchestrates the entire process of retrieving and processing medical literature based on the input query. It returns a structured dictionary containing the relevant articles and book sections.
+    Sources include PubMed, PMC, OpenAlex, and NCBI Bookshelf. The output is normalized and cleaned.
+    
+    Args:
+        query (str): The medical query to search for.
+        max_articles (int): The maximum number of articles to retrieve and process.
+        include_books (bool): Whether to include book sections from NCBI Bookshelf in the results.
+    
+    Returns:
+        dict: A dictionary containing the query, a list of articles, and a list of book sections.
     """
 
     pipeline = MedicalKnowledgePipeline()
     context = pipeline.get_json_content(
         query,
-        max_articles=10,
-        include_books=False,
-    )["articles"]
+        max_articles=max_articles,
+        include_books=include_books,
+    )
+    articles = context["articles"]
+    books = context["books"]
 
-    context = [a for a in context if a["full_text_available"] or a["abstract"]]
-    context = normalize_articles(context)
+    articles = deduplicate_articles(articles)
+    articles = [a for a in articles if a["full_text_available"] or a["abstract"]]
+    articles = normalize_articles(articles)
+    
     fields = [
         "title",
         "abstract",
@@ -174,11 +203,11 @@ def run_pipeline(query: str):
     ]
     
     filtered_context = []
-    for article in context:
+    for article in articles:
         filtered_article = {field: article.get(field) for field in fields if field in article}
         filtered_context.append(filtered_article)
 
-    return filtered_context
+    return {"articles": filtered_context, "books": books}
 
 if __name__ == "__main__":
     context = run_pipeline("inguinal hernia repair")

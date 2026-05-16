@@ -12,16 +12,15 @@ exa = Exa(api_key=os.getenv("HCAI_API_KEY"), base_url="https://ai.hackclub.com/p
 exa.headers["Authorization"] = f"Bearer {exa.headers['x-api-key']}"
 
 
-# @tool
 def web_search(query: str, num_results: int = 5):
-    """Performs a web search using the Exa API and returns the results.
+    """Performs a web search using the Exa API and returns the highlights for each result.
     
     Args:
         query (str): The search query.
         num_results (int): The number of results to return.
 
     Returns:
-        The search results.
+        The search highlights.
     """
     response = exa.search(
         query, 
@@ -62,7 +61,6 @@ Prefer completeness over brevity."""
 
     return [{"title": r.title, "url": r.url, "highlights": r.highlights} for r in response.results]
 
-# @tool
 def fetch_web_content(url: str) -> str:
     """Fetches the full contents of a web page.
     
@@ -70,7 +68,7 @@ def fetch_web_content(url: str) -> str:
         url (str): The URL of the web page to fetch.
 
     Returns:
-        The content of the web page.
+        The text content of the web page.
     """
     
     response = exa.get_contents(url, livecrawl="preferred", text=TextContentsOptions())
