@@ -44,3 +44,11 @@ class ArticleData(BaseModel):
     quality_score: Optional[float] = Field(None, description="The quality score assigned to the article")
     full_text_available: bool = Field(False, description="Whether the article has full text available")
     source: Optional[str] = Field(None, description="The source that produced the article record")
+
+class BookSectionData(BaseModel):
+    accession_id: str = Field(..., description="The NCBI Bookshelf accession ID for the book section")
+    title: str = Field(..., description="The title of the book")
+    source: str = Field(..., description="The source that produced the book section record")
+    text: str = Field(..., description="The full text of the book section")
+    url: Optional[str] = Field(None, description="The URL of the book section (if available)")
+    full_text_available: bool = Field(True, description="Whether the full text of the book section is available")

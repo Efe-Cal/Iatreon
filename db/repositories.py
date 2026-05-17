@@ -2,8 +2,8 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import date, datetime, timedelta
 import uuid
-from .models import IntakeSession, Article, SessionArticle, UserProfile
-from .schemas import IntakeProfile, ArticleData
+from .models import IntakeSession, Article, SessionArticle, BookSection, SessionBookSection, WebSearchResult
+from .schemas import BookSectionData, IntakeProfile, ArticleData
 
 class IntakeRepo:
     def __init__(self, db: AsyncSession):
@@ -132,7 +132,7 @@ class ArticleRepo:
         )
         self.db.add(link)
         await self.db.commit()
-        
+        await self.db.refresh(link)
     
     async def get_session_articles(self, session_id: uuid.UUID, limit: int = 8) -> list[Article]:
         stmt = (
@@ -143,3 +143,87 @@ class ArticleRepo:
             .limit(limit)
         )
         return list((await self.db.execute(stmt)).scalars())
+
+class BookSectionRepo:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+    
+    async def upsert(self, data: BookSectionData) -> BookSection:
+        existing_stmt = select(BookSection).where(BookSection.accession_id == data.accession_id)
+        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+
+        if existing is not None:
+            existing.title = data.title
+            existing.source = data.source
+            existing.text = data.text
+            existing.url = data.url
+            existing.full_text_available = data.full_text_available
+            await self.db.commit()
+            await self.db.refresh(existing)
+            return existing
+
+        section = BookSection(
+            accession_id=data.accession_id,
+            title=data.title,
+            source=data.source,
+            text=data.text,
+            url=data.url,
+            full_text_available=data.full_text_available,
+        )
+        self.db.add(section)
+        await self.db.commit()
+        await self.db.refresh(section)
+        return section
+    
+    async def get_by_accession_id(self, accession_id: str) -> BookSection | None:
+        stmt = select(BookSection).where(BookSection.accession_id == accession_id)
+        return (await self.db.execute(stmt)).scalar_one_or_none()
+    
+    async def link_to_session(self, session_id: uuid.UUID, book_section_id: uuid.UUID, query: str):
+        link = SessionBookSection(
+            session_id=session_id,
+            book_section_id=book_section_id,
+            query=query,
+        )
+        self.db.add(link)
+        await self.db.commit()
+        await self.db.refresh(link)
+        
+    async def get_session_book_sections(self, session_id: uuid.UUID, limit: int = 8) -> list[BookSection]:
+        stmt = (
+            select(BookSection)
+            .join(SessionBookSection, SessionBookSection.book_section_id == BookSection.id)
+            .where(SessionBookSection.session_id == session_id)
+            .limit(limit)
+        )
+        return list((await self.db.execute(stmt)).scalars())
+    
+    
+class WebSearchResultRepo:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+    
+    async def upsert(self, query: str, url: str, title: str | None, highlights: str | None, full_content: str | None) -> WebSearchResult:
+        existing_stmt = select(WebSearchResult).where(WebSearchResult.query == query, WebSearchResult.url == url)
+        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+
+        if existing is not None:
+            existing.title = title
+            existing.highlights = highlights
+            existing.full_content = full_content
+            existing.fetched_at = datetime.utcnow()
+            await self.db.commit()
+            await self.db.refresh(existing)
+            return existing
+
+        result = WebSearchResult(
+            query=query,
+            url=url,
+            title=title,
+            highlights=highlights,
+            full_content=full_content,
+        )
+        self.db.add(result)
+        await self.db.commit()
+        await self.db.refresh(result)
+        return result

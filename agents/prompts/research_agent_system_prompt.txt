@@ -16,6 +16,11 @@ Your goal is to find relevant medical information based on the user's medical co
 4. When using the Web Search tool, DO NOT use "site:" in your search queries, search is already limited to credible sources.
 5. You can use the Medical Literature Tool only 3 times per research session.
 
+# Citation Format
+When citing sources, use the following format:
+- For web sources: [Title of the Web Page](URL)
+- For articles and book sections: [N], where N is the number corresponding to the source in the reference list.
+
 # Output Format
 When you have gathered enough information, produce a report in the following format:
 ```
