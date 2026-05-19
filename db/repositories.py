@@ -1,9 +1,31 @@
+from calendar import c
+
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 import uuid
-from .models import IntakeSession, Article, SessionArticle, BookSection, SessionBookSection, WebSearchResult
+from .models import (
+    IntakeSession,
+    Article,
+    ResearchSession,
+    SessionArticle,
+    BookSection,
+    SessionBookSection,
+    WebSearchResult,
+    SessionWebSearchResult,
+)
 from .schemas import BookSectionData, IntakeProfile, ArticleData
+
+
+def _normalize_unique_identifier(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    normalized = value.strip()
+    if not normalized:
+        return None
+
+    return normalized.lower()
 
 class IntakeRepo:
     def __init__(self, db: AsyncSession):
@@ -46,6 +68,144 @@ class IntakeRepo:
     async def get_session(self, session_id: uuid.UUID) -> IntakeSession | None:
         return await self.db.get(IntakeSession, session_id)
 
+class ResearchRepo:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+    
+    async def create_research_session(self, user_id: uuid.UUID, intake_session_id: uuid.UUID) -> ResearchSession:
+        session = ResearchSession(user_id=user_id, intake_session_id=intake_session_id)
+        self.db.add(session)
+        await self.db.commit()
+        await self.db.refresh(session)
+        return session
+
+    async def get_research_session(self, session_id: uuid.UUID) -> ResearchSession | None:
+        return await self.db.get(ResearchSession, session_id)
+
+    async def link_article(self, session_id: uuid.UUID, article_id: uuid.UUID, query: str, quality_score: float | None = None) -> SessionArticle:
+        existing_stmt = select(SessionArticle).where(
+            SessionArticle.session_id == session_id,
+            SessionArticle.article_id == article_id,
+        )
+        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+
+        if existing is not None:
+            existing.query = query
+            existing.quality_score = quality_score
+            await self.db.commit()
+            await self.db.refresh(existing)
+            return existing
+
+        link = SessionArticle(
+            session_id=session_id,
+            article_id=article_id,
+            query=query,
+            quality_score=quality_score,
+        )
+        self.db.add(link)
+        await self.db.commit()
+        await self.db.refresh(link)
+        return link
+
+    async def link_book_section(self, session_id: uuid.UUID, book_section_id: uuid.UUID, query: str) -> SessionBookSection:
+        existing_stmt = select(SessionBookSection).where(
+            SessionBookSection.session_id == session_id,
+            SessionBookSection.book_section_id == book_section_id,
+        )
+        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+
+        if existing is not None:
+            existing.query = query
+            await self.db.commit()
+            await self.db.refresh(existing)
+            return existing
+
+        link = SessionBookSection(
+            session_id=session_id,
+            book_section_id=book_section_id,
+            query=query,
+        )
+        self.db.add(link)
+        await self.db.commit()
+        await self.db.refresh(link)
+        return link
+
+    async def link_web_search_result(self, session_id: uuid.UUID, web_search_result_id: uuid.UUID) -> SessionWebSearchResult:
+        existing_stmt = select(SessionWebSearchResult).where(
+            SessionWebSearchResult.session_id == session_id,
+            SessionWebSearchResult.web_search_result_id == web_search_result_id,
+        )
+        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+
+        if existing is not None:
+            return existing
+
+        link = SessionWebSearchResult(
+            session_id=session_id,
+            web_search_result_id=web_search_result_id,
+        )
+        self.db.add(link)
+        await self.db.commit()
+        await self.db.refresh(link)
+        return link
+
+    async def get_session_articles(self, session_id: uuid.UUID, limit: int = 8) -> list[Article]:
+        stmt = (
+            select(Article)
+            .join(SessionArticle, SessionArticle.article_id == Article.id)
+            .where(SessionArticle.session_id == session_id)
+            .order_by(SessionArticle.quality_score.desc().nullslast())
+            .limit(limit)
+        )
+        return list((await self.db.execute(stmt)).scalars())
+
+    async def get_session_book_sections(self, session_id: uuid.UUID, limit: int = 8) -> list[BookSection]:
+        stmt = (
+            select(BookSection)
+            .join(SessionBookSection, SessionBookSection.book_section_id == BookSection.id)
+            .where(SessionBookSection.session_id == session_id)
+            .limit(limit)
+        )
+        return list((await self.db.execute(stmt)).scalars())
+
+    async def get_session_web_search_results(self, session_id: uuid.UUID, limit: int = 8) -> list[WebSearchResult]:
+        stmt = (
+            select(WebSearchResult)
+            .join(SessionWebSearchResult, SessionWebSearchResult.web_search_result_id == WebSearchResult.id)
+            .where(SessionWebSearchResult.session_id == session_id)
+            .order_by(WebSearchResult.fetched_at.desc())
+            .limit(limit)
+        )
+        return list((await self.db.execute(stmt)).scalars())
+    
+    async def get_all_session_sources(self, session_id: uuid.UUID) -> dict[str, list[tuple[Article | BookSection | WebSearchResult, int | None]]]:
+        stmt = (
+            select(Article, SessionArticle)
+            .join(SessionArticle, SessionArticle.article_id == Article.id)
+            .where(SessionArticle.session_id == session_id)
+        )
+        articles = (await self.db.execute(stmt)).all()
+        
+        stmt = (
+            select(BookSection, SessionBookSection)
+            .join(SessionBookSection, SessionBookSection.book_section_id == BookSection.id)
+            .where(SessionBookSection.session_id == session_id)
+        )
+        book_sections = (await self.db.execute(stmt)).all()
+        
+        stmt = (
+            select(WebSearchResult, SessionWebSearchResult)
+            .join(SessionWebSearchResult, SessionWebSearchResult.web_search_result_id == WebSearchResult.id)
+            .where(SessionWebSearchResult.session_id == session_id)
+        )
+        web_search_results = (await self.db.execute(stmt)).all()
+        
+        sources = {
+            "articles": [(article, session_article.citation_num )for article, session_article in articles],
+            "book_sections": [(book_section, session_book.citation_num) for book_section, session_book in book_sections],
+            "web_search_results": [(web_search_result, session_web_search.citation_num) for web_search_result, session_web_search in web_search_results],
+        }
+        return sources
 
 class ArticleRepo:
     def __init__(self, db: AsyncSession):
@@ -53,11 +213,16 @@ class ArticleRepo:
     
     async def upsert(self, data: ArticleData) -> Article:
         """Insert or update an article row and return it."""
+        pubmed_id = _normalize_unique_identifier(data.pubmed_id)
+        pmc_id = _normalize_unique_identifier(data.pmc_id)
+        doi = _normalize_unique_identifier(data.doi)
+        openalex_id = _normalize_unique_identifier(data.openalex_id)
+
         payload = {
-            "pubmed_id": data.pubmed_id,
-            "pmc_id": data.pmc_id,
-            "doi": data.doi,
-            "openalex_id": data.openalex_id,
+            "pubmed_id": pubmed_id,
+            "pmc_id": pmc_id,
+            "doi": doi,
+            "openalex_id": openalex_id,
             "title": data.title,
             "abstract": data.abstract,
             "full_text": data.full_text,
@@ -76,10 +241,10 @@ class ArticleRepo:
         }
 
         identity_filters = [
-            Article.pubmed_id == data.pubmed_id if data.pubmed_id else None,
-            Article.pmc_id == data.pmc_id if data.pmc_id else None,
-            Article.doi == data.doi if data.doi else None,
-            Article.openalex_id == data.openalex_id if data.openalex_id else None,
+            Article.pubmed_id == pubmed_id if pubmed_id else None,
+            Article.pmc_id == pmc_id if pmc_id else None,
+            Article.doi == doi if doi else None,
+            Article.openalex_id == openalex_id if openalex_id else None,
         ]
         identity_filters = [clause for clause in identity_filters if clause is not None]
 
@@ -110,6 +275,10 @@ class ArticleRepo:
         max_age_days: int = 30,
     ) -> Article | None:
         cutoff = datetime.utcnow() - timedelta(days=max_age_days)
+        pubmed_id = _normalize_unique_identifier(pubmed_id)
+        pmc_id = _normalize_unique_identifier(pmc_id)
+        doi = _normalize_unique_identifier(doi)
+        openalex_id = _normalize_unique_identifier(openalex_id)
         identity_filters = [
             Article.pubmed_id == pubmed_id if pubmed_id else None,
             Article.pmc_id == pmc_id if pmc_id else None,
@@ -123,16 +292,32 @@ class ArticleRepo:
         stmt = select(Article).where(or_(*identity_filters), Article.fetched_at > cutoff)
         return (await self.db.execute(stmt)).scalar_one_or_none()
     
-    async def link_to_session(self, session_id: uuid.UUID, article_id: uuid.UUID, query: str, quality_score: float):
+    async def link_to_session(self, session_id: uuid.UUID, article_id: uuid.UUID, query: str, quality_score: float, citation_num: int = 0) -> SessionArticle:
+        existing_stmt = select(SessionArticle).where(
+            SessionArticle.session_id == session_id,
+            SessionArticle.article_id == article_id,
+        )
+        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+
+        if existing is not None:
+            existing.query = query
+            existing.quality_score = quality_score
+            existing.citation_num = citation_num
+            await self.db.commit()
+            await self.db.refresh(existing)
+            return existing
+
         link = SessionArticle(
             session_id=session_id,
             article_id=article_id,
             query=query,
             quality_score=quality_score,
+            citation_num=citation_num,
         )
         self.db.add(link)
         await self.db.commit()
         await self.db.refresh(link)
+        return link
     
     async def get_session_articles(self, session_id: uuid.UUID, limit: int = 8) -> list[Article]:
         stmt = (
@@ -179,15 +364,30 @@ class BookSectionRepo:
         stmt = select(BookSection).where(BookSection.accession_id == accession_id)
         return (await self.db.execute(stmt)).scalar_one_or_none()
     
-    async def link_to_session(self, session_id: uuid.UUID, book_section_id: uuid.UUID, query: str):
+    async def link_to_session(self, session_id: uuid.UUID, book_section_id: uuid.UUID, query: str, citation_num: int = 0) -> SessionBookSection:
+        existing_stmt = select(SessionBookSection).where(
+            SessionBookSection.session_id == session_id,
+            SessionBookSection.book_section_id == book_section_id,
+        )
+        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+
+        if existing is not None:
+            existing.query = query
+            existing.citation_num = citation_num
+            await self.db.commit()
+            await self.db.refresh(existing)
+            return existing
+
         link = SessionBookSection(
             session_id=session_id,
             book_section_id=book_section_id,
             query=query,
+            citation_num=citation_num
         )
         self.db.add(link)
         await self.db.commit()
         await self.db.refresh(link)
+        return link
         
     async def get_session_book_sections(self, session_id: uuid.UUID, limit: int = 8) -> list[BookSection]:
         stmt = (
@@ -197,8 +397,7 @@ class BookSectionRepo:
             .limit(limit)
         )
         return list((await self.db.execute(stmt)).scalars())
-    
-    
+
 class WebSearchResultRepo:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -227,3 +426,36 @@ class WebSearchResultRepo:
         await self.db.commit()
         await self.db.refresh(result)
         return result
+
+    async def link_to_session(self, session_id: uuid.UUID, web_search_result_id: uuid.UUID, citation_num: int = 0) -> SessionWebSearchResult:
+        existing_stmt = select(SessionWebSearchResult).where(
+            SessionWebSearchResult.session_id == session_id,
+            SessionWebSearchResult.web_search_result_id == web_search_result_id,
+        )
+        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+
+        if existing is not None:
+            existing.citation_num = citation_num
+            await self.db.commit()
+            await self.db.refresh(existing)
+            return existing
+
+        link = SessionWebSearchResult(
+            session_id=session_id,
+            web_search_result_id=web_search_result_id,
+            citation_num=citation_num,
+        )
+        self.db.add(link)
+        await self.db.commit()
+        await self.db.refresh(link)
+        return link
+
+    async def get_session_web_search_results(self, session_id: uuid.UUID, limit: int = 8) -> list[WebSearchResult]:
+        stmt = (
+            select(WebSearchResult)
+            .join(SessionWebSearchResult, SessionWebSearchResult.web_search_result_id == WebSearchResult.id)
+            .where(SessionWebSearchResult.session_id == session_id)
+            .order_by(WebSearchResult.fetched_at.desc())
+            .limit(limit)
+        )
+        return list((await self.db.execute(stmt)).scalars())

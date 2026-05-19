@@ -58,7 +58,6 @@ class BookshelfClient:
         time.sleep(RATE_LIMIT_DELAY)
         HEADERS.update({"User-Agent": USER_AGENTS[int(time.time()) % len(USER_AGENTS)]})
         response = requests.get(url, headers=HEADERS)
-        print(response)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, "html.parser")
             content_div = soup.find("div", class_="document")
@@ -111,7 +110,7 @@ if __name__ == "__main__":
     query = "inguinal hernia repair"
     books = client.get_book_contents(query, num_results=3)
     for book in books:
-        print(f"Title: {book['title']}")
-        print(f"URL: {book['url']}")
-        print(f"Text:\n{book['text'][:300]}...")
+        print(f"Title: {book.title}")
+        print(f"URL: {book.url}")
+        print(f"Text:\n{book.text[:300]}...")
         print("-" * 80)

@@ -1,4 +1,4 @@
-import os
+import random
 import time
 import xml.etree.ElementTree as ET
 from typing import Optional
@@ -6,7 +6,7 @@ from typing import Optional
 import requests
 
 from ..models import Article
-from ..config import RATE_LIMIT_DELAY, NCBI_API_KEY, NCBI_BASE
+from ..config import RATE_LIMIT_DELAY, NCBI_API_KEY, NCBI_BASE, HEADERS, USER_AGENTS
 
 class PMCClient:
     def get_pmc_id(self, pubmed_id: str) -> Optional[str]:
@@ -21,7 +21,9 @@ class PMCClient:
             params["api_key"] = NCBI_API_KEY
 
         try:
-            r = requests.get(f"{NCBI_BASE}/elink.fcgi", params=params)
+            headers = HEADERS.copy()
+            headers.update({"User-Agent": random.choice(USER_AGENTS)})
+            r = requests.get(f"{NCBI_BASE}/elink.fcgi", params=params, headers=headers)
             r.raise_for_status()
         except Exception as e:
             print(f"Error fetching PMC ID for PubMed ID {pubmed_id}: {e}")

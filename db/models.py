@@ -35,24 +35,22 @@ class IntakeSession(Base):
     status: Mapped[str] = mapped_column(String, default="in_progress")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
-    #TODO: Remove articles
-    articles: Mapped[list["SessionArticle"]] = relationship(back_populates="session", default_factory=list, repr=False)
 
 class ResearchSession(Base):
     __tablename__ = "research_sessions"
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id"))
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
-    intake_session_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("intake_sessions.id"))
-    articles: Mapped[Optional[list]] = mapped_column(JSON, default_factory=list)
-    books: Mapped[Optional[list]] = mapped_column(JSON, default_factory=list)
-    web_search_results: Mapped[Optional[list]] = mapped_column(JSON, default_factory=list)
+    intake_session_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("intake_sessions.id"), default=None)
+    articles: Mapped[list["SessionArticle"]] = relationship(back_populates="session", default_factory=list, cascade="all, delete-orphan")
+    books: Mapped[list["SessionBookSection"]] = relationship(back_populates="session", default_factory=list, cascade="all, delete-orphan")
+    web_search_results: Mapped[list["SessionWebSearchResult"]] = relationship(back_populates="session", default_factory=list, cascade="all, delete-orphan")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
 
 class WebSearchResult(Base):
     __tablename__ = "web_search_results"
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
-    query: Mapped[str] = mapped_column(Text)
-    url: Mapped[str] = mapped_column(String)
+    query: Mapped[str] = mapped_column(Text, default="")
+    url: Mapped[str] = mapped_column(String, default="")
     title: Mapped[Optional[str]] = mapped_column(String, default="")
     highlights: Mapped[Optional[str]] = mapped_column(Text, default="")
     full_content: Mapped[Optional[str]] = mapped_column(Text, default="")
@@ -62,10 +60,10 @@ class WebSearchResult(Base):
 class Article(Base):
     __tablename__ = "articles"
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
-    pubmed_id: Mapped[Optional[str]] = mapped_column(String, unique=True, default="")
-    pmc_id: Mapped[Optional[str]] = mapped_column(String, unique=True, default="")
-    doi: Mapped[Optional[str]] = mapped_column(String, unique=True, default="")
-    openalex_id: Mapped[Optional[str]] = mapped_column(String, unique=True, default="")
+    pubmed_id: Mapped[Optional[str]] = mapped_column(String, unique=True, default=None)
+    pmc_id: Mapped[Optional[str]] = mapped_column(String, unique=True, default=None)
+    doi: Mapped[Optional[str]] = mapped_column(String, unique=True, default=None)
+    openalex_id: Mapped[Optional[str]] = mapped_column(String, unique=True, default=None)
     title: Mapped[str] = mapped_column(Text, default="")
     abstract: Mapped[Optional[str]] = mapped_column(Text, default="")
     full_text: Mapped[Optional[str]] = mapped_column(Text, default="")
@@ -82,15 +80,6 @@ class Article(Base):
     source: Mapped[Optional[str]] = mapped_column(String, default="")
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
 
-class SessionArticle(Base):
-    __tablename__ = "session_articles"
-    query: Mapped[str] = mapped_column(Text)
-    session_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("intake_sessions.id"))
-    article_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("articles.id"))
-    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
-    session: Mapped[Optional["IntakeSession"]] = relationship(back_populates="articles", init=False, repr=False)
-    quality_score: Mapped[Optional[float]] = mapped_column(Float, default=0.0)
-
 class BookSection(Base):
     __tablename__ = "book_sections"
     accession_id: Mapped[str] = mapped_column(String, unique=True)
@@ -101,10 +90,33 @@ class BookSection(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
     full_text_available: Mapped[bool] = mapped_column(Boolean, default=False)
 
+
+class SessionArticle(Base):
+    __tablename__ = "session_articles"
+    query: Mapped[str] = mapped_column(Text)
+    session_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("research_sessions.id"))
+    article_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("articles.id"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
+    session: Mapped["ResearchSession"] = relationship(back_populates="articles", init=False, repr=False)
+    article: Mapped["Article"] = relationship(init=False, repr=False)
+    quality_score: Mapped[Optional[float]] = mapped_column(Float, default=0.0)
+    citation_num: Mapped[Optional[int]] = mapped_column(Integer, default=0)
+
 class SessionBookSection(Base):
     __tablename__ = "session_book_sections"
     query: Mapped[str] = mapped_column(Text)
-    session_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("intake_sessions.id"))
+    session_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("research_sessions.id"))
     book_section_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("book_sections.id"))
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
-    session: Mapped[Optional["IntakeSession"]] = relationship(back_populates="articles", init=False, repr=False)
+    session: Mapped["ResearchSession"] = relationship(back_populates="books", init=False, repr=False)
+    book_section: Mapped["BookSection"] = relationship(init=False, repr=False)
+    citation_num: Mapped[Optional[int]] = mapped_column(Integer, default=0)
+    
+class SessionWebSearchResult(Base):
+    __tablename__ = "session_web_search_results"
+    session_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("research_sessions.id"))
+    web_search_result_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("web_search_results.id"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
+    session: Mapped["ResearchSession"] = relationship(back_populates="web_search_results", init=False, repr=False)
+    web_search_result: Mapped["WebSearchResult"] = relationship(init=False, repr=False)
+    citation_num: Mapped[Optional[int]] = mapped_column(Integer, default=0)

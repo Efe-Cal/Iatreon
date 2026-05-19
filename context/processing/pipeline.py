@@ -1,9 +1,7 @@
-import asyncio
 import json
 from dataclasses import asdict
 import re
 import unicodedata
-import uuid
 
 from .pdf_utils import PDFClient
 from ..models import Article, BookSection
@@ -23,7 +21,7 @@ class MedicalKnowledgePipeline:
         self.ranker = QualityRanker()
         self.pdf_client = PDFClient()
 
-    def search(self, query: str, max_results: int = 10, include_books: bool = True) -> dict:
+    async def search(self, query: str, max_results: int = 10, include_books: bool = True) -> dict:
         print(f"\n{'='*60}")
         print(f"MEDICAL PIPELINE — Query: '{query}'")
         print(f"{'='*60}")
@@ -38,10 +36,10 @@ class MedicalKnowledgePipeline:
         articles = self.openalex.enrich_articles(articles)
         for article in articles:
             if not article.full_text_available and article.pdf_url:
-                article.full_text = asyncio.run(self.pdf_client.get_pdf_content(article.pdf_url))
+                article.full_text = await self.pdf_client.get_pdf_content(article.pdf_url)
                 article.full_text_available = bool(article.full_text)
 
-        openalex_articles = self.openalex.search_directly(query, max_results=int(max_results*0.6))
+        openalex_articles = await self.openalex.search_directly(query, max_results=int(max_results*0.6))
         articles.extend(openalex_articles)
 
         books = []
@@ -69,9 +67,9 @@ class MedicalKnowledgePipeline:
             "books": books,
         }
 
-    def get_best_context(self, query: str, max_articles: int = 5, include_books: bool = False) -> str:
+    async def get_best_context(self, query: str, max_articles: int = 5, include_books: bool = False) -> str:
         # For human-readable context output, debugging
-        results = self.search(query, max_results=max_articles, include_books=include_books)
+        results = await self.search(query, max_results=max_articles, include_books=include_books)
         articles: list[Article] = results["articles"][:max_articles]
         books: list[BookSection] = results["books"]
 
@@ -111,13 +109,13 @@ class MedicalKnowledgePipeline:
         return "\n\n" + ("─" * 60 + "\n\n").join(context_parts)
 
 
-    def get_json_content(
+    async def get_json_content(
         self,
         query: str,
         max_articles: int = 5,
         include_books: bool = False,
     ) -> dict:
-        results = self.search(query, max_results=max_articles, include_books=include_books)
+        results = await self.search(query, max_results=max_articles, include_books=include_books)
         articles = [asdict(a) for a in results["articles"][:max_articles]]
         books = [asdict(b) for b in results["books"]]
         return {"query": query, "articles": articles, "books": books}
@@ -145,10 +143,36 @@ def clean_text_for_llm(text):
     
     return text.strip()
 
-def normalize_articles(articles:dict) -> str:
+
+def normalize_identifier(value):
+    if value is None:
+        return None
+
+    normalized = clean_text_for_llm(value)
+    if not normalized:
+        return None
+
+    return normalized.lower()
+
+
+def build_article_identity(article: dict) -> tuple[str, str] | None:
+    for field in ("doi", "pubmed_id", "pmc_id", "openalex_id"):
+        identifier = normalize_identifier(article.get(field))
+        if identifier:
+            return (field, identifier)
+
+    title = normalize_identifier(article.get("title"))
+    year = article.get("year") or ""
+    journal = normalize_identifier(article.get("journal")) or ""
+    return ("title", f"{title}|{year}|{journal}")
+
+def normalize_articles(articles: list[dict]) -> list[dict]:
     for article in articles:
-        if len(article.get("full_text", "")) < 100:
+        full_text = clean_text_for_llm(article.get("full_text", ""))
+        if len(full_text) < 100:
             article["full_text"] = "FULL TEXT NOT AVAILABLE"
+        else:
+            article["full_text"] = full_text
         for key in ["title", "abstract", "full_text"]:
             article[key] = clean_text_for_llm(article.get(key, ""))
     return articles
@@ -157,13 +181,19 @@ def deduplicate_articles(articles: list[dict]) -> list[dict]:
     seen = set()
     unique_articles = []
     for article in articles:
-        identifier = (article.get("title", uuid.uuid4().hex).lower(), article.get("doi", uuid.uuid4().hex).lower())
-        if identifier not in seen:
-            seen.add(identifier)
+        identifier = build_article_identity(article)
+        if identifier is None:
             unique_articles.append(article)
+            continue
+
+        if identifier in seen:
+            continue
+
+        seen.add(identifier)
+        unique_articles.append(article)
     return unique_articles
         
-def run_pipeline(query: str, max_articles: int = 5, include_books: bool = False) -> dict:
+async def run_pipeline(query: str, max_articles: int = 5, include_books: bool = False) -> dict:
     """
     Run the medical knowledge pipeline with a given query.
     
@@ -180,7 +210,7 @@ def run_pipeline(query: str, max_articles: int = 5, include_books: bool = False)
     """
 
     pipeline = MedicalKnowledgePipeline()
-    context = pipeline.get_json_content(
+    context = await pipeline.get_json_content(
         query,
         max_articles=max_articles,
         include_books=include_books,
@@ -191,25 +221,11 @@ def run_pipeline(query: str, max_articles: int = 5, include_books: bool = False)
     articles = deduplicate_articles(articles)
     articles = [a for a in articles if a["full_text_available"] or a["abstract"]]
     articles = normalize_articles(articles)
-    
-    fields = [
-        "title",
-        "abstract",
-        "full_text",
-        "year",
-        "mesh_terms",
-        "study_type",
-        # "pdf_url",
-    ]
-    
-    filtered_context = []
-    for article in articles:
-        filtered_article = {field: article.get(field) for field in fields if field in article}
-        filtered_context.append(filtered_article)
 
-    return {"articles": filtered_context, "books": books}
+    return {"articles": articles, "books": books}
 
 if __name__ == "__main__":
-    context = run_pipeline("inguinal hernia repair")
+    import asyncio
+    context = asyncio.run(run_pipeline("inguinal hernia repair"))
 
     print(json.dumps(context, indent=2, ensure_ascii=False))

@@ -10,22 +10,14 @@ from playwright_stealth import Stealth
 from urllib.parse import unquote, urljoin, urlparse
 from pypdf import PdfReader
 
+from context.config import HEADERS, USER_AGENTS
+
 DOI_PATTERN = re.compile(r"10\.\d{4,9}/[-._;()/:A-Z0-9]+", re.IGNORECASE)
 PDF_TEXT_MARKERS = re.compile(r"pdf|download|full\s*text", re.IGNORECASE)
-
-HEADERS = {
-    "Accept": "application/pdf,text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Cache-Control": "no-cache",
-    "Accept-Encoding": "gzip, deflate, br, zstd",
-    "Referer": "https://www.google.com",
+NON_PDF_EXTENSIONS = {
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".tif", ".tiff"
 }
 
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
-]
 
 class PDFClient:
     def _is_probable_pdf_url(self, url: str) -> bool:
@@ -41,6 +33,10 @@ class PDFClient:
             or "format=pdf" in query
             or "download=1" in query
         )
+
+    def _is_probable_non_pdf_asset(self, url: str) -> bool:
+        path = urlparse(url).path.lower()
+        return any(path.endswith(ext) for ext in NON_PDF_EXTENSIONS)
     
     @staticmethod
     def _extract_pmc_id(url: str) -> str:
@@ -153,39 +149,70 @@ class PDFClient:
 
         return "\n\n".join(pages)
 
+    def _fetch_pdf_with_requests(self, url: str) -> str:
+        import requests
+
+        print(f"[PDFClient] Fetching PDF content with requests from URL: {url}")
+        try:
+            response = requests.get(url, headers=HEADERS, timeout=10)
+            response.raise_for_status()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                tmp_file.write(response.content)
+                return self.extract_text_from_pdf(tmp_file.name)
+        except Exception as e:
+            print(f"[PDFClient] Error fetching PDF with requests: {e}")
+            return None
+
     async def get_pdf_content(self, url: str):
         print("[PDFClient] Attempting to fetch PDF content from URL:", url)
+        if self._is_probable_non_pdf_asset(url):
+            print(f"[PDFClient] Skipping non-PDF asset URL: {url}")
+            return None
+
         async with async_playwright() as p:
-            browser = await p.chromium.connect("ws://localhost:3000/")
-            context = await browser.new_context(
-                accept_downloads=True,
-                viewport={"width": 1280, "height": 800},
-                user_agent=random.choice(USER_AGENTS),
-                locale="tr-TR",
-                extra_http_headers=HEADERS,
-            )
-            
-            page = await context.new_page()
-            
-            pdf_path = await self.download_pdf(page, self._special_case_pdf_url(url))
-            
-            if not pdf_path:
-                print("[PDFClient] No PDF download initiated, searching page for PDF links...")
-                await page.goto(url)
-                pdf_links = await self.search_page_for_pdf_links(page)
-                print(f"[PDFClient] Found {len(pdf_links)} potential PDF links on the page.")
-                
-                pdf_links = sorted(pdf_links, key=lambda x: x.endswith(".pdf"), reverse=True)
-                for link in pdf_links:
-                    pdf_path = await self.download_pdf(page, self._special_case_pdf_url(link))
-                    if pdf_path:
-                        break
-            
-            content = self.extract_text_from_pdf(pdf_path) if pdf_path else None
-            
-            await context.close()
-            await browser.close()
-            return content
+            try:
+                browser = await p.chromium.connect("ws://localhost:3000/")
+            except Exception as e:
+                print(f"[PDFClient] Error connecting to browser")
+                return self._fetch_pdf_with_requests(url)
+            context = None
+            try:
+                context = await browser.new_context(
+                    accept_downloads=True,
+                    viewport={"width": 1280, "height": 800},
+                    user_agent=random.choice(USER_AGENTS),
+                    locale="tr-TR",
+                    extra_http_headers=HEADERS,
+                )
+                page = await context.new_page()
+
+                normalized_url = self._special_case_pdf_url(url)
+                pdf_path = await self.download_pdf(page, normalized_url)
+
+                if not pdf_path and not self._is_probable_pdf_url(normalized_url):
+                    print("[PDFClient] No PDF download initiated, searching page for PDF links...")
+                    try:
+                        await page.goto(url)
+                    except PlaywrightError as e:
+                        if "Download is starting" in str(e):
+                            print(f"[PDFClient] URL triggered a download while loading page: {url}")
+                            return None
+                        raise
+
+                    pdf_links = await self.search_page_for_pdf_links(page)
+                    print(f"[PDFClient] Found {len(pdf_links)} potential PDF links on the page.")
+
+                    pdf_links = sorted(pdf_links, key=lambda x: x.endswith(".pdf"), reverse=True)
+                    for link in pdf_links:
+                        pdf_path = await self.download_pdf(page, self._special_case_pdf_url(link))
+                        if pdf_path:
+                            break
+
+                return self.extract_text_from_pdf(pdf_path) if pdf_path else None
+            finally:
+                if context is not None:
+                    await context.close()
+                await browser.close()
 
     async def get_pdf_content_from_doi(self, doi: str):
         pass

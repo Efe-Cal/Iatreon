@@ -1,4 +1,3 @@
-import asyncio
 import os
 import time
 from typing import Optional
@@ -61,7 +60,7 @@ class OpenAlexClient:
         return articles
        
 
-    def search_directly(self, query: str, max_results: int = 10) -> list[Article]:
+    async def search_directly(self, query: str, max_results: int = 10) -> list[Article]:
         print(f"\n[OpenAlex] Direct search: '{query}'")
 
         params = {
@@ -105,8 +104,14 @@ class OpenAlexClient:
                     a.source = "PMC XML Fetch"
 
             if a.pdf_url and not a.full_text_available:
-                a.full_text = asyncio.run(self.pdf_client.get_pdf_content(a.pdf_url))
-                a.full_text_available = bool(a.full_text)
+                try:
+                    a.full_text = await self.pdf_client.get_pdf_content(a.pdf_url)
+                    a.full_text_available = bool(a.full_text)
+                except Exception as e:
+                    print(f"[OpenAlex] PDF fetch failed for {a.pdf_url}: {e}")
+                    a.full_text = None
+                    a.full_text_available = False
+
                 if not a.full_text_available:
                     a.source = "PDF Download Failed"
                     if a.abstract:
@@ -150,6 +155,7 @@ class OpenAlexClient:
     
 if __name__ == "__main__":
     client = OpenAlexClient()
-    data = client.search_directly("inguinal hernia", max_results=5)
+    import asyncio
+    data = asyncio.run(client.search_directly("inguinal hernia", max_results=5))
     for article in data:
         print(f"\nTitle: {article.title}\nDOI: {article.doi}\nCitations: {article.citation_count}\nPDF: {article.pdf_url}\nFull Text Available: {article.full_text_available}\nSource: {article.source}\n\n---------------------\n\n")
