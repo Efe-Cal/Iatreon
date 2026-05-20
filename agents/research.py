@@ -1,18 +1,16 @@
-import json
 import os
 import re
 from dotenv import load_dotenv
 
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
-from langchain.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import RunnableConfig
 from langchain_core.tools import StructuredTool
 
-from db.models import IntakeSession, ResearchSession
+from db.models import Article, BookSection, IntakeSession, ResearchSession, WebSearchResult
 from db.repositories import ArticleRepo, BookSectionRepo, ResearchRepo, WebSearchResultRepo
-from db.schemas import ArticleData, ArticleData, BookSectionData, IntakeProfile
+from db.schemas import ArticleData, BookSectionData
 
 from context.processing.pipeline import run_pipeline
 from context.websearch import web_search, fetch_web_content
@@ -153,25 +151,105 @@ Medical Summary: {profile.medical_summary}
 """
         messages = [{"role": "user", "content": user_message}]
         response = await self.agent.ainvoke({"messages": messages}, config=self.config)
-        
-        return response["messages"][-1].content
-    
-    async def find_citation(self, content: str) -> str:
-        CITATION_PATTERN = r"\[(\d+)\]"
-        matches = re.findall(CITATION_PATTERN, content)
-        
-        if matches:
-            sources = await self.research_repo.get_all_session_sources(session_id=self.session_id)
-            print(matches)
-            all_sources = sources["articles"] + sources["book_sections"] + sources["web_search_results"]
-            sources_dict = {s[1]: s[0] for s in all_sources}
-            print(f"Sources dict: {json.dumps(sources_dict, indent=2, default=str)}")
-            cited_sources = []
-            for match in matches:
-                citation_num = int(match)
-                if citation_num in sources_dict:
-                    cited_sources.append(sources_dict[citation_num])
+        final_message = response["messages"][-1].content
+        research_report = final_message if isinstance(final_message, str) else str(final_message)
+        citations = await self.build_citation_manifest(research_report)
 
-            print(f"Cited sources: {cited_sources}")
-            return cited_sources
+        await self.research_repo.update_research_session(
+            session_id=self.session_id,
+            research_report=research_report,
+            citations=citations,
+        )
+
+        return research_report
+    
+    
+    async def _get_citation_lookup(self) -> dict[int, tuple[str, Article | BookSection | WebSearchResult]]:
+        sources = await self.research_repo.get_all_session_sources(session_id=self.session_id)
+        lookup: dict[int, tuple[str, Article | BookSection | WebSearchResult]] = {}
+
+        for source_type, source_rows in sources.items():
+            for source, citation_num in source_rows:
+                if citation_num is None:
+                    continue
+                lookup[int(citation_num)] = (source_type, source)
+
+        return lookup
+
+    def _serialize_citation(self, citation_num: int, source_type: str, source: Article | BookSection | WebSearchResult) -> dict:
+        if source_type == "articles":
+            return {
+                "citation_num": citation_num,
+                "source_type": source_type,
+                "source_id": str(source.id),
+                "title": source.title,
+                "doi": source.doi,
+            }
+
+        if source_type == "book_sections":
+            return {
+                "citation_num": citation_num,
+                "source_type": source_type,
+                "source_id": str(source.id),
+                "title": source.title,
+                "url": source.url,
+            }
+
+        return {
+            "citation_num": citation_num,
+            "source_type": source_type,
+            "source_id": str(source.id),
+            "title": source.title,
+            "url": source.url,
+        }
+
+    async def build_citation_manifest(self, content: str) -> dict[int, dict]:
+        citation_pattern = r"\[(\d+)\]"
+        matches = re.findall(citation_pattern, content)
+        if not matches:
+            return {}
+
+        citation_lookup = await self._get_citation_lookup()
+        citation_manifest = {}
+        seen_citations: set[int] = set()
+
+        for match in matches:
+            citation_num = int(match)
+            if citation_num in seen_citations:
+                continue
+
+            lookup_entry = citation_lookup.get(citation_num)
+            if lookup_entry is None:
+                continue
+
+            source_type, source = lookup_entry
+            citation_manifest[citation_num] = self._serialize_citation(citation_num, source_type, source)
+            seen_citations.add(citation_num)
+
+        return citation_manifest
+
+    async def find_citation(self, content: str) -> dict[int, Article | BookSection | WebSearchResult]:
+        citation_pattern = r"\[(\d+)\]"
+        matches = re.findall(citation_pattern, content)
+
+        if not matches:
+            return {}
+
+        citation_lookup = await self._get_citation_lookup()
+        cited_sources: dict[int, Article | BookSection | WebSearchResult] = {}
+        seen_citations: set[int] = set()
+
+        for match in matches:
+            citation_num = int(match)
+            if citation_num in seen_citations:
+                continue
+
+            lookup_entry = citation_lookup.get(citation_num)
+            if lookup_entry is None:
+                continue
+
+            cited_sources[citation_num] = lookup_entry[1]
+            seen_citations.add(citation_num)
+
+        return cited_sources
                     

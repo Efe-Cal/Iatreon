@@ -44,6 +44,8 @@ class ResearchSession(Base):
     articles: Mapped[list["SessionArticle"]] = relationship(back_populates="session", default_factory=list, cascade="all, delete-orphan")
     books: Mapped[list["SessionBookSection"]] = relationship(back_populates="session", default_factory=list, cascade="all, delete-orphan")
     web_search_results: Mapped[list["SessionWebSearchResult"]] = relationship(back_populates="session", default_factory=list, cascade="all, delete-orphan")
+    research_report: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    citations: Mapped[Optional[dict[int, dict]]] = mapped_column(JSON, default_factory=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
 
 class WebSearchResult(Base):

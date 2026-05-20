@@ -79,6 +79,25 @@ class ResearchRepo:
         await self.db.refresh(session)
         return session
 
+    async def update_research_session(
+        self,
+        session_id: uuid.UUID,
+        research_report: str | None = None,
+        citations: dict[int, dict] | None = None,
+    ) -> ResearchSession | None:
+        session = await self.db.get(ResearchSession, session_id)
+        if session is None:
+            return None
+
+        if research_report is not None:
+            session.research_report = research_report
+        if citations is not None:
+            session.citations = citations
+
+        await self.db.commit()
+        await self.db.refresh(session)
+        return session
+
     async def get_research_session(self, session_id: uuid.UUID) -> ResearchSession | None:
         return await self.db.get(ResearchSession, session_id)
 

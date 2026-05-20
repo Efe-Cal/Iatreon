@@ -37,7 +37,8 @@ async def main():
         
         citations = await research_agent.find_citation(research_results)
         print("Citation Check:")
-        print(citations)
+        for citation in citations:
+            print(type(citation), citation.title)
 
     
 if __name__ == "__main__":
