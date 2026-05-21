@@ -38,6 +38,7 @@ agent = create_agent(model=model,
                      checkpointer=checkpointer)
 
 messages = [
+    # {"role": "system", "content": system_prompt},
     {"role": "assistant", "content": "What brings you in today?"}
 ]
 
@@ -53,7 +54,10 @@ def run_intake() -> tuple[IntakeProfile, list[dict[str,str]]]:
         #     break
 
         try:
-            response = agent.invoke({"messages": user_input}, config=config)
+            response = agent.invoke(
+                {"messages": [{"role": "user", "content": user_input}]},
+                config=config,
+            )
                     
             end_intake_called = False
             if "messages" in response:
@@ -92,3 +96,53 @@ def run_intake() -> tuple[IntakeProfile, list[dict[str,str]]]:
     
     return final_patient_data, agent.get_state(config=config).values["messages"]
 
+
+#TODO: Have the model NOT produce an output normally in conversation. all we need will be produced at structured call
+async def run_intake_cli(message: str):
+    end_intake_called = False
+
+    async for chunk in agent.astream(
+        {"messages": [{"role": "user", "content": message}]},
+        config=config,
+        stream_mode=["messages", "updates"],
+        version="v2",
+    ):
+        if chunk["type"] == "messages":
+            message_chunk, _metadata = chunk["data"]
+            if isinstance(message_chunk.content, str) and message_chunk.content:
+                yield message_chunk.content
+            continue
+
+        if chunk["type"] != "updates":
+            continue
+
+        for _step, data in chunk["data"].items():
+            for streamed_message in data.get("messages", []):
+                if not getattr(streamed_message, "tool_calls", None):
+                    continue
+                for call in streamed_message.tool_calls:
+                    if call.get("name") == "end_of_intake":
+                        end_intake_called = True
+
+    if end_intake_called:
+        yield "END"
+        model.temperature = 0.3  # Lower temperature for more deterministic output
+        structured_model = model.with_structured_output(IntakeProfile)
+
+        try:
+            conversation_state = agent.get_state(config=config)
+            final_patient_data = structured_model.ainvoke(conversation_state.values["messages"])
+            with open("final_patient_data.json", "w") as f:
+                f.write(final_patient_data.model_dump_json(indent=2))
+            yield f"I have compiled the final patient data."
+            yield final_patient_data
+        except Exception as e:
+            print(f"\nFailed to generate final report: {e}")
+
+if __name__ == "__main__":
+    async def main():
+        async for chunk in run_intake_cli("I have abdominal pain"):
+            print(chunk)
+            
+    import asyncio
+    asyncio.run(main())

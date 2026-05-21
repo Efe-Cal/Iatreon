@@ -1,0 +1,24 @@
+Screen {
+        layout: vertical;
+}
+#message_container {
+        height: 1fr;
+        border: solid green;
+}
+    
+VerticalScroll {
+        height: 1fr;
+    }
+
+Message {
+    height: auto;
+    border: round white;
+    background: #222;
+}
+
+#input {
+    dock: bottom;
+    margin-bottom: 1;
+    height: 3;
+    border: round $primary;
+}
