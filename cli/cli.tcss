@@ -22,3 +22,12 @@ Message {
     height: 3;
     border: round $primary;
 }
+
+#processes {
+    dock: bottom;
+    padding-left: 2;
+    margin-bottom: 1;
+    height: 3;
+    border: round $secondary;
+    display: none;
+}

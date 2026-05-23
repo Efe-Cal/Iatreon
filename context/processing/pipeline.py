@@ -22,9 +22,9 @@ class MedicalKnowledgePipeline:
         self.pdf_client = PDFClient()
 
     async def search(self, query: str, max_results: int = 10, include_books: bool = True) -> dict:
-        print(f"\n{'='*60}")
-        print(f"MEDICAL PIPELINE — Query: '{query}'")
-        print(f"{'='*60}")
+        # print(f"\n{'='*60}")
+        # print(f"MEDICAL PIPELINE — Query: '{query}'")
+        # print(f"{'='*60}")
 
         pubmed_ids = self.pubmed.search(query, max_results=max_results)
         articles = self.pubmed.fetch_abstracts(pubmed_ids)
@@ -52,14 +52,14 @@ class MedicalKnowledgePipeline:
         pdf_count = sum(1 for a in articles if a.pdf_url and not a.full_text_available)
         abstract_count = len(articles) - full_text_count - pdf_count
 
-        print(f"\n{'='*60}")
-        print("RESULTS SUMMARY")
-        print(f"  Total articles : {len(articles)}")
-        print(f"  Full text (PMC): {full_text_count}")
-        print(f"  PDF links (OA) : {pdf_count}")
-        print(f"  Abstract only  : {abstract_count}")
-        print(f"  Book sections  : {len(books)}")
-        print(f"{'='*60}\n")
+        # print(f"\n{'='*60}")
+        # print("RESULTS SUMMARY")
+        # print(f"  Total articles : {len(articles)}")
+        # print(f"  Full text (PMC): {full_text_count}")
+        # print(f"  PDF links (OA) : {pdf_count}")
+        # print(f"  Abstract only  : {abstract_count}")
+        # print(f"  Book sections  : {len(books)}")
+        # print(f"{'='*60}\n")
 
         return {
             "query": query,

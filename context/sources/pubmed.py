@@ -10,7 +10,7 @@ from ..models import Article
 class PubMedClient:
     def search(self, query: str, max_results: int = 20) -> list[str]:
         """Search PubMed and return a list of PubMed IDs."""
-        print(f"\n[PubMed] Searching: '{query}' (max {max_results} results)")
+        # print(f"\n[PubMed] Searching: '{query}' (max {max_results} results)")
 
         params = {
             "db": "pubmed",
@@ -30,7 +30,7 @@ class PubMedClient:
             print(f"Error decoding JSON for query: {query}")
             print(f"Response content: {r.text}")
             return []
-        print(f"[PubMed] Found {len(ids)} articles")
+        # print(f"[PubMed] Found {len(ids)} articles")
         return ids
 
     def fetch_abstracts(self, pubmed_ids: list[str]) -> list[Article]:
@@ -38,7 +38,7 @@ class PubMedClient:
         if not pubmed_ids:
             return []
 
-        print(f"[PubMed] Fetching metadata for {len(pubmed_ids)} articles...")
+        # print(f"[PubMed] Fetching metadata for {len(pubmed_ids)} articles...")
 
         params = {
             "db": "pubmed",

@@ -1,12 +1,15 @@
 import os
 import re
+from typing import AsyncGenerator
 from dotenv import load_dotenv
+from uuid import UUID
 
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import RunnableConfig
 from langchain_core.tools import StructuredTool
+from langchain_core.messages import AIMessageChunk
 
 from db.models import Article, BookSection, IntakeSession, ResearchSession, WebSearchResult
 from db.repositories import ArticleRepo, BookSectionRepo, ResearchRepo, WebSearchResultRepo
@@ -21,13 +24,13 @@ with open(os.path.join(os.path.dirname(__file__), "prompts", "research_agent_sys
     system_prompt = f.read()
 
 class ResearchAgent:
-    def __init__(self, db, research_repo: ResearchRepo, research_session: ResearchSession):
+    def __init__(self, db, research_repo: ResearchRepo, research_session_id: UUID):
         self.model = ChatOpenAI(model="gemini-3-flash-preview",
                    base_url="https://ai.hackclub.com/proxy/v1",
                    api_key=os.getenv("HCAI_API_KEY"),
                    temperature=0.7)
         self.checkpointer = InMemorySaver()
-        self.session_id = research_session.id
+        self.session_id = research_session_id
         self.config: RunnableConfig = {"configurable": {"thread_id": str(self.session_id)}}
         self.research_repo = research_repo
         
@@ -107,7 +110,7 @@ class ResearchAgent:
         Returns:
             str: A formatted string containing the search results, including relevant articles and book sections.
         """
-        print(f"Running medical literature search for query: {query}")
+        # print(f"Running medical literature search for query: {query}")
         results = await run_pipeline(query, max_articles=max_articles, include_books=include_books)
         articles = results["articles"]
         books = results["books"]
@@ -140,8 +143,8 @@ class ResearchAgent:
         return "<source>\n" + content + "\n</source>"
     
     
-
-    async def run(self, profile: IntakeSession) -> str:
+    #TODO: Multiple tools called at once. Why?
+    async def run(self, profile: IntakeSession) -> AsyncGenerator[str | tuple[str, dict[int, dict]], None]:
         user_message = f"""Given the following patient profile, perform research to gather relevant medical information. Use the tools at your disposal to search the web and medical literature for insights related to the patient's chief complaint, symptoms, and red flags. Summarize your findings in a comprehensive report.
 # Patient Profile
 Chief Complaint: {profile.chief_complaint}
@@ -150,18 +153,40 @@ Red Flags: {', '.join(profile.red_flags)}
 Medical Summary: {profile.medical_summary}
 """
         messages = [{"role": "user", "content": user_message}]
-        response = await self.agent.ainvoke({"messages": messages}, config=self.config)
-        final_message = response["messages"][-1].content
+        parts = []
+        async for event in self.agent.astream_events({"messages": messages}, config=self.config, version="v2"):
+            print(f"Received event: {event['event']}")
+            if event["event"] == "on_chat_model_stream":
+                chunk: AIMessageChunk = event["data"]["chunk"]
+                print(f"Received chunk: {chunk}")
+                if chunk.content:
+                    if isinstance(chunk.content, str):
+                        print(chunk.content, end="", flush=True)
+                        parts.append(chunk.content)
+                    elif isinstance(chunk.content, list):
+                        for block in chunk.content:
+                            print(f"Processing block: {block}")
+                            if block["type"] == "text":
+                                text = block["text"]
+                                print(text, end="", flush=True)
+                                parts.append(text)
+                    
+            if event["event"] == "on_tool_start":
+                print(f"Tool {event}")
+                print(f"Tool {event['name']} called with input: {event['data']['input']}") 
+                yield "Tool called: " + event["name"] + " with input: " + str(event["data"]["input"])
+            # else:
+            #     print(f"Event: {event['event']}, Data: {event['data']}")
+            
+        final_message = "".join(parts)
+            
+        # final_message = response["messages"][-1].content
+        
         research_report = final_message if isinstance(final_message, str) else str(final_message)
+        
         citations = await self.build_citation_manifest(research_report)
 
-        await self.research_repo.update_research_session(
-            session_id=self.session_id,
-            research_report=research_report,
-            citations=citations,
-        )
-
-        return research_report
+        yield (research_report, citations)
     
     
     async def _get_citation_lookup(self) -> dict[int, tuple[str, Article | BookSection | WebSearchResult]]:
@@ -252,4 +277,36 @@ Medical Summary: {profile.medical_summary}
             seen_citations.add(citation_num)
 
         return cited_sources
-                    
+
+if __name__ == "__main__":
+    async def main():
+        from db.db import SessionLocal
+        from db.repositories import IntakeRepo, ResearchRepo
+
+        async with SessionLocal() as db:
+            intake_repo = IntakeRepo(db)
+            research_repo = ResearchRepo(db)
+
+            intake_session = await intake_repo.get_session(UUID("73aa1e576fe244f1b294b93fb1179c58"))
+            if intake_session is None:
+                print("No intake session found. Please run the intake process first.")
+            else:
+                research_session = await research_repo.create_research_session(intake_session.user_id, intake_session.id)
+                ResearchSession(intake_session_id=intake_session.id, user_id=intake_session.user_id)
+                research_agent = ResearchAgent(db, research_repo, research_session.id)
+                async for chunk in research_agent.run(intake_session):
+                    if isinstance(chunk, str):
+                        print(chunk)
+                    elif isinstance(chunk, tuple) and len(chunk) == 2:
+                        research_report, citations = chunk
+                        print(citations.keys())
+                print("Final Research Report:")
+                print(research_report)
+            
+            await research_repo.update_research_session(
+                session_id=research_session.id,
+                research_report=research_report,
+                citations=citations,
+            )
+    import asyncio
+    asyncio.run(main())

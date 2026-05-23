@@ -152,7 +152,7 @@ class PDFClient:
     def _fetch_pdf_with_requests(self, url: str) -> str:
         import requests
 
-        print(f"[PDFClient] Fetching PDF content with requests from URL: {url}")
+        # print(f"[PDFClient] Fetching PDF content with requests from URL: {url}")
         try:
             response = requests.get(url, headers=HEADERS, timeout=10)
             response.raise_for_status()
@@ -160,20 +160,20 @@ class PDFClient:
                 tmp_file.write(response.content)
                 return self.extract_text_from_pdf(tmp_file.name)
         except Exception as e:
-            print(f"[PDFClient] Error fetching PDF with requests: {e}")
+            # print(f"[PDFClient] Error fetching PDF with requests: {e}")
             return None
 
     async def get_pdf_content(self, url: str):
-        print("[PDFClient] Attempting to fetch PDF content from URL:", url)
+        # print("[PDFClient] Attempting to fetch PDF content from URL:", url)
         if self._is_probable_non_pdf_asset(url):
-            print(f"[PDFClient] Skipping non-PDF asset URL: {url}")
+            # print(f"[PDFClient] Skipping non-PDF asset URL: {url}")
             return None
 
         async with async_playwright() as p:
             try:
                 browser = await p.chromium.connect("ws://localhost:3000/")
             except Exception as e:
-                print(f"[PDFClient] Error connecting to browser")
+                # print(f"[PDFClient] Error connecting to browser")
                 return self._fetch_pdf_with_requests(url)
             context = None
             try:
@@ -190,17 +190,17 @@ class PDFClient:
                 pdf_path = await self.download_pdf(page, normalized_url)
 
                 if not pdf_path and not self._is_probable_pdf_url(normalized_url):
-                    print("[PDFClient] No PDF download initiated, searching page for PDF links...")
+                    # print("[PDFClient] No PDF download initiated, searching page for PDF links...")
                     try:
                         await page.goto(url)
                     except PlaywrightError as e:
                         if "Download is starting" in str(e):
-                            print(f"[PDFClient] URL triggered a download while loading page: {url}")
+                            # print(f"[PDFClient] URL triggered a download while loading page: {url}")
                             return None
                         raise
 
                     pdf_links = await self.search_page_for_pdf_links(page)
-                    print(f"[PDFClient] Found {len(pdf_links)} potential PDF links on the page.")
+                    # print(f"[PDFClient] Found {len(pdf_links)} potential PDF links on the page.")
 
                     pdf_links = sorted(pdf_links, key=lambda x: x.endswith(".pdf"), reverse=True)
                     for link in pdf_links:
@@ -214,8 +214,6 @@ class PDFClient:
                     await context.close()
                 await browser.close()
 
-    async def get_pdf_content_from_doi(self, doi: str):
-        pass
     
 if __name__ == "__main__":
     import asyncio

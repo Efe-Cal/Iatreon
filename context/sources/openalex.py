@@ -27,7 +27,7 @@ class OpenAlexClient:
         return h
 
     def enrich_articles(self, articles: list[Article]) -> list[Article]:
-        print(f"\n[OpenAlex] Enriching {len(articles)} articles with citations + PDF links...")
+        # print(f"\n[OpenAlex] Enriching {len(articles)} articles with citations + PDF links...")
         enriched = 0
 
         for article in articles:
@@ -56,12 +56,12 @@ class OpenAlexClient:
 
             time.sleep(RATE_LIMIT_DELAY)
 
-        print(f"[OpenAlex] Found PDF links for {enriched} additional articles")
+        # print(f"[OpenAlex] Found PDF links for {enriched} additional articles")
         return articles
        
 
     async def search_directly(self, query: str, max_results: int = 10) -> list[Article]:
-        print(f"\n[OpenAlex] Direct search: '{query}'")
+        # print(f"\n[OpenAlex] Direct search: '{query}'")
 
         params = {
             "search": query,
@@ -73,7 +73,7 @@ class OpenAlexClient:
         r = requests.get(f"{OPENALEX_BASE}/works", params=params, headers=self._headers())
         r.raise_for_status()
         time.sleep(RATE_LIMIT_DELAY)
-        print(f"[OpenAlex] Found {r.json().get('meta', {}).get('count', 0)} total results, returning top {max_results}")
+        # print(f"[OpenAlex] Found {r.json().get('meta', {}).get('count', 0)} total results, returning top {max_results}")
         
         results = r.json().get("results", [])
         articles = []
@@ -98,7 +98,7 @@ class OpenAlexClient:
 
             if not a.full_text_available:
                 if pmc_id := PDFClient._extract_pmc_id(oa.get("oa_url", "")):
-                    print(f"[OpenAlex] Found PMC ID {pmc_id}, getting full text...")
+                    # print(f"[OpenAlex] Found PMC ID {pmc_id}, getting full text...")
                     a.full_text = self.pmc_client.fetch_full_text(pmc_id)
                     a.full_text_available = bool(a.full_text)
                     a.source = "PMC XML Fetch"
@@ -137,7 +137,7 @@ class OpenAlexClient:
         try:
             r = requests.get(url, headers=self._headers())
             if r.status_code == 200:
-                print(f"[OpenAlex] Found data for DOI: {doi}")
+                # print(f"[OpenAlex] Found data for DOI: {doi}")
                 return r.json()
         except Exception:
             pass
