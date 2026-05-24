@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 from typing import Optional
@@ -70,9 +71,14 @@ class OpenAlexClient:
             "select": "id,title,abstract_inverted_index,doi,cited_by_count,open_access,publication_year,authorships,primary_location,type,concepts",
         }
 
-        r = requests.get(f"{OPENALEX_BASE}/works", params=params, headers=self._headers())
+        r = await asyncio.to_thread(
+            requests.get,
+            f"{OPENALEX_BASE}/works",
+            params=params,
+            headers=self._headers(),
+        )
         r.raise_for_status()
-        time.sleep(RATE_LIMIT_DELAY)
+        await asyncio.sleep(RATE_LIMIT_DELAY)
         # print(f"[OpenAlex] Found {r.json().get('meta', {}).get('count', 0)} total results, returning top {max_results}")
         
         results = r.json().get("results", [])

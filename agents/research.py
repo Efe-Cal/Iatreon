@@ -1,3 +1,4 @@
+import asyncio
 import os
 import re
 from typing import AsyncGenerator
@@ -11,6 +12,7 @@ from langgraph.config import RunnableConfig
 from langchain_core.tools import StructuredTool
 from langchain_core.messages import AIMessageChunk
 
+from agents.serial_tool_middleware import SerialToolMiddleware
 from db.models import Article, BookSection, IntakeSession, ResearchSession, WebSearchResult
 from db.repositories import ArticleRepo, BookSectionRepo, ResearchRepo, WebSearchResultRepo
 from db.schemas import ArticleData, BookSectionData
@@ -41,7 +43,7 @@ class ResearchAgent:
         )
 
         self.fetch_web_content_tool = StructuredTool.from_function(
-            func=self._fetch_web_content,
+            coroutine=self._fetch_web_content,
             name="fetch_web_content",
             description=fetch_web_content.__doc__,
         )
@@ -51,11 +53,12 @@ class ResearchAgent:
             name="search_medical_literature",
             description="Run the medical literature search with a given query.",
         )
-        
+
         self.agent = create_agent(model=self.model,
                                   tools=[self.web_search_tool, self.fetch_web_content_tool, self.search_medical_literature_tool],
                                   system_prompt=system_prompt,
-                                  checkpointer=self.checkpointer)
+                                  checkpointer=self.checkpointer,
+                                  middleware=[SerialToolMiddleware()])
 
         self.db = db
         self.article_repo = ArticleRepo(self.db)
@@ -66,7 +69,7 @@ class ResearchAgent:
     
     async def _web_search(self, query: str) -> str:
         print(f"Performing web search for query: {query}")
-        results = web_search(query)
+        results = await asyncio.to_thread(web_search, query)
         for offset, result in enumerate(results, start=1):
             citation_num = self.citation_num + offset
             db_result = await self.web_search_result_repo.upsert(
@@ -90,9 +93,9 @@ class ResearchAgent:
         )
         return f"<source>\nWeb search results for query '{query}':\n{formatted_results}\n</source>"
     
-    def _fetch_web_content(self, url: str) -> str:
+    async def _fetch_web_content(self, url: str) -> str:
         print(f"Fetching content from URL: {url}")
-        content = fetch_web_content(url)
+        content = await asyncio.to_thread(fetch_web_content, url)
         return f"Fetched content from {url}:\n{content}"
 
     async def _search_medical_literature(self, query: str, max_articles: int = 5, include_books: bool = False) -> str:
@@ -155,7 +158,7 @@ Medical Summary: {profile.medical_summary}
         messages = [{"role": "user", "content": user_message}]
         parts = []
         async for event in self.agent.astream_events({"messages": messages}, config=self.config, version="v2"):
-            print(f"Received event: {event['event']}")
+            print(f"Received event: {event}")
             if event["event"] == "on_chat_model_stream":
                 chunk: AIMessageChunk = event["data"]["chunk"]
                 print(f"Received chunk: {chunk}")
@@ -172,9 +175,13 @@ Medical Summary: {profile.medical_summary}
                                 parts.append(text)
                     
             if event["event"] == "on_tool_start":
-                print(f"Tool {event}")
-                print(f"Tool {event['name']} called with input: {event['data']['input']}") 
-                yield "Tool called: " + event["name"] + " with input: " + str(event["data"]["input"])
+                if event["name"] == "web_search":
+                    yield f"Searching the web for: {event['data']['input']['query']}\n"
+                elif event["name"] == "fetch_web_content":
+                    yield f"Fetching content from URL: {event['data']['input']['url']}\n"
+                elif event["name"] == "search_medical_literature":
+                        yield f"Searching medical literature for query: {event['data']['input']['query']}\n"
+                # yield "Tool called: " + event["name"] + " with input: " + str(event["data"]["input"])
             # else:
             #     print(f"Event: {event['event']}, Data: {event['data']}")
             

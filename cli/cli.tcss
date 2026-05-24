@@ -28,6 +28,14 @@ Message {
     padding-left: 2;
     margin-bottom: 1;
     height: 3;
-    border: round $secondary;
     display: none;
+}
+
+#spinner {
+    width: 3;
+}
+
+#processing_text {
+    width: 1fr;
+    content-align: left middle;
 }

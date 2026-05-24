@@ -90,7 +90,7 @@ class PMCClient:
 
     def enrich_articles_with_fulltext(self, articles: list[Article]) -> list[Article]:
         """Try to get PMC full text for each article."""
-        print(f"\n[PMC] Attempting full text retrieval for {len(articles)} articles...")
+        # print(f"\n[PMC] Attempting full text retrieval for {len(articles)} articles...")
         success = 0
 
         for article in articles:
@@ -108,5 +108,5 @@ class PMCClient:
                     article.source = "PMC Full Text"
                     success += 1
 
-        print(f"[PMC] Retrieved full text for {success}/{len(articles)} articles")
+        # print(f"[PMC] Retrieved full text for {success}/{len(articles)} articles")
         return articles

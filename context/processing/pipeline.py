@@ -1,3 +1,4 @@
+import asyncio
 import json
 from dataclasses import asdict
 import re
@@ -26,14 +27,14 @@ class MedicalKnowledgePipeline:
         # print(f"MEDICAL PIPELINE — Query: '{query}'")
         # print(f"{'='*60}")
 
-        pubmed_ids = self.pubmed.search(query, max_results=max_results)
-        articles = self.pubmed.fetch_abstracts(pubmed_ids)
+        pubmed_ids = await asyncio.to_thread(self.pubmed.search, query, max_results=max_results)
+        articles = await asyncio.to_thread(self.pubmed.fetch_abstracts, pubmed_ids)
 
         for article in articles:
             article.source = "PubMed Abstract"
 
-        articles = self.pmc.enrich_articles_with_fulltext(articles)
-        articles = self.openalex.enrich_articles(articles)
+        articles = await asyncio.to_thread(self.pmc.enrich_articles_with_fulltext, articles)
+        articles = await asyncio.to_thread(self.openalex.enrich_articles, articles)
         for article in articles:
             if not article.full_text_available and article.pdf_url:
                 article.full_text = await self.pdf_client.get_pdf_content(article.pdf_url)
@@ -44,9 +45,9 @@ class MedicalKnowledgePipeline:
 
         books = []
         if include_books:
-            books = self.bookshelf.get_book_contents(query, num_results=3)
+            books = await asyncio.to_thread(self.bookshelf.get_book_contents, query, num_results=3)
 
-        articles = self.ranker.rank(articles)
+        articles = await asyncio.to_thread(self.ranker.rank, articles)
 
         full_text_count = sum(1 for a in articles if a.full_text_available)
         pdf_count = sum(1 for a in articles if a.pdf_url and not a.full_text_available)
