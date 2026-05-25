@@ -15,7 +15,7 @@ patient_model = ChatOpenAI(model="gemini-3-flash-preview",
                    temperature=1)
 
 
-def mock_patient_response(messages):
+async def mock_patient_response(messages):
     messages.pop(0)
     messages.insert(0, {"role": "system", "content": """# Role
 You are a diverse range of "Mock Patients" designed for medical intake training. Your goal is to provide a realistic, immersive simulation for an intake agent.
@@ -58,4 +58,4 @@ Low to Moderate. The goal is to provide a realistic training experience for the 
             elif type(msg) == AIMessage:
                 messages[i] = {"role": "user", "content": msg.content}
 
-    return patient_model.invoke(input=messages).content
+    return await patient_model.ainvoke(input=messages).content

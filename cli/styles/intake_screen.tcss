@@ -1,0 +1,60 @@
+$primary: #3873f2;
+$secondary: #14B8A6
+
+Screen {
+    layout: vertical;
+}
+
+#message_container {
+    height: 1fr;
+    border: solid $secondary;
+}
+
+VerticalScroll {
+    height: 1fr;
+}
+
+Message {
+    height: auto;
+    border: round white;
+    background: #222;
+}
+
+#start_research {
+    width: auto;
+    margin: 0 1 1 1;
+}
+
+#research_status_row {
+    height: auto;
+    margin: 0 1 1 1;
+}
+
+#input {
+    margin: 0 1 1 1;
+    height: 3;
+    border: round $primary;
+}
+
+#processes {
+    width: 1fr;
+    padding: 0 1;
+    height: auto;
+    border: none;
+}
+
+#spinner {
+    width: 3;
+    content-align: center middle;
+}
+
+#processing_text {
+    width: 1fr;
+    content-align: left middle;
+}
+
+#see_research_report {
+    width: auto;
+    height: auto;
+}
+

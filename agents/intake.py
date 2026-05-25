@@ -45,6 +45,7 @@ messages = [
 agent.update_state(config=config, values={"messages": messages})
 
 def run_intake() -> tuple[IntakeProfile, list[dict[str,str]]]:
+    # Deprecated
     print("Assistant: What brings you in today? (Type 'quit' to exit)")
     
     while True:
@@ -100,8 +101,8 @@ def run_intake() -> tuple[IntakeProfile, list[dict[str,str]]]:
 #TODO: Have the model NOT produce an output normally in conversation. all we need will be produced at structured call
 async def run_intake_cli(message: str):
     end_intake_called = False
-    if not message.strip():
-        message = mock_patient_response(agent.get_state(config=config).values["messages"].copy())
+    if message.strip()==".":
+        message = await mock_patient_response(agent.get_state(config=config).values["messages"].copy())
         yield f"**Patient:** {message}   \n\n\n\n\n"
 
     async for chunk in agent.astream(
@@ -135,8 +136,7 @@ async def run_intake_cli(message: str):
         try:
             conversation_state = agent.get_state(config=config)
             final_patient_data = await structured_model.ainvoke(conversation_state.values["messages"])
-            with open("final_patient_data.json", "w") as f:
-                f.write(final_patient_data.model_dump_json(indent=2))
+
             yield f"I have compiled the final patient data."
             yield final_patient_data, conversation_state.values["messages"]
         except Exception as e:
