@@ -25,6 +25,9 @@ load_dotenv()
 with open(os.path.join(os.path.dirname(__file__), "prompts", "research_agent_system_prompt.txt")) as f:
     system_prompt = f.read()
 
+
+#TODO: In addition to the pipeline allow single source queries too
+
 class ResearchAgent:
     def __init__(self, db, research_repo: ResearchRepo, research_session_id: UUID):
         self.model = ChatOpenAI(model="gemini-3-flash-preview",
@@ -58,7 +61,8 @@ class ResearchAgent:
                                   tools=[self.web_search_tool, self.fetch_web_content_tool, self.search_medical_literature_tool],
                                   system_prompt=system_prompt,
                                   checkpointer=self.checkpointer,
-                                  middleware=[SerialToolMiddleware()])
+                                )
+                                #middleware=[SerialToolMiddleware()])
 
         self.db = db
         self.article_repo = ArticleRepo(self.db)
@@ -66,12 +70,17 @@ class ResearchAgent:
         self.web_search_result_repo = WebSearchResultRepo(self.db)
         
         self.citation_num = 0
+        self._citation_lock = asyncio.Lock()
     
     async def _web_search(self, query: str) -> str:
         print(f"Performing web search for query: {query}")
         results = await asyncio.to_thread(web_search, query)
-        for offset, result in enumerate(results, start=1):
-            citation_num = self.citation_num + offset
+
+        with await self._citation_lock:
+            start = self.citation_num + 1
+            self.citation_num += len(results)
+
+        for citation_num, result in enumerate(results, start=start):
             db_result = await self.web_search_result_repo.upsert(
                 query=query,
                 url=result["url"],
@@ -84,7 +93,7 @@ class ResearchAgent:
                 web_search_result_id=db_result.id,
                 citation_num=citation_num
             )
-        self.citation_num += len(results)
+
         formatted_results = "\n\n".join(
             [
                 f"- {r['title']} ({r['url']})\n" + "\n".join(r['highlights'])
@@ -118,8 +127,12 @@ class ResearchAgent:
         articles = results["articles"]
         books = results["books"]
 
+        async with self._citation_lock:
+            start = self.citation_num + 1
+            self.citation_num += len(articles) + len(books)
+        
         content = f"Search results for query: '{query}'\n\nArticles:\n"
-        for i, article in enumerate(articles, 1 + self.citation_num):
+        for i, article in enumerate(articles, start=start):
             content += f"[{i}] {article['title']} ({article['journal']}, {article['year']}, Citations: {article['citation_count']})\nAuthors: {', '.join(article['authors'])}\nAbstract: {article['abstract']}\n\n"
             db_article = await self.article_repo.upsert(ArticleData(**article))
             await self.article_repo.link_to_session(
@@ -132,7 +145,7 @@ class ResearchAgent:
             
         if books:
             content += f"Relevant Book Sections:\n"
-            for i, book in enumerate(books, len(articles) + 1 + self.citation_num):
+            for i, book in enumerate(books, start + len(articles)):
                 content += f"[{i}] {book['title']}\nContent: {book['text']}\n\n"
                 db_section = await self.book_section_repo.upsert(BookSectionData(**book))
                 await self.book_section_repo.link_to_session(
@@ -142,11 +155,8 @@ class ResearchAgent:
                     citation_num=i
                 )
 
-        self.citation_num += len(articles) + len(books)
         return "<source>\n" + content + "\n</source>"
     
-    
-    #TODO: Multiple tools called at once. Why?
     async def run(self, profile: IntakeSession) -> AsyncGenerator[str | tuple[str, dict[int, dict]], None]:
         user_message = f"""Given the following patient profile, perform research to gather relevant medical information. Use the tools at your disposal to search the web and medical literature for insights related to the patient's chief complaint, symptoms, and red flags. Summarize your findings in a comprehensive report.
 # Patient Profile
