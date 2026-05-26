@@ -31,7 +31,7 @@ USER_AGENTS = [
 
 class BookshelfClient:
     def __init__(self):
-        self.exa = Exa(api_key=os.getenv("HCAI_API_KEY"), base_url="https://ai.hackclub.com/proxy/v1/exa")
+        self.exa = Exa(api_key=os.getenv("EXA_API_KEY", os.getenv("AI_API_KEY")), base_url=os.getenv("EXA_BASE_URL", "https://ai.hackclub.com/proxy/v1/exa"))
         self.exa.headers["Authorization"] = f"Bearer {self.exa.headers['x-api-key']}"
 
     def get_ncbi_books(self, query: str, num_results: int = 5) -> list[dict]:

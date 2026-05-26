@@ -7,3 +7,9 @@
     height: 1fr;
     margin: 1;
 }
+MarkdownH6 {
+    color: transparent;
+    margin: 0;
+    padding: 0;
+    height: 1;
+}
