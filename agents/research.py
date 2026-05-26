@@ -27,7 +27,8 @@ with open(os.path.join(os.path.dirname(__file__), "prompts", "research_agent_sys
 
 
 #TODO: In addition to the pipeline allow single source queries too
-
+#TODO: Have another agent (inference) guess some probable diseases based on the profile then use that in research agent
+#TODO: Add demographics to the profile
 class ResearchAgent:
     def __init__(self, db, research_repo: ResearchRepo, research_session_id: UUID):
         self.model = ChatOpenAI(model="gemini-3-flash-preview",
@@ -76,7 +77,7 @@ class ResearchAgent:
         print(f"Performing web search for query: {query}")
         results = await asyncio.to_thread(web_search, query)
 
-        with await self._citation_lock:
+        async with self._citation_lock:
             start = self.citation_num + 1
             self.citation_num += len(results)
 
@@ -158,12 +159,22 @@ class ResearchAgent:
         return "<source>\n" + content + "\n</source>"
     
     async def run(self, profile: IntakeSession) -> AsyncGenerator[str | tuple[str, dict[int, dict]], None]:
+        symptoms = ', '.join(s["name"] for s in profile.symptoms) if profile.symptoms else "None provided"
+        red_flags = ', '.join(profile.red_flags) if profile.red_flags else "None provided"
+        medical_summary = profile.medical_summary if profile.medical_summary else "None provided"
+
+        
         user_message = f"""Given the following patient profile, perform research to gather relevant medical information. Use the tools at your disposal to search the web and medical literature for insights related to the patient's chief complaint, symptoms, and red flags. Summarize your findings in a comprehensive report.
+
+Prioritize urgent/emergent causes first when red flags are present. Normalize lay language into standard medical terminology and search both symptom-level and diagnosis-level queries. Clearly separate likely/common causes from urgent causes, and do not assume a definitive diagnosis.
+
+Produce a comprehensive, citation-grounded report
+
 # Patient Profile
 Chief Complaint: {profile.chief_complaint}
-Symptoms: {', '.join(s["name"] for s in profile.symptoms)}
-Red Flags: {', '.join(profile.red_flags)}
-Medical Summary: {profile.medical_summary}
+Symptoms: {symptoms}
+Red Flags: {red_flags}
+Medical Summary: {medical_summary}
 """
         messages = [{"role": "user", "content": user_message}]
         parts = []

@@ -1,7 +1,9 @@
 import os
+from typing import AsyncGenerator
 from dotenv import load_dotenv
 
 from langchain.agents import create_agent
+from langchain_core.messages import AIMessageChunk
 from langchain_openai import ChatOpenAI
 from langchain.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
@@ -23,7 +25,7 @@ with open(os.path.join(__file__, "..", "prompts", "intake_agent_system_prompt.tx
     system_prompt = f.read()
 
 
-@tool
+@tool("end_of_intake", return_direct=True)
 def end_of_intake():
     """Tool to signal the end of the intake process."""
     return "Intake process has been completed."
@@ -99,34 +101,42 @@ def run_intake() -> tuple[IntakeProfile, list[dict[str,str]]]:
 
 
 #TODO: Have the model NOT produce an output normally in conversation. all we need will be produced at structured call
-async def run_intake_cli(message: str):
+def _iter_stream_text(content: str | list[dict] | None):
+    if isinstance(content, str):
+        if content:
+            yield content
+        return
+
+    if not isinstance(content, list):
+        return
+
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+
+        if block.get("type") == "text" and block.get("text"):
+            yield block["text"]
+
+
+async def run_intake_cli(message: str) -> AsyncGenerator[str | tuple[IntakeProfile, list[dict[str, str]]], None]:
     end_intake_called = False
-    if message.strip()==".":
+    if message.strip() == ".":
         message = await mock_patient_response(agent.get_state(config=config).values["messages"].copy())
         yield f"**Patient:** {message}   \n\n\n\n\n"
 
-    async for chunk in agent.astream(
+    async for event in agent.astream_events(
         {"messages": [{"role": "user", "content": message}]},
         config=config,
-        stream_mode=["messages", "updates"],
         version="v2",
     ):
-        if chunk["type"] == "messages":
-            message_chunk, _metadata = chunk["data"]
-            if isinstance(message_chunk.content, str) and message_chunk.content:
-                yield message_chunk.content
+        if event["event"] == "on_chat_model_stream":
+            chunk: AIMessageChunk = event["data"]["chunk"]
+            for text in _iter_stream_text(chunk.content):
+                yield text
             continue
 
-        if chunk["type"] != "updates":
-            continue
-
-        for _step, data in chunk["data"].items():
-            for streamed_message in data.get("messages", []):
-                if not getattr(streamed_message, "tool_calls", None):
-                    continue
-                for call in streamed_message.tool_calls:
-                    if call.get("name") == "end_of_intake":
-                        end_intake_called = True
+        if event["event"] in {"on_tool_start", "on_tool_end"} and event.get("name") == "end_of_intake":
+            end_intake_called = True
 
     if end_intake_called:
         yield "END"

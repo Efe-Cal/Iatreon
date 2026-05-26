@@ -58,4 +58,4 @@ Low to Moderate. The goal is to provide a realistic training experience for the 
             elif type(msg) == AIMessage:
                 messages[i] = {"role": "user", "content": msg.content}
 
-    return await patient_model.ainvoke(input=messages).content
+    return (await patient_model.ainvoke(input=messages)).content

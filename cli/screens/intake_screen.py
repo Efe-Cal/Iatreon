@@ -33,6 +33,7 @@ class IntakeScreen(Screen):
         super().__init__()
         self.intake_session = None
         self.research_session_id = None
+        self.intake_running = False
         self.research_running = False
 
     def on_worker_state_changed(self, event) -> None:
@@ -64,7 +65,7 @@ class IntakeScreen(Screen):
     
     async def on_mount(self):
         self.chat = self.query_one("#message_container", VerticalScroll)
-        self.chat.mount(Message("**Assistant:** Hey, I am Iatreon! What brings you in today?", type_="assistant"))
+        await self.chat.mount(Message("**Assistant:** Hey, I am Iatreon! What brings you in today?", type_="assistant"))
         
         self.start_research = self.query_one("#start_research", Button)
         self.start_research.display = False
@@ -94,42 +95,68 @@ class IntakeScreen(Screen):
         self.processing_text.update(message)
         self.see_research_report.display = show_report
 
+    def begin_intake_ui(self) -> None:
+        self.intake_running = True
+        self.input.disabled = True
+
+    def finish_intake_ui(self) -> None:
+        self.intake_running = False
+        self.input.disabled = False
+        self.input.focus()
+
 
     async def on_input_submitted(self, event: Input.Submitted):
-        if self.research_running:
+        if self.research_running or self.intake_running:
             return
 
         if not event.value.strip():
             return
 
-        self.chat.mount(Message(event.value))
+        user_message = event.value
+        await self.chat.mount(Message(user_message))
         event.input.value = ""
 
         # auto-scroll to bottom
         self.chat.scroll_end()
-        
-        async for chunk in run_intake_cli(event.value):
-            if not chunk:
-                continue
+        self.begin_intake_ui()
+        self.run_intake_message(user_message)
 
-            if isinstance(chunk, str):
-                if chunk == "END":
-                    pass
-                else:
-                    last = self.query("#message_container Message").last()
-                    if last and last.type == "assistant":
-                        last.text += chunk
-                        self.chat.scroll_end()
+    @work(exclusive=True)
+    async def run_intake_message(self, user_message: str) -> None:
+        assistant_message: Message | None = None
+
+        try:
+            async for chunk in run_intake_cli(user_message):
+                if not chunk:
+                    continue
+
+                if isinstance(chunk, str):
+                    if chunk == "END":
+                        continue
+
+                    if assistant_message is None:
+                        assistant_message = Message(chunk, type_="assistant")
+                        await self.chat.mount(assistant_message)
                     else:
-                        self.chat.mount(Message(chunk, type_="assistant"))
+                        assistant_message.text += chunk
 
-            elif isinstance(chunk, tuple) and len(chunk) == 2 and isinstance(chunk[0], IntakeProfile):
-                async with SessionLocal() as session:
-                    intake_repo = IntakeRepo(session)
-                    self.intake_session = await intake_repo.create_session(user_id=uuid.uuid4())
-                    await intake_repo.update_session(self.intake_session.id, profile=chunk[0], transcript=chunk[1])
-                    await intake_repo.complete_session(self.intake_session.id)
-                self.start_research.display = True
+                    self.chat.scroll_end()
+                    continue
+
+                if isinstance(chunk, tuple) and len(chunk) == 2 and isinstance(chunk[0], IntakeProfile):
+                    async with SessionLocal() as session:
+                        intake_repo = IntakeRepo(session)
+                        self.intake_session = await intake_repo.create_session(user_id=uuid.uuid4())
+                        await intake_repo.update_session(self.intake_session.id, profile=chunk[0], transcript=chunk[1])
+                        await intake_repo.complete_session(self.intake_session.id)
+                    self.start_research.display = True
+
+        except Exception:
+            logging.exception("Error while running intake")
+            await self.chat.mount(Message("I hit an error while generating the intake response.", type_="assistant"))
+            self.chat.scroll_end()
+        finally:
+            self.finish_intake_ui()
         
     @work
     async def run_research(self) -> None:
