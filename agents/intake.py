@@ -10,14 +10,15 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import RunnableConfig
 
 from db.schemas import IntakeProfile
+from agents.inference import run_inference
 
 from .mock_patient import mock_patient_response
 
 load_dotenv()
 
 
-model = ChatOpenAI(model=os.getenv("INTAKE_AGENT_MODEL", "google/gemini-3-flash-preview"),
-                   base_url=os.getenv("AI_API_BASE_URL", "https://ai.hackclub.com/proxy/v1"),
+model = ChatOpenAI(model=os.getenv("INTAKE_AGENT_MODEL") or "google/gemini-3-flash-preview",
+                   base_url=os.getenv("AI_API_BASE_URL") or "https://ai.hackclub.com/proxy/v1",
                    api_key=os.getenv("AI_API_KEY"),
                    temperature=0.7)
 
@@ -30,12 +31,19 @@ def end_of_intake():
     """Tool to signal the end of the intake process."""
     return "Intake process has been completed."
 
+@tool("infer_condition")
+async def infer_condition(summary: str) -> str:
+    """Tool to infer potential conditions based on patient's chief complaint and HPI.
+    The input should be a markdown-formatted summary of the patient's chief complaint and HPI details."""
+    
+    return await run_inference(summary)
+
 checkpointer = InMemorySaver()
 
 config: RunnableConfig = {"configurable": {"thread_id": "1"}}
 
 agent = create_agent(model=model,
-                     tools=[end_of_intake],
+                     tools=[end_of_intake, infer_condition],
                      system_prompt=system_prompt,
                      checkpointer=checkpointer)
 
@@ -117,9 +125,10 @@ def _iter_stream_text(content: str | list[dict] | None):
         if block.get("type") == "text" and block.get("text"):
             yield block["text"]
 
-
-async def run_intake_cli(message: str) -> AsyncGenerator[str | tuple[IntakeProfile, list[dict[str, str]]], None]:
+#TODO: Take demographics at the start before starting intake, no chat approach, then pass demographics to intake agent.
+async def run_intake_cli(message: str) -> AsyncGenerator[str | dict | tuple[IntakeProfile, list[dict[str, str]]], None]:
     end_intake_called = False
+    infer_condition_active = False
     if message.strip() == ".":
         message = await mock_patient_response(agent.get_state(config=config).values["messages"].copy())
         yield f"**Patient:** {message}   \n\n\n\n\n"
@@ -129,14 +138,29 @@ async def run_intake_cli(message: str) -> AsyncGenerator[str | tuple[IntakeProfi
         config=config,
         version="v2",
     ):
+        if event["event"] == "on_tool_start":
+            if event.get("name") == "end_of_intake":
+                end_intake_called = True
+
+            elif event.get("name") == "infer_condition":
+                infer_condition_active = True
+                # tool_input = event["data"]["input"]["summary"]
+                yield {"type": "tool_start", "name": "infer_condition"}
+            continue
+
+        elif event["event"] == "on_tool_end":
+            if event.get("name") == "infer_condition":
+                infer_condition_active = False
+                yield {"type": "tool_end", "name": "infer_condition"}
+            continue
+
         if event["event"] == "on_chat_model_stream":
+            if infer_condition_active:
+                continue
+
             chunk: AIMessageChunk = event["data"]["chunk"]
             for text in _iter_stream_text(chunk.content):
                 yield text
-            continue
-
-        if event["event"] in {"on_tool_start", "on_tool_end"} and event.get("name") == "end_of_intake":
-            end_intake_called = True
 
     if end_intake_called:
         yield "END"

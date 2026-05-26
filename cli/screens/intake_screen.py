@@ -54,7 +54,7 @@ class IntakeScreen(Screen):
                 id="processes"
             ),
             Button("See Research Report", id="see_research_report"),
-            id="research_status_row"
+            id="agent_status_row"
         )
         yield Input(
             placeholder="Type message...",
@@ -74,15 +74,15 @@ class IntakeScreen(Screen):
         self.input = self.query_one("#input", Input)
         self.processing_spinner = self.query_one("#spinner", SpinnerWidget)
         self.processing_text = self.query_one("#processing_text", Static)
-        self.research_status_row = self.query_one("#research_status_row", Horizontal)
-        self.research_status_row.display = False
+        self.agent_status_row = self.query_one("#agent_status_row", Horizontal)
+        self.agent_status_row.display = False
 
     def begin_research_ui(self, message: str) -> None:
         self.research_running = True
         self.input.disabled = True
         self.start_research.disabled = True
         self.start_research.display = False
-        self.research_status_row.display = True
+        self.agent_status_row.display = True
         self.see_research_report.display = False
         self.processing_spinner.set_active(True)
         self.processing_text.update(message)
@@ -104,6 +104,15 @@ class IntakeScreen(Screen):
         self.input.disabled = False
         self.input.focus()
 
+    def begin_intake_tool_ui(self, message: str) -> None:
+        self.agent_status_row.display = True
+        self.processing_spinner.set_active(True)
+        self.processing_text.update(message)
+
+    def finish_intake_tool_ui(self) -> None:
+        self.agent_status_row.display = False
+        self.processing_spinner.set_active(False)
+        self.processing_text.update("")
 
     async def on_input_submitted(self, event: Input.Submitted):
         if self.research_running or self.intake_running:
@@ -130,6 +139,13 @@ class IntakeScreen(Screen):
                 if not chunk:
                     continue
 
+                if isinstance(chunk, dict):
+                    if chunk.get("type") == "tool_start":
+                        self.begin_intake_tool_ui("Running intermediate inference...")
+                    elif chunk.get("type") == "tool_end":
+                        self.finish_intake_tool_ui()
+                    continue
+
                 if isinstance(chunk, str):
                     if chunk == "END":
                         continue
@@ -151,9 +167,9 @@ class IntakeScreen(Screen):
                         await intake_repo.complete_session(self.intake_session.id)
                     self.start_research.display = True
 
-        except Exception:
+        except Exception as e:
             logging.exception("Error while running intake")
-            await self.chat.mount(Message("I hit an error while generating the intake response.", type_="assistant"))
+            await self.chat.mount(Message(f"I hit an error while generating the intake response: {str(e)}", type_="assistant"))
             self.chat.scroll_end()
         finally:
             self.finish_intake_ui()
@@ -161,7 +177,7 @@ class IntakeScreen(Screen):
     @work
     async def run_research(self) -> None:
         if self.intake_session is None:
-            self.research_status_row.display = True
+            self.agent_status_row.display = True
             self.finish_research_ui("Complete intake before starting research.")
             return
 

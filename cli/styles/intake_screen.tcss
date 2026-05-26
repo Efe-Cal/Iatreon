@@ -25,7 +25,7 @@ Message {
     margin: 0 1 1 1;
 }
 
-#research_status_row {
+#agent_status_row {
     height: auto;
     margin: 0 1 1 1;
 }

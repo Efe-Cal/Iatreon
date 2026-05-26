@@ -4,11 +4,9 @@ from exa_py import Exa
 from exa_py.api import ContentsOptions, TextContentsOptions, HighlightsContentsOptions
 from dotenv import load_dotenv
 
-from langchain.tools import tool
-
 load_dotenv()
 
-exa = Exa(api_key=os.getenv("HCAI_API_KEY"), base_url="https://ai.hackclub.com/proxy/v1/exa")
+exa = Exa(api_key=os.getenv("EXA_API_KEY", os.getenv("AI_API_KEY")), base_url=os.getenv("EXA_BASE_URL", "https://ai.hackclub.com/proxy/v1/exa"))
 exa.headers["Authorization"] = f"Bearer {exa.headers['x-api-key']}"
 
 
