@@ -42,9 +42,9 @@ Iatreon is an AI-doctor platform, aiming to be error-free. It uses LLM agents to
    ```
 
 ### Setup Environment Variables
-Create a `.env` file in the root directory and add your API keys
-```env
-HCAI_API_KEY=your_hcai_api_key
+Copy the `.env.example` file to `.env` and fill in your AI API key and other configurations if necessary:
+```bash
+cp .env.example .env
 ```
 
 ### Running Playwright

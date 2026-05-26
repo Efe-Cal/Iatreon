@@ -9,9 +9,9 @@ from langchain.messages import HumanMessage, AIMessage
 load_dotenv()
 
 
-patient_model = ChatOpenAI(model="gemini-3-flash-preview",
-                   base_url="https://ai.hackclub.com/proxy/v1",
-                   api_key=os.getenv("HCAI_API_KEY"),
+patient_model = ChatOpenAI(model="google/gemini-3-flash-preview",
+                   base_url=os.getenv("AI_API_BASE_URL", "https://ai.hackclub.com/proxy/v1"),
+                   api_key=os.getenv("AI_API_KEY"),
                    temperature=1)
 
 

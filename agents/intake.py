@@ -16,9 +16,9 @@ from .mock_patient import mock_patient_response
 load_dotenv()
 
 
-model = ChatOpenAI(model="gemini-3-flash-preview",
-                   base_url="https://ai.hackclub.com/proxy/v1",
-                   api_key=os.getenv("HCAI_API_KEY"),
+model = ChatOpenAI(model=os.getenv("INTAKE_AGENT_MODEL", "google/gemini-3-flash-preview"),
+                   base_url=os.getenv("AI_API_BASE_URL", "https://ai.hackclub.com/proxy/v1"),
+                   api_key=os.getenv("AI_API_KEY"),
                    temperature=0.7)
 
 with open(os.path.join(__file__, "..", "prompts", "intake_agent_system_prompt.txt")) as f:

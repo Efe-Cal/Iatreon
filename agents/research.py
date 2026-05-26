@@ -31,9 +31,9 @@ with open(os.path.join(os.path.dirname(__file__), "prompts", "research_agent_sys
 #TODO: Add demographics to the profile
 class ResearchAgent:
     def __init__(self, db, research_repo: ResearchRepo, research_session_id: UUID):
-        self.model = ChatOpenAI(model="gemini-3-flash-preview",
-                   base_url="https://ai.hackclub.com/proxy/v1",
-                   api_key=os.getenv("HCAI_API_KEY"),
+        self.model = ChatOpenAI(model=os.getenv("RESEARCH_AGENT_MODEL", "google/gemini-3-flash-preview"),
+                   base_url=os.getenv("AI_API_BASE_URL", "https://ai.hackclub.com/proxy/v1"),
+                   api_key=os.getenv("AI_API_KEY"),
                    temperature=0.7)
         self.checkpointer = InMemorySaver()
         self.session_id = research_session_id
