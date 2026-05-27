@@ -4,8 +4,8 @@ from db.models import Article, BookSection, WebSearchResult
 
 def sanitize_markdown(content: str) -> str:
     """Remove custom XML-style wrappers that Textual markdown won't display."""
-    return re.sub(r"</?source>", "", content or "")
-    
+    return re.sub(r"</?[^>]+>", "", content or "")
+
 def build_missing_source_markdown(citation_number: str, citation: dict | None) -> str:
     title = (citation or {}).get("title") or f"Source {citation_number}"
     lines = [f"# [{citation_number}] {title}", "", "_No stored source content is available for this citation._"]
