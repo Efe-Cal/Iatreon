@@ -3,9 +3,9 @@ from uuid import UUID
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
+from textual.containers import Container, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Markdown, MarkdownViewer, TabPane, TabbedContent
+from textual.widgets import Button, Footer, Markdown, MarkdownViewer, Static, TabPane, TabbedContent
 
 from db.db import SessionLocal
 from db.repositories import ResearchRepo
@@ -47,12 +47,12 @@ def build_citation_markdown(citations: dict[str, dict], research_report: str) ->
             rendered_lines.append(line)
             continue
 
-        reference_match = re.match(r"^(\s*)\[(\d+)\](.*)", line)
-        if in_references and reference_match:
-            indentation, citation_number, _ = reference_match.groups()
-            rendered_lines.append(f"{indentation}###### ref-{citation_number}")
-            rendered_lines.append(line)
-            continue
+        # reference_match = re.match(r"^(\s*)\[(\d+)\](.*)", line)
+        # if in_references and reference_match:
+        #     indentation, citation_number, _ = reference_match.groups()
+        #     rendered_lines.append(f"{indentation}###### ref-{citation_number}")
+        #     rendered_lines.append(line)
+        #     continue
 
         if not in_references:
             line = re.sub(r"\[(\d+)\]", replace_inline, line)
@@ -68,6 +68,7 @@ def create_source_links(research_report: str) -> str:
         re.IGNORECASE,
     )
     rendered_lines: list[str] = []
+    reference_lines = []
     in_references = False
     lines = research_report.splitlines()
     for line in lines:
@@ -83,14 +84,15 @@ def create_source_links(research_report: str) -> str:
         source_match = re.match(r"^(\s*)\[(\d+)\](.*)", line)
         if source_match:
             indentation, citation_number, rest = source_match.groups()
-            rendered_lines.append(
-                f"{indentation}- [View source {citation_number}](source://{citation_number}){rest}"
+            reference_lines.append(
+                (citation_number,
+                 f"{indentation}- [View source {citation_number}](source://{citation_number}){rest}")
             )
             continue
 
         rendered_lines.append(line)
 
-    return "\n".join(rendered_lines)
+    return "\n".join(rendered_lines), reference_lines
 
 
 class SourceMarkdownViewer(MarkdownViewer):
@@ -153,6 +155,41 @@ class SourceMarkdownViewer(MarkdownViewer):
         self.source_history_index += 1
         await self.open_source(self.source_history[self.source_history_index], push_history=False)
 
+class Reference(Markdown):
+    def __init__(self, citation_number: str, text: str):
+        super().__init__(text)
+        self.citation_number = citation_number
+        self.id = f"ref-{citation_number}"
+        self.open_links = False
+        
+    async def show_source(self, citation_number: str, *, push_history: bool) -> None:
+        viewer = self.screen.query_one(SourceMarkdownViewer)
+        await viewer.open_source(citation_number, push_history=push_history)
+        self.screen.query_one("#research_tabs", TabbedContent).active = VIEWER_TAB_ID
+
+    @on(Markdown.LinkClicked)
+    async def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
+        href = event.href
+        event.stop()
+        event.prevent_default()
+        if href.startswith("source://"):
+            event.stop()
+            await self.show_source(href.removeprefix("source://"), push_history=True)
+            return
+    
+    def on_click(self) -> None:
+        self.post_message(Markdown.LinkClicked(self, f"source://{self.citation_number}"))
+
+class ReferenceSection(Container):
+    def __init__(self):
+        super().__init__()
+        self.styles.height = "auto"
+        
+    async def update_references(self, references: list[tuple]) -> None:
+        await self.query(Reference).remove()
+        for ref in references:
+            await self.mount(Reference(*ref))
+
 
 class ResearchResultScreen(Screen):
     """A Textual screen that shows the report and cited sources."""
@@ -176,7 +213,8 @@ class ResearchResultScreen(Screen):
             with TabPane("Research Report", id=REPORT_TAB_ID):
                 yield VerticalScroll(
                     Markdown("Loading research report...", open_links=False, id="research_markdown"),
-                    id="research_report_container",
+                    ReferenceSection(),
+                    id="research_report_container", 
                 )
             with TabPane("Markdown Viewer", id=VIEWER_TAB_ID):
                 yield SourceMarkdownViewer()
@@ -199,16 +237,13 @@ class ResearchResultScreen(Screen):
         report = research_session.research_report or "Research report is not available yet."
         if self.citations:
             report = build_citation_markdown(self.citations, report)
-            report = create_source_links(report)
+            report, references = create_source_links(report)
 
         self.source_documents = build_source_documents(session_sources, self.citations)
         self.query_one(SourceMarkdownViewer).set_documents(self.source_documents)
         report_markdown.update(sanitize_markdown(report))
-
-    async def show_source(self, citation_number: str, *, push_history: bool) -> None:
-        viewer = self.query_one(SourceMarkdownViewer)
-        await viewer.open_source(citation_number, push_history=push_history)
-        self.query_one("#research_tabs", TabbedContent).active = VIEWER_TAB_ID
+        
+        await self.query_one(ReferenceSection).update_references(references)
 
     async def action_source_back(self) -> None:
         viewer = self.query_one(SourceMarkdownViewer)
@@ -235,7 +270,9 @@ class ResearchResultScreen(Screen):
 
         if href.startswith("#"):
             event.stop()
-            event.markdown.goto_anchor(href[1:])
+            self.scroll_to_widget(self.query_one(f"#{href[1:]}", Reference))
+            
+            # event.markdown.goto_anchor(href[1:])
             return
 
         self.app.open_url(href)

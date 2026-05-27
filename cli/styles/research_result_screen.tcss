@@ -20,12 +20,3 @@
     height: 1fr;
     margin: 1;
 }
-
-#research_markdown MarkdownH6 {
-    color: transparent;
-    width: 0;
-    height: 1;
-    margin: 0 0;
-    padding: 0 0;
-    border: none;
-}
