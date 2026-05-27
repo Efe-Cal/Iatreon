@@ -7,7 +7,7 @@ from textual.widgets import Button, Footer, Header, Input, Static
 from textual.containers import Horizontal, VerticalScroll
 from cli.widgets.spinner import SpinnerWidget
 from cli.widgets.message import Message
-from cli.screens.research_screen import ResearchScreen
+from cli.screens.research_result_screen import ResearchResultScreen
 
 from agents.intake import run_intake_cli
 from db.schemas import IntakeProfile
@@ -217,4 +217,4 @@ class IntakeScreen(Screen):
         if event.button.id == "start_research":
             self.run_research()
         elif event.button.id == "see_research_report" and self.research_session_id is not None:
-            self.app.push_screen(ResearchScreen(self.research_session_id))
+            self.app.push_screen(ResearchResultScreen(self.research_session_id))

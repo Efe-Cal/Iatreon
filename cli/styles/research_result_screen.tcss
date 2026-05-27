@@ -1,12 +1,23 @@
 #back_to_chat {
     width: auto;
-    margin: 1 1 0 1;
+    margin: 0;
+    padding: 0;
+}
+
+#research_tabs {
+    height: 1fr;
 }
 
 #research_report_container {
     height: 1fr;
     margin: 1;
 }
+
+#source_viewer {
+    height: 1fr;
+    margin: 1;
+}
+
 MarkdownH6 {
     color: transparent;
     margin: 0;
