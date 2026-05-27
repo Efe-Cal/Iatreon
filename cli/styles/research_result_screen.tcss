@@ -2,6 +2,9 @@
     width: auto;
     margin: 0;
     padding: 0;
+    min-width: 0;
+    height: auto;
+    border: none;
 }
 
 #research_tabs {
@@ -18,9 +21,11 @@
     margin: 1;
 }
 
-MarkdownH6 {
+#research_markdown MarkdownH6 {
     color: transparent;
-    margin: 0;
-    padding: 0;
+    width: 0;
     height: 1;
+    margin: 0 0;
+    padding: 0 0;
+    border: none;
 }
