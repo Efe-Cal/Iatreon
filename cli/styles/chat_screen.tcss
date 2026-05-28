@@ -58,3 +58,7 @@ Message {
     height: auto;
 }
 
+#visit_diagnostician {
+    width: 1fr;
+    padding: 0 3;
+}

@@ -4,4 +4,13 @@
         "*.tcss": "css"
     },
     "css.validate": false,
+    "cSpell.words": [
+        "ainvoke",
+        "astream",
+        "checkpointer",
+        "dotenv",
+        "Iatreon",
+        "NCBI"
+    ],
+    "cSpell.enabled": false,
 }

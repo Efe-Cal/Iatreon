@@ -3,7 +3,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button
 from cli.screens.research_result_screen import ResearchResultScreen
 from cli.widgets.question_dialog import QuestionDialog
-from cli.screens.intake_screen import IntakeScreen
+from cli.screens.chat_screen import ChatScreen
 from uuid import UUID
 
 import logging

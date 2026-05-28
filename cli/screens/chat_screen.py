@@ -1,10 +1,13 @@
 
+from typing import Literal
 import uuid
 from textual.screen import Screen
 from textual import work
 from textual.app import ComposeResult
 from textual.widgets import Button, Footer, Header, Input, Static
 from textual.containers import Horizontal, VerticalScroll
+from agents.diagnosis import diagnose
+from cli.widgets.question_dialog import QuestionDialog
 from cli.widgets.spinner import SpinnerWidget
 from cli.widgets.message import Message
 from cli.screens.research_result_screen import ResearchResultScreen
@@ -24,17 +27,19 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
 )
 
-class IntakeScreen(Screen):
+class ChatScreen(Screen):
     """A Textual App to interact with the Iatreon agents."""
 
-    CSS_PATH = "../styles/intake_screen.tcss"
+    CSS_PATH = "../styles/chat_screen.tcss"
 
-    def __init__(self) -> None:
+    def __init__(self, screen_state: Literal["intake", "research", "diagnostician"] = "intake", **kwargs) -> None:
         super().__init__()
+        self.screen_state: Literal["intake", "research", "diagnostician"] = screen_state
         self.intake_session = None
-        self.research_session_id = None
+        self.research_session = None
         self.intake_running = False
         self.research_running = False
+        self.kwargs = kwargs
 
     def on_worker_state_changed(self, event) -> None:
         if event.state == WorkerState.ERROR:
@@ -60,9 +65,9 @@ class IntakeScreen(Screen):
             placeholder="Type message...",
             id="input"
         )
+        yield Button("Visit the Diagnostician", id="visit_diagnostician")
         yield Footer()
-    
-    
+
     async def on_mount(self):
         self.chat = self.query_one("#message_container", VerticalScroll)
         await self.chat.mount(Message("**Assistant:** Hey, I am Iatreon! What brings you in today?", type_="assistant"))
@@ -76,43 +81,57 @@ class IntakeScreen(Screen):
         self.processing_text = self.query_one("#processing_text", Static)
         self.agent_status_row = self.query_one("#agent_status_row", Horizontal)
         self.agent_status_row.display = False
+        
+        self.visit_diagnostician = self.query_one("#visit_diagnostician", Button)
+        self.visit_diagnostician.display = False
+        
+        if self.screen_state == "diagnostician":
+            self.begin_diagnostician_ui()
+            if "intake_session" in self.kwargs:
+                self.intake_session = self.kwargs["intake_session"]
+            if "research_session" in self.kwargs:
+                self.research_session = self.kwargs["research_session"]
+            self.run_diagnosis()
+                    
 
     def begin_research_ui(self, message: str) -> None:
         self.research_running = True
         self.input.disabled = True
         self.start_research.disabled = True
         self.start_research.display = False
-        self.agent_status_row.display = True
         self.see_research_report.display = False
-        self.processing_spinner.set_active(True)
-        self.processing_text.update(message)
+        self.begin_tool_ui(message)
 
     def finish_research_ui(self, message: str, *, show_report: bool = False) -> None:
         self.research_running = False
-        self.input.disabled = False
         self.start_research.disabled = False
         self.processing_spinner.set_active(False)
         self.processing_text.update(message)
         self.see_research_report.display = show_report
 
-    def begin_intake_ui(self) -> None:
+    def begin_intake_message_running_ui(self) -> None:
         self.intake_running = True
         self.input.disabled = True
 
-    def finish_intake_ui(self) -> None:
+    def finish_intake_message_running_ui(self) -> None:
         self.intake_running = False
         self.input.disabled = False
         self.input.focus()
 
-    def begin_intake_tool_ui(self, message: str) -> None:
+    def begin_tool_ui(self, message: str) -> None:
         self.agent_status_row.display = True
         self.processing_spinner.set_active(True)
         self.processing_text.update(message)
 
-    def finish_intake_tool_ui(self) -> None:
+    def finish_tool_ui(self) -> None:
         self.agent_status_row.display = False
         self.processing_spinner.set_active(False)
         self.processing_text.update("")
+
+    def begin_diagnostician_ui(self) -> None:
+        self.input.disabled = True
+        self.visit_diagnostician.display = False
+        self.begin_tool_ui("Connecting to the Diagnostician...")
 
     async def on_input_submitted(self, event: Input.Submitted):
         if self.research_running or self.intake_running:
@@ -127,8 +146,11 @@ class IntakeScreen(Screen):
 
         # auto-scroll to bottom
         self.chat.scroll_end()
-        self.begin_intake_ui()
-        self.run_intake_message(user_message)
+        if self.screen_state == "intake":
+            self.begin_intake_message_running_ui()
+            self.run_intake_message(user_message)
+        elif self.screen_state == "diagnostician":
+            await self.run_diagnostician_chat(user_message)
 
     @work(exclusive=True)
     async def run_intake_message(self, user_message: str) -> None:
@@ -141,9 +163,9 @@ class IntakeScreen(Screen):
 
                 if isinstance(chunk, dict):
                     if chunk.get("type") == "tool_start":
-                        self.begin_intake_tool_ui("Running intermediate inference...")
+                        self.begin_tool_ui("Running intermediate inference...")
                     elif chunk.get("type") == "tool_end":
-                        self.finish_intake_tool_ui()
+                        self.finish_tool_ui()
                     continue
 
                 if isinstance(chunk, str):
@@ -166,13 +188,16 @@ class IntakeScreen(Screen):
                         await intake_repo.update_session(self.intake_session.id, profile=chunk[0], transcript=chunk[1])
                         await intake_repo.complete_session(self.intake_session.id)
                     self.start_research.display = True
+                    
+                    self.input.display = False
+                    self.visit_diagnostician.display = True
 
         except Exception as e:
             logging.exception("Error while running intake")
             await self.chat.mount(Message(f"I hit an error while generating the intake response: {str(e)}", type_="assistant"))
             self.chat.scroll_end()
         finally:
-            self.finish_intake_ui()
+            self.finish_intake_message_running_ui()
         
     @work
     async def run_research(self) -> None:
@@ -193,9 +218,8 @@ class IntakeScreen(Screen):
                     self.finish_research_ui("Unable to find the completed intake session.")
                     return
 
-                research_session = await research_repo.create_research_session(intake_session.user_id, intake_session.id)
-                self.research_session_id = research_session.id
-                research_agent = ResearchAgent(session, research_repo, research_session.id)
+                self.research_session = await research_repo.create_research_session(intake_session.user_id, intake_session.id)
+                research_agent = ResearchAgent(session, research_repo, self.research_session.id)
                 async for research_chunk in research_agent.run(intake_session):
                     if isinstance(research_chunk, str):
                         self.processing_text.update(research_chunk)
@@ -203,7 +227,7 @@ class IntakeScreen(Screen):
                     elif isinstance(research_chunk, tuple) and len(research_chunk) == 2:
                         research_report, citations = research_chunk
                         await research_repo.update_research_session(
-                            session_id=research_session.id,
+                            session_id=self.research_session.id,
                             research_report=research_report,
                             citations=citations,
                         )
@@ -212,9 +236,36 @@ class IntakeScreen(Screen):
             logging.error("Error in run_research: %s", str(e))
             self.finish_research_ui(f"Error: {str(e)}")
 
+    @work
+    async def run_diagnosis(self) -> None:
+        if self.intake_session is None:
+            return
+
+        do_research = False
+        
+        async def handle_no_research_session(accepted: bool):
+            global do_research
+            do_research = accepted
+                
+        
+        if self.research_session is None:
+            await self.app.push_screen(QuestionDialog("No research session found. Do you want to start research now?"), handle_no_research_session, wait_for_dismiss=True)
+            if do_research:
+                await self.run_research()
+        
+        diagnose(self.intake_session, self.research_session)
+        
+        
+    @work
+    async def run_diagnostician_chat(self, message: str) -> None:
+        pass # TODO: implement diagnostician chat flow
+
     async def on_button_pressed(self, event: Button.Pressed):
         logging.debug("Button pressed: %s", event.button.id)
         if event.button.id == "start_research":
             self.run_research()
-        elif event.button.id == "see_research_report" and self.research_session_id is not None:
-            self.app.push_screen(ResearchResultScreen(self.research_session_id))
+        elif event.button.id == "see_research_report" and self.research_session is not None:
+            self.app.push_screen(ResearchResultScreen(self.research_session.id))
+        
+        elif event.button.id == "visit_diagnostician":
+            self.app.push_screen(ChatScreen(screen_state="diagnostician"))
