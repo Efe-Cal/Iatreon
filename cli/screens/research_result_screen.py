@@ -216,7 +216,7 @@ class ResearchResultScreen(Screen):
                     ReferenceSection(),
                     id="research_report_container", 
                 )
-            with TabPane("Markdown Viewer", id=VIEWER_TAB_ID):
+            with TabPane("Source Viewer", id=VIEWER_TAB_ID):
                 yield SourceMarkdownViewer()
         yield Footer()
 
