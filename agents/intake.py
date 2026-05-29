@@ -9,6 +9,7 @@ from langchain.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import RunnableConfig
 
+from agents.shared import create_agent_by_type
 from db.schemas import IntakeProfile
 from agents.inference import run_inference
 
@@ -42,10 +43,7 @@ checkpointer = InMemorySaver()
 
 config: RunnableConfig = {"configurable": {"thread_id": "1"}}
 
-agent = create_agent(model=model,
-                     tools=[end_of_intake, infer_condition],
-                     system_prompt=system_prompt,
-                     checkpointer=checkpointer)
+agent = create_agent_by_type("intake", tools=[end_of_intake, infer_condition], system_prompt=system_prompt, checkpointer=checkpointer)
 
 messages = [
     # {"role": "system", "content": system_prompt},
