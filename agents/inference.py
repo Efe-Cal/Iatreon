@@ -1,29 +1,11 @@
 import logging
-import os
 from dotenv import load_dotenv
 
-from langchain.agents import create_agent
-from langchain_openai import ChatOpenAI
-
-from context.websearch import web_search
-from langchain.tools import tool
+from agents.shared import create_agent_by_type, web_search_tool
 
 load_dotenv()
 
-model = ChatOpenAI(model=os.getenv("INFERENCE_AGENT_MODEL") or os.getenv("INTAKE_AGENT_MODEL") or "google/gemini-3-flash-preview",
-                   base_url=os.getenv("AI_API_BASE_URL") or "https://ai.hackclub.com/proxy/v1",
-                   api_key=os.getenv("AI_API_KEY"),
-                   temperature=0.7)
-
-with open(os.path.join(__file__, "..", "prompts", "inference_agent_system_prompt.txt")) as f:
-    system_prompt = f.read()
-
-inference_agent = create_agent(
-    model=model,
-    tools=[tool(web_search)],
-    system_prompt=system_prompt,
-)
-
+inference_agent = create_agent_by_type("inference", tools=[web_search_tool], system_prompt="inference")
 
 def _content_to_text(content: str | list[dict] | None) -> str:
     if isinstance(content, str):

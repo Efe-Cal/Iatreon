@@ -347,6 +347,9 @@ class ArticleRepo:
             .limit(limit)
         )
         return list((await self.db.execute(stmt)).scalars())
+    
+    async def get_article_by_id(self, article_id: uuid.UUID) -> Article | None:
+        return await self.db.get(Article, article_id)
 
 class BookSectionRepo:
     def __init__(self, db: AsyncSession):
@@ -416,6 +419,9 @@ class BookSectionRepo:
             .limit(limit)
         )
         return list((await self.db.execute(stmt)).scalars())
+    
+    async def get_book_section_by_id(self, book_section_id: uuid.UUID) -> BookSection | None:
+        return await self.db.get(BookSection, book_section_id)
 
 class WebSearchResultRepo:
     def __init__(self, db: AsyncSession):
@@ -478,3 +484,6 @@ class WebSearchResultRepo:
             .limit(limit)
         )
         return list((await self.db.execute(stmt)).scalars())
+
+    async def get_web_search_result_by_id(self, web_search_result_id: uuid.UUID) -> WebSearchResult | None:
+        return await self.db.get(WebSearchResult, web_search_result_id)

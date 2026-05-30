@@ -5,14 +5,13 @@ from typing import AsyncGenerator
 from dotenv import load_dotenv
 from uuid import UUID
 
-from langchain.agents import create_agent
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import RunnableConfig
 from langchain_core.tools import StructuredTool
 from langchain_core.messages import AIMessageChunk
 
 from agents.serial_tool_middleware import SerialToolMiddleware
+from agents.shared import create_agent_by_type
 from db.models import Article, BookSection, IntakeSession, ResearchSession, WebSearchResult
 from db.repositories import ArticleRepo, BookSectionRepo, ResearchRepo, WebSearchResultRepo
 from db.schemas import ArticleData, BookSectionData
@@ -22,19 +21,12 @@ from context.websearch import web_search, fetch_web_content
 
 load_dotenv()
 
-with open(os.path.join(os.path.dirname(__file__), "prompts", "research_agent_system_prompt.txt")) as f:
-    system_prompt = f.read()
-
 
 #TODO: In addition to the pipeline allow single source queries too
 #TODO: Have another agent (inference) guess some probable diseases based on the profile then use that in research agent
 #TODO: Add demographics to the profile
 class ResearchAgent:
     def __init__(self, db, research_repo: ResearchRepo, research_session_id: UUID):
-        self.model = ChatOpenAI(model=os.getenv("RESEARCH_AGENT_MODEL") or "google/gemini-3-flash-preview",
-                   base_url=os.getenv("AI_API_BASE_URL") or "https://ai.hackclub.com/proxy/v1",
-                   api_key=os.getenv("AI_API_KEY"),
-                   temperature=0.7)
         self.checkpointer = InMemorySaver()
         self.session_id = research_session_id
         self.config: RunnableConfig = {"configurable": {"thread_id": str(self.session_id)}}
@@ -58,12 +50,7 @@ class ResearchAgent:
             description="Run the medical literature search with a given query.",
         )
 
-        self.agent = create_agent(model=self.model,
-                                  tools=[self.web_search_tool, self.fetch_web_content_tool, self.search_medical_literature_tool],
-                                  system_prompt=system_prompt,
-                                  checkpointer=self.checkpointer,
-                                )
-                                #middleware=[SerialToolMiddleware()])
+        self.agent = create_agent_by_type("research", tools=[self.web_search_tool, self.fetch_web_content_tool, self.search_medical_literature_tool], checkpointer=self.checkpointer)
 
         self.db = db
         self.article_repo = ArticleRepo(self.db)

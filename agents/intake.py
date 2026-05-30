@@ -2,28 +2,18 @@ import os
 from typing import AsyncGenerator
 from dotenv import load_dotenv
 
-from langchain.agents import create_agent
 from langchain_core.messages import AIMessageChunk
-from langchain_openai import ChatOpenAI
 from langchain.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import RunnableConfig
 
+from agents.shared import create_agent_by_type, get_model
 from db.schemas import IntakeProfile
 from agents.inference import run_inference
 
 from .mock_patient import mock_patient_response
 
 load_dotenv()
-
-
-model = ChatOpenAI(model=os.getenv("INTAKE_AGENT_MODEL") or "google/gemini-3-flash-preview",
-                   base_url=os.getenv("AI_API_BASE_URL") or "https://ai.hackclub.com/proxy/v1",
-                   api_key=os.getenv("AI_API_KEY"),
-                   temperature=0.7)
-
-with open(os.path.join(__file__, "..", "prompts", "intake_agent_system_prompt.txt")) as f:
-    system_prompt = f.read()
 
 
 @tool("end_of_intake", return_direct=True)
@@ -42,10 +32,7 @@ checkpointer = InMemorySaver()
 
 config: RunnableConfig = {"configurable": {"thread_id": "1"}}
 
-agent = create_agent(model=model,
-                     tools=[end_of_intake, infer_condition],
-                     system_prompt=system_prompt,
-                     checkpointer=checkpointer)
+agent = create_agent_by_type("intake", tools=[end_of_intake, infer_condition], checkpointer=checkpointer)
 
 messages = [
     # {"role": "system", "content": system_prompt},
@@ -92,7 +79,7 @@ def run_intake() -> tuple[IntakeProfile, list[dict[str,str]]]:
     print("Compiling dense medical summary and structured patient data...\n")
 
     # Use with_structured_output to enforce the IntakeProfile format ONLY at the end
-    model.temperature = 0.3  # Lower temperature for more deterministic output
+    model = get_model("intake", 0.3)  # Get the model instance
     structured_model = model.with_structured_output(IntakeProfile)
 
     try:
@@ -164,7 +151,7 @@ async def run_intake_cli(message: str) -> AsyncGenerator[str | dict | tuple[Inta
 
     if end_intake_called:
         yield "END"
-        model.temperature = 0.3  # Lower temperature for more deterministic output
+        model = get_model("intake", 0.3)  # Get the model instance
         structured_model = model.with_structured_output(IntakeProfile)
 
         try:
