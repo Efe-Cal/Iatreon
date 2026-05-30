@@ -1,18 +1,8 @@
-import os
-from dotenv import load_dotenv
-
-from langchain_openai import ChatOpenAI
-
 from langchain.messages import HumanMessage, AIMessage
+from agents.shared import get_model
 
 
-load_dotenv()
-
-
-patient_model = ChatOpenAI(model="google/gemini-3-flash-preview",
-                   base_url=os.getenv("AI_API_BASE_URL") or "https://ai.hackclub.com/proxy/v1",
-                   api_key=os.getenv("AI_API_KEY"),
-                   temperature=1)
+patient_model = get_model("intake", temperature=1)
 
 
 async def mock_patient_response(messages):

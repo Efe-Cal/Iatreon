@@ -5,8 +5,6 @@ from typing import AsyncGenerator
 from dotenv import load_dotenv
 from uuid import UUID
 
-from langchain.agents import create_agent
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import RunnableConfig
 from langchain_core.tools import StructuredTool
