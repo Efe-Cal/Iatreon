@@ -13,6 +13,9 @@ DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
 os.makedirs(PROFILE_DIR, exist_ok=True)
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+#TODO: Setup proxy, use the user's decive as proxy server, ssh -N -R 1080:localhost:1080 your-vps
+
+
 def _is_probable_pdf_url(url: str) -> bool:
         parsed = urlparse(url)
         path = parsed.path.lower()
@@ -59,12 +62,12 @@ class Scraper:
         print(f"Loading persistent session from: {PROFILE_DIR}")
         self.sb = sb_cdp.Chrome(uc=True, external_pdf=True, user_data_dir=PROFILE_DIR, chromium_arg="--disable-pdf-viewer")
     
-    def download_pdfs(self, urls: list) -> list:
-        paths = []
+    def download_pdf(self, url: str) -> str:
         try:
-            for url in urls:
-                paths.append(self._download_pdf(url))
-            return paths
+            return self._download_pdf(url)
+        except Exception as e:
+            print(f"Error downloading PDF from {url}: {e}")
+            raise
         finally:
             self.close_tabs()
     
