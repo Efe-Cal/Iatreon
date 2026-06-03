@@ -69,7 +69,7 @@ class PDFClient:
             return ""
         return match.group(0).rstrip(").,;?&")
 
-    async def download_pdf(self, url: str, client: httpx.AsyncClient) -> str:
+    async def download_pdf(self, url: str, client: httpx.AsyncClient) -> bytes | None:
         response = await client.post(f"{os.getenv('PDF_SCRAPER_BASE_URL', 'http://localhost:8000')}/scrape_pdf/", json={"pdf_url": url})
         if response.status_code != 202:
             raise Exception(f"Failed to enqueue PDF download for {url}: {response.text}")
@@ -77,6 +77,7 @@ class PDFClient:
         job_id = response.json().get("job_id")
         if not job_id:
             raise Exception(f"No job ID returned for {url}: {response.text}")
+
         for _ in range(60):
             status_response = await client.get(f"{os.getenv('PDF_SCRAPER_BASE_URL', 'http://localhost:8000')}/get_pdf/{job_id}")
             if status_response.status_code != 200:
@@ -87,8 +88,11 @@ class PDFClient:
                 download = status_data.get("result")
             elif status_data.get("status") == "failed":
                 raise Exception(f"PDF download failed for {url}")
+            else:
+                await asyncio.sleep(2)
+                continue
             
-            pdf = client.get(f"{os.getenv('PDF_SCRAPER_BASE_URL', 'http://localhost:8000')}/download/", params={"file_path": download})
+            pdf = await client.get(f"{os.getenv('PDF_SCRAPER_BASE_URL', 'http://localhost:8000')}/download/", params={"file_path": download})
             return pdf.content if pdf.status_code == 200 else None
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
