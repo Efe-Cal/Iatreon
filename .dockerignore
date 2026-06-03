@@ -1,0 +1,15 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+venv
+pdf_worker/venv
+pdf_worker/chrome_profile
+pdf_worker/chrome_profile/**
+downloads
+*.log

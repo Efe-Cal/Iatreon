@@ -1,0 +1,24 @@
+FROM mcr.microsoft.com/playwright/python:v1.60.0-noble
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    REDIS_HOST=redis \
+    REDIS_PORT=6379
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        fonts-liberation \
+        fontconfig && \
+    rm -rf /var/lib/apt/lists/* && \
+    fc-cache -fv
+
+COPY pdf_worker/requirements.txt /app/pdf_worker/requirements.txt
+RUN pip install --no-cache-dir -r /app/pdf_worker/requirements.txt
+
+COPY pdf_worker /app/pdf_worker
+
+RUN mkdir -p /app/downloads /app/pdf_worker/chrome_profile
+
+CMD ["rq", "worker", "default", "--url", "redis://redis:6379/0"]
