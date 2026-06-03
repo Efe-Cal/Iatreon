@@ -4,4 +4,3 @@ venv/
 *.db
 *.sqlite
 *.log
-*.txt

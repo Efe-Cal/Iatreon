@@ -21,6 +21,7 @@ Iatreon is an AI-doctor platform, aiming to be error-free. It uses LLM agents to
 ### Prerequisites
 
 - Python 3.10+
+- Docker
 
 ### Installation
 
@@ -47,12 +48,13 @@ Copy the `.env.example` file to `.env` and fill in your AI API key and other con
 cp .env.example .env
 ```
 
-### Running Playwright
-To set up Playwright for PDF processing with Docker, run:
+### Running the PDF Worker in Docker
+Build and start the Redis service, FastAPI app, and RQ worker together:
 ```bash
-scripts/create_playwright_image.sh  # (.bat for Windows)
-scripts/start_playwright_server.sh  # (.bat for Windows)
+docker compose up --build redis pdf-api pdf-worker
 ```
+
+The API listens on port `8000`, Redis listens on port `6379`, and the worker writes downloaded files to the shared `downloads` volume. The API uses a slim Python image, while the RQ worker uses a browser-capable image for SeleniumBase/Chrome.
 
 ### Running the Application
 

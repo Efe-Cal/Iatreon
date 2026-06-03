@@ -1,0 +1,37 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  pdf-api:
+    build:
+      context: .
+      dockerfile: pdf_worker/Dockerfile.api
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      - redis
+    ports:
+      - "8000:8000"
+    volumes:
+      - downloads:/app/downloads
+    command: ["uvicorn", "pdf_worker.api:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  pdf-worker:
+    build:
+      context: .
+      dockerfile: pdf_worker/Dockerfile.worker
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      - redis
+    volumes:
+      - downloads:/app/downloads
+      - worker-profile:/app/pdf_worker/chrome_profile
+
+volumes:
+  downloads:
+  worker-profile:

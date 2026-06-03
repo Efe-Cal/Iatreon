@@ -7,11 +7,12 @@ import uuid
 from seleniumbase import sb_cdp
 import httpx
 
-BASE_DIR = os.path.dirname(os.getcwd())
-PROFILE_DIR = os.path.join(BASE_DIR, "chrome_profile")
-DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
-os.makedirs(PROFILE_DIR, exist_ok=True)
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+WORKER_DIR = Path(__file__).resolve().parent
+REPO_DIR = WORKER_DIR.parent
+PROFILE_DIR = WORKER_DIR / "chrome_profile"
+DOWNLOAD_DIR = REPO_DIR / "downloads"
+PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 #TODO: Setup proxy, use the user's decive as proxy server, ssh -N -R 1080:localhost:1080 your-vps
 
@@ -60,8 +61,8 @@ def _looks_like_html(content: bytes, content_type: str = "") -> bool:
 class Scraper:
     def __init__(self):
         print(f"Loading persistent session from: {PROFILE_DIR}")
-        self.sb = sb_cdp.Chrome(uc=True, external_pdf=True, user_data_dir=PROFILE_DIR, chromium_arg="--disable-pdf-viewer")
-    
+        self.sb = sb_cdp.Chrome(uc=True, external_pdf=True, user_data_dir=str(PROFILE_DIR), chromium_arg="--disable-pdf-viewer")
+
     def download_pdf(self, url: str) -> str:
         try:
             return self._download_pdf(url)
@@ -151,7 +152,7 @@ class Scraper:
             )
 
         filename = filename or _filename_from_response(response, absolute_url)
-        path = os.path.join(output_dir, filename)
+        path = os.path.join(str(output_dir), filename)
         with open(path, "wb") as file:
             file.write(response.content)
 
@@ -167,12 +168,12 @@ class Scraper:
         if not filename.lower().endswith(".pdf"):
             filename += ".pdf"
 
-        path = os.path.join(output_dir, filename)
+        path = os.path.join(str(output_dir), filename)
         partial_path = f"{path}.crdownload"
         if os.path.exists(path):
             base, ext = os.path.splitext(filename)
             filename = f"{base}_{uuid.uuid4().hex[:8]}{ext}"
-            path = os.path.join(output_dir, filename)
+            path = os.path.join(str(output_dir), filename)
             partial_path = f"{path}.crdownload"
 
         output_path = Path(output_dir).resolve()
