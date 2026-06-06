@@ -11,6 +11,7 @@ from agents.shared import create_agent_by_type, web_search_tool
 
 load_dotenv()
 
+#TODO: (importance: HIGH) diagnosis agent should have a request_reseach tool instead of web_search, which would trigger a subset of the research agent (?), properly handling the sources and stuff
 
 #TODO: proper system prompt; get_full_source tool
 class DiagnosisAgent():

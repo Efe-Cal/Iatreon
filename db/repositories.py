@@ -28,8 +28,9 @@ def _normalize_unique_identifier(value: str | None) -> str | None:
     return normalized.lower()
 
 class IntakeRepo:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, user_id: str):
         self.db = db
+        self.user_id = uuid.UUID(user_id)
 
     @staticmethod
     def _serialize_transcript(transcript: list) -> list[dict]:
@@ -43,8 +44,8 @@ class IntakeRepo:
                 serialized_transcript.append({"type": message.__class__.__name__, "content": str(message)})
         return serialized_transcript
 
-    async def create_session(self, user_id: uuid.UUID) -> IntakeSession:
-        session = IntakeSession(user_id=user_id, status="in_progress", raw_transcript=[])
+    async def create_session(self) -> IntakeSession:
+        session = IntakeSession(user_id=self.user_id, status="in_progress", raw_transcript=[])
         self.db.add(session)
         await self.db.commit()
         await self.db.refresh(session)
@@ -52,28 +53,38 @@ class IntakeRepo:
 
     async def update_session(self, session_id: uuid.UUID, profile: IntakeProfile, transcript: list):
         session = await self.db.get(IntakeSession, session_id)
+        if session.user_id != self.user_id:
+            return "Error: Unauthorized"
         session.chief_complaint = profile.chief_complaint
         session.symptoms = [s.model_dump() for s in profile.symptoms]
         session.red_flags = profile.red_flags
         session.medical_summary = profile.medical_summary
         session.raw_transcript = self._serialize_transcript(transcript)
         await self.db.commit()
+        return "OK"
 
     async def complete_session(self, session_id: uuid.UUID):
         session = await self.db.get(IntakeSession, session_id)
+        if session.user_id != self.user_id:
+            return "Error: Unauthorized"
         session.status = "complete"
         session.completed_at = datetime.utcnow()
         await self.db.commit()
-    
+        return "OK"
+
     async def get_session(self, session_id: uuid.UUID) -> IntakeSession | None:
-        return await self.db.get(IntakeSession, session_id)
+        session = await self.db.get(IntakeSession, session_id)
+        if session and session.user_id == self.user_id:
+            return session
+        return None
 
 class ResearchRepo:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, user_id: str):
         self.db = db
-    
-    async def create_research_session(self, user_id: uuid.UUID, intake_session_id: uuid.UUID) -> ResearchSession:
-        session = ResearchSession(user_id=user_id, intake_session_id=intake_session_id)
+        self.user_id = uuid.UUID(user_id)
+
+    async def create_research_session(self, intake_session_id: uuid.UUID) -> ResearchSession:
+        session = ResearchSession(user_id=self.user_id, intake_session_id=intake_session_id)
         self.db.add(session)
         await self.db.commit()
         await self.db.refresh(session)
@@ -86,7 +97,7 @@ class ResearchRepo:
         citations: dict[int, dict] | None = None,
     ) -> ResearchSession | None:
         session = await self.db.get(ResearchSession, session_id)
-        if session is None:
+        if session is None or session.user_id != self.user_id:
             return None
 
         if research_report is not None:
@@ -99,7 +110,17 @@ class ResearchRepo:
         return session
 
     async def get_research_session(self, session_id: uuid.UUID) -> ResearchSession | None:
-        return await self.db.get(ResearchSession, session_id)
+        session = await self.db.get(ResearchSession, session_id)
+        if session and session.user_id == self.user_id:
+            return session
+        return None
+
+    async def get_research_session_by_intake_id(self, intake_session_id: uuid.UUID) -> ResearchSession | None:
+        stmt = select(ResearchSession).where(
+            ResearchSession.intake_session_id == intake_session_id,
+            ResearchSession.user_id == self.user_id,
+        )
+        return (await self.db.execute(stmt)).scalar_one_or_none()
 
     async def link_article(self, session_id: uuid.UUID, article_id: uuid.UUID, query: str, quality_score: float | None = None) -> SessionArticle:
         existing_stmt = select(SessionArticle).where(

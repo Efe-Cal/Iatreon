@@ -5,7 +5,7 @@ from agents.shared import create_agent_by_type, web_search_tool
 
 load_dotenv()
 
-inference_agent = create_agent_by_type("inference", tools=[web_search_tool], system_prompt="inference")
+inference_agent = create_agent_by_type("inference", tools=[web_search_tool])
 
 def _content_to_text(content: str | list[dict] | None) -> str:
     if isinstance(content, str):
