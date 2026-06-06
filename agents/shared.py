@@ -42,7 +42,7 @@ def create_agent_by_type(
         **kwargs
     )
 
-@tool(name="web_search")
+@tool("web_search")
 async def web_search_tool(query: str, num_results: int = 5):
     """Performs a web search using the Exa API and returns the highlights for each result.
     

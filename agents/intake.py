@@ -30,70 +30,7 @@ async def infer_condition(summary: str) -> str:
 
 checkpointer = InMemorySaver()
 
-config: RunnableConfig = {"configurable": {"thread_id": "1"}}
-
 agent = create_agent_by_type("intake", tools=[end_of_intake, infer_condition], checkpointer=checkpointer)
-
-messages = [
-    # {"role": "system", "content": system_prompt},
-    {"role": "assistant", "content": "What brings you in today?"}
-]
-
-agent.update_state(config=config, values={"messages": messages})
-
-def run_intake() -> tuple[IntakeProfile, list[dict[str,str]]]:
-    # Deprecated
-    print("Assistant: What brings you in today? (Type 'quit' to exit)")
-    
-    while True:
-        user_input = mock_patient_response(agent.get_state(config=config).values["messages"].copy())
-        print(f"\nPatient: {user_input}\n")
-        # if user_input.lower() in ["quit", "exit"]:
-        #     break
-
-        try:
-            response = agent.invoke(
-                {"messages": [{"role": "user", "content": user_input}]},
-                config=config,
-            )
-                    
-            end_intake_called = False
-            if "messages" in response:
-                for msg in response["messages"]:
-                    if getattr(msg, "tool_calls", None):
-                        for call in msg.tool_calls:
-                            if call.get("name") == "end_of_intake":
-                                end_intake_called = True
-                                break
-            
-            if end_intake_called:
-                print("\nAssistant: Thank you for your time. The intake is now complete.")
-                break
-            
-            response["messages"][-1].pretty_print() 
-
-        except Exception as e:
-            print(f"\nError: {e}\n")
-
-    print("\n--- INTAKE COMPLETE ---")
-    print("Compiling dense medical summary and structured patient data...\n")
-
-    # Use with_structured_output to enforce the IntakeProfile format ONLY at the end
-    model = get_model("intake", 0.3)  # Get the model instance
-    structured_model = model.with_structured_output(IntakeProfile)
-
-    try:
-        # We pass the entire conversation history to generate the final structured output
-        conversation_state = agent.get_state(config=config)
-        final_patient_data = structured_model.invoke(conversation_state.values["messages"])
-        print("=== FINAL PATIENT INFO (JSON) ===")
-        print(final_patient_data.model_dump_json(indent=2))
-        
-    except Exception as e:
-        print(f"\nFailed to generate final report: {e}")
-    
-    return final_patient_data, agent.get_state(config=config).values["messages"]
-
 
 #TODO: Have the model NOT produce an output normally in conversation. all we need will be produced at structured call
 def _iter_stream_text(content: str | list[dict] | None):
@@ -113,7 +50,15 @@ def _iter_stream_text(content: str | list[dict] | None):
             yield block["text"]
 
 #TODO: Take demographics at the start before starting intake, no chat approach, then pass demographics to intake agent.
-async def run_intake_cli(message: str) -> AsyncGenerator[str | dict | tuple[IntakeProfile, list[dict[str, str]]], None]:
+async def run_intake_cli(message: str, conversation_id: str) -> AsyncGenerator[str | dict | tuple[IntakeProfile, list[dict[str, str]]], None]:
+    config: RunnableConfig = {"configurable": {"thread_id": conversation_id}}
+    messages = [
+        # {"role": "system", "content": system_prompt},
+        {"role": "assistant", "content": "What brings you in today?"}
+    ]
+
+    agent.update_state(config=config, values={"messages": messages})
+    
     end_intake_called = False
     infer_condition_active = False
     if message.strip() == ".":
@@ -150,7 +95,6 @@ async def run_intake_cli(message: str) -> AsyncGenerator[str | dict | tuple[Inta
                 yield text
 
     if end_intake_called:
-        yield "END"
         model = get_model("intake", 0.3)  # Get the model instance
         structured_model = model.with_structured_output(IntakeProfile)
 
