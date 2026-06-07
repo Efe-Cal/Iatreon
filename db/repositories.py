@@ -51,6 +51,19 @@ class IntakeRepo:
         await self.db.refresh(session)
         return session
 
+    async def get_or_create_session(self, session_id: uuid.UUID) -> IntakeSession:
+        session = await self.db.get(IntakeSession, session_id)
+        if session:
+            if session.user_id != self.user_id:
+                raise ValueError("Unauthorized: User ID mismatch")
+            return session
+        
+        session = IntakeSession(id=session_id, user_id=self.user_id, status="in_progress", raw_transcript=[])
+        self.db.add(session)
+        await self.db.commit()
+        await self.db.refresh(session)
+        return session
+
     async def update_session(self, session_id: uuid.UUID, profile: IntakeProfile, transcript: list):
         session = await self.db.get(IntakeSession, session_id)
         if session.user_id != self.user_id:
