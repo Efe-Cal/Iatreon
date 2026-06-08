@@ -14,7 +14,8 @@ engine = create_async_engine(
 SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 class Base(MappedAsDataclass, DeclarativeBase):
-    pass
+    def to_dict(self):
+        return {c.name: getattr(self, c.name) for c in self.__table__.columns}
 
 
 async def init_db() -> None:

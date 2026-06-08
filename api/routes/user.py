@@ -1,0 +1,65 @@
+from fastapi import APIRouter
+from pydantic import BaseModel, Field, field_validator
+from sshpubkeys import SSHKey
+
+from db.db import SessionLocal
+from db.repositories import UserRepo
+from db.schemas import UserProfileData
+
+router = APIRouter()
+
+
+def _validate_ssh_public_key(value: str) -> str:
+
+    if not isinstance(value, str):
+        raise ValueError("ssh_key must be a string")
+
+    key_text = value.strip()
+    if not key_text:
+        raise ValueError("ssh_key is required")
+
+    try:
+        key = SSHKey(key_text, strict=True)
+        key.parse()
+    except (ValueError, Exception) as exc:  # sshpubkeys raises bare Exception
+        raise ValueError(f"invalid or insecure SSH public key: {exc}") from exc
+
+    if not key.key_type:
+        raise ValueError("invalid SSH public key: missing key type")
+
+    return key_text
+
+
+class GetOrCreateUserRequest(BaseModel):
+    ssh_key: str = Field(..., description="OpenSSH public key")
+
+    @field_validator("ssh_key")
+    @classmethod
+    def _validate_ssh_key(cls, value: str) -> str:
+        return _validate_ssh_public_key(value)
+
+
+@router.post("/user")
+async def get_or_create_user(payload: GetOrCreateUserRequest) -> dict:
+    ssh_key = payload.ssh_key
+    async with SessionLocal() as session:
+        user_repo = UserRepo(session)
+        user_id = await user_repo.get_user_id_by_ssh_key(ssh_key)
+        if not user_id:
+            user = await user_repo.create_user(ssh_key)
+            return {"user_id": str(user.id)}
+        return {"user_id": str(user_id)}
+
+@router.get("/user-profile")
+async def get_user_profile(user_id: str) -> dict:
+    async with SessionLocal() as session:
+        user_repo = UserRepo(session)
+        profile = await user_repo.get_user_profile(user_id)
+        return profile
+
+@router.post("/user-profile")
+async def update_user_profile(user_id: str, profile_data: UserProfileData) -> dict:
+    async with SessionLocal() as session:
+        user_repo = UserRepo(session)
+        await user_repo.update_user_profile(user_id, profile_data)
+        return {"status": "success"}

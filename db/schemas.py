@@ -52,3 +52,13 @@ class BookSectionData(BaseModel):
     text: str = Field(..., description="The full text of the book section")
     url: Optional[str] = Field(None, description="The URL of the book section (if available)")
     full_text_available: bool = Field(True, description="Whether the full text of the book section is available")
+    
+class UserProfileData(BaseModel):
+    user_id: str
+    demographics: dict[str, str] = Field(..., description="The demographic information of the user (e.g., age, gender, etc.)")
+    pmh: list[str] = Field(..., description="The past medical history of the user")
+    medications: list[str] = Field(..., description="The medications of the user")
+    allergies: list[str] = Field(..., description="The allergies of the user")
+    family_history: list[str] = Field(..., description="The family history of the user")
+    social: dict[str, str] = Field(..., description="The social history of the user (e.g., smoking, alcohol use, exercise, etc.)")
+    medical_summary: Optional[str] = Field(None, description="A summary of the user's medical information")

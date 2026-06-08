@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import diagnosis, intake, research
+from api.routes import diagnosis, intake, research, user
 
 app = FastAPI()
 
@@ -17,3 +17,4 @@ app.add_middleware(
 app.include_router(intake.router)
 app.include_router(research.router)
 app.include_router(diagnosis.router)
+app.include_router(user.router)

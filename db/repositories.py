@@ -11,10 +11,12 @@ from .models import (
     SessionArticle,
     BookSection,
     SessionBookSection,
+    User,
+    UserProfile,
     WebSearchResult,
     SessionWebSearchResult,
 )
-from .schemas import BookSectionData, IntakeProfile, ArticleData
+from .schemas import BookSectionData, IntakeProfile, ArticleData, UserProfileData
 
 
 def _normalize_unique_identifier(value: str | None) -> str | None:
@@ -521,3 +523,39 @@ class WebSearchResultRepo:
 
     async def get_web_search_result_by_id(self, web_search_result_id: uuid.UUID) -> WebSearchResult | None:
         return await self.db.get(WebSearchResult, web_search_result_id)
+
+
+class UserRepo:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+    
+    async def create_user(self, ssh_key: str) -> User:
+        user = User(ssh_key=ssh_key)
+        self.db.add(user)
+        await self.db.commit()
+        await self.db.refresh(user)
+        return user
+
+    async def get_user_id_by_ssh_key(self, ssh_key: str) -> uuid.UUID | None:
+        stmt = select(User.id).where(User.ssh_key == ssh_key)
+        return (await self.db.execute(stmt)).scalar_one_or_none()
+    
+    async def get_user_profile(self, user_id: str) -> dict:
+        stmt = select(UserProfile).where(UserProfile.user_id == uuid.UUID(user_id))
+        user_profile = (await self.db.execute(stmt)).scalar_one_or_none()
+        if user_profile is None:
+            return {}
+        return UserProfileData.model_validate(user_profile).model_dump()
+
+    async def update_user_profile(self, profile_data: UserProfileData) -> UserProfile:
+        stmt = select(UserProfile).where(UserProfile.user_id == uuid.UUID(profile_data.user_id))
+        user_profile = (await self.db.execute(stmt)).scalar_one_or_none()
+        if user_profile is None:
+            user_profile = UserProfile(user_id=uuid.UUID(profile_data.user_id), **profile_data.model_dump())
+            self.db.add(user_profile)
+        else:
+            for field, value in profile_data.model_dump().items():
+                setattr(user_profile, field, value)
+        await self.db.commit()
+        await self.db.refresh(user_profile)
+        return user_profile

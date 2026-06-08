@@ -1,5 +1,4 @@
-from cli.cli import IatreonApp
+import uvicorn
 
 if __name__ == "__main__":
-    app = IatreonApp()
-    app.run()
+    uvicorn.run("api.main:app", host="0.0.0.0", port=8000, reload=True)
