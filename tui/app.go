@@ -103,5 +103,5 @@ func (m model) View() string {
 		body = "Unknown screen"
 	}
 
-	return renderFrame(body, m.width, m.height)
+	return body
 }

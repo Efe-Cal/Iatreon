@@ -18,11 +18,6 @@ var (
 
 // Shared lipgloss styles for the whole TUI.
 var (
-	frameStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorBorder).
-			Padding(0, 1)
-
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(colorPrimary).
@@ -61,23 +56,6 @@ var (
 	toolDoneStyle = lipgloss.NewStyle().
 			Foreground(colorAccent)
 )
-
-// renderFrame wraps the active screen body in a styled frame.
-func renderFrame(body string, width, height int) string {
-	w := width
-	if w <= 0 {
-		w = 80
-	}
-	h := height
-	if h <= 0 {
-		h = 24
-	}
-	// Reserve 2 rows for the frame border (top + bottom).
-	return frameStyle.
-		Width(w - 2).
-		Height(h - 2).
-		Render(body)
-}
 
 // keyInput translates a bubbletea key press into a string of printable
 // characters. Non-character keys (arrows, function keys, etc.) return "".

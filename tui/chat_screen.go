@@ -97,22 +97,14 @@ func (m *chatModel) Init() tea.Cmd {
 	return tea.Batch(textinput.Blink, m.spinner.Tick)
 }
 
-// SetSize is called by the parent app when the terminal resizes.
 func (m *chatModel) SetSize(w, h int) {
-	m.width = w
-	m.height = h
+	m.width, m.height = w, h
 
-	// Layout:
-	//   +----------------------------+
-	//   | title                      |
-	//   | viewport (history)         |
-	//   | input field                |
-	//   | status / hint              |
-	//   +----------------------------+
-	headerH := 1
-	statusH := 1
-	inputH := 3 // textinput uses ~3 lines (border + content + border)
-	vpH := h - headerH - inputH - statusH - 2
+	headerH := lipgloss.Height(titleStyle.Width(w - 2).Render("Iatreon · " + m.username))
+	statusH := lipgloss.Height(statusStyle.Width(w - 2).Render("Enter to send · Esc to log out · Ctrl+C to quit"))
+	inputH := lipgloss.Height(m.input.View()) // bubbles textinput knows its own height
+
+	vpH := h - headerH - inputH - statusH
 	if vpH < 3 {
 		vpH = 3
 	}
@@ -359,7 +351,11 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		}
 	}
 
-	// Forward all other messages (typing, scrolling) to the text input.
+	// Forward navigation keys to the viewport so messages are scrollable.
+	m.viewport, cmd = m.viewport.Update(msg)
+	cmds = append(cmds, cmd)
+
+	// Forward all other messages (typing) to the text input.
 	m.input, cmd = m.input.Update(msg)
 	cmds = append(cmds, cmd)
 	return *m, tea.Batch(cmds...)
