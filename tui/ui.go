@@ -1,11 +1,86 @@
 package main
 
 import (
-	"strings"
-
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
+var (
+	colorPrimary = lipgloss.Color("#2563EB")
+	colorAccent  = lipgloss.Color("#0D9488")
+	colorUser    = lipgloss.Color("#2563EB")
+	colorAI      = lipgloss.Color("#0D9488")
+	colorSystem  = lipgloss.Color("#64748B")
+	colorError   = lipgloss.Color("#DC2626")
+	colorMuted   = lipgloss.Color("#94A3B8")
+	colorBorder  = lipgloss.Color("#CBD5E1")
+)
+
+// Shared lipgloss styles for the whole TUI.
+var (
+	frameStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorBorder).
+			Padding(0, 1)
+
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorPrimary).
+			Padding(0, 1).
+			Align(lipgloss.Center)
+
+	statusStyle = lipgloss.NewStyle().
+			Foreground(colorMuted).
+			Italic(true).
+			Padding(0, 1)
+
+	hintStyle = lipgloss.NewStyle().
+			Foreground(colorMuted).
+			Padding(0, 1)
+
+	userLabelStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorUser)
+
+	aiLabelStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorAI)
+
+	systemStyle = lipgloss.NewStyle().
+			Foreground(colorSystem).
+			Italic(true)
+
+	errorStyle = lipgloss.NewStyle().
+			Foreground(colorError).
+			Bold(true)
+
+	toolRunningStyle = lipgloss.NewStyle().
+				Foreground(colorAccent).
+				Italic(true)
+
+	toolDoneStyle = lipgloss.NewStyle().
+			Foreground(colorAccent)
+)
+
+// renderFrame wraps the active screen body in a styled frame.
+func renderFrame(body string, width, height int) string {
+	w := width
+	if w <= 0 {
+		w = 80
+	}
+	h := height
+	if h <= 0 {
+		h = 24
+	}
+	// Reserve 2 rows for the frame border (top + bottom).
+	return frameStyle.
+		Width(w - 2).
+		Height(h - 2).
+		Render(body)
+}
+
+// keyInput translates a bubbletea key press into a string of printable
+// characters. Non-character keys (arrows, function keys, etc.) return "".
 func keyInput(key tea.KeyMsg) string {
 	switch key.Type {
 	case tea.KeyRunes:
@@ -15,18 +90,4 @@ func keyInput(key tea.KeyMsg) string {
 	default:
 		return ""
 	}
-}
-
-func renderFrame(body string, width int) string {
-	if width <= 0 {
-		width = 80
-	}
-
-	title := " Iatreon "
-	border := strings.Repeat("-", max(0, width-2))
-	if len(title) < len(border) {
-		border = title + border[len(title):]
-	}
-
-	return "\n" + border + "\n\n" + body + "\n"
 }

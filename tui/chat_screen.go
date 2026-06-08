@@ -9,8 +9,12 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // message holds a single chat entry.
@@ -20,22 +24,28 @@ type message struct {
 }
 
 type chatModel struct {
-	username         string
-	conversationID   string
-	input            string
+	username       string
+	conversationID string
+
+	input    textinput.Model
+	viewport viewport.Model
+	spinner  spinner.Model
+
 	messages         []message
-	logout           bool
 	streamingMessage string
 	isStreaming      bool
-	width            int
-	aiRenderer       *glamour.TermRenderer
-	userRenderer     *glamour.TermRenderer
+
+	logout bool
+	width  int
+	height int
+
+	aiRenderer   *glamour.TermRenderer
+	userRenderer *glamour.TermRenderer
 }
 
 func generateUUID() string {
 	b := make([]byte, 16)
-	_, err := rand.Read(b)
-	if err != nil {
+	if _, err := rand.Read(b); err != nil {
 		return "12345678-1234-5678-1234-567812345678"
 	}
 	b[6] = (b[6] & 0x0f) | 0x40
@@ -52,19 +62,71 @@ func newChatModel(username string) chatModel {
 		glamour.WithAutoStyle(),
 		glamour.WithWordWrap(100),
 	)
+
+	ti := textinput.New()
+	ti.Placeholder = "Type a message…"
+	ti.Prompt = "> "
+	ti.CharLimit = 1024
+	ti.Focus()
+
+	vp := viewport.New(0, 0)
+	vp.SetContent(welcomeScreen())
+
+	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
+
 	return chatModel{
 		username:       username,
 		conversationID: generateUUID(),
 		messages: []message{
 			{role: "system", text: "Welcome to Iatreon. Let's start by taking an intake."},
 		},
+		input:        ti,
+		viewport:     vp,
+		spinner:      sp,
 		aiRenderer:   aiRenderer,
 		userRenderer: userRenderer,
 	}
 }
 
-// renderMarkdown renders markdown text, fallback to plain text on error.
-func (m chatModel) renderMarkdown(text string, isUser bool) string {
+func welcomeScreen() string {
+	return titleStyle.Render("Iatreon") + "\n\n" +
+		systemStyle.Render("Type a message below and press enter to chat with the intake agent.")
+}
+
+func (m *chatModel) Init() tea.Cmd {
+	return tea.Batch(textinput.Blink, m.spinner.Tick)
+}
+
+// SetSize is called by the parent app when the terminal resizes.
+func (m *chatModel) SetSize(w, h int) {
+	m.width = w
+	m.height = h
+
+	// Layout:
+	//   +----------------------------+
+	//   | title                      |
+	//   | viewport (history)         |
+	//   | input field                |
+	//   | status / hint              |
+	//   +----------------------------+
+	headerH := 1
+	statusH := 1
+	inputH := 3 // textinput uses ~3 lines (border + content + border)
+	vpH := h - headerH - inputH - statusH - 2
+	if vpH < 3 {
+		vpH = 3
+	}
+	vpW := w - 2
+	if vpW < 10 {
+		vpW = 10
+	}
+	m.viewport.Width = vpW
+	m.viewport.Height = vpH
+	m.input.Width = vpW
+}
+
+// renderMarkdown renders markdown text, falling back to plain text on error.
+func (m *chatModel) renderMarkdown(text string, isUser bool) string {
 	r := m.aiRenderer
 	if isUser && m.userRenderer != nil {
 		r = m.userRenderer
@@ -77,6 +139,50 @@ func (m chatModel) renderMarkdown(text string, isUser bool) string {
 		return text
 	}
 	return out
+}
+
+// renderHistory turns the current message list into a single string for the
+// viewport. The live streaming chunk is appended at the end.
+func (m *chatModel) renderHistory() string {
+	var sb strings.Builder
+	for _, msg := range m.messages {
+		sb.WriteString(m.renderMessage(msg))
+		sb.WriteString("\n")
+	}
+	if m.streamingMessage != "" {
+		// Show the partial response as it streams in.
+		sb.WriteString(aiLabelStyle.Render("Iatreon:"))
+		sb.WriteString("\n")
+		sb.WriteString(m.renderMarkdown(m.streamingMessage, false))
+		sb.WriteString("\n")
+	}
+	if m.isStreaming {
+		sb.WriteString(m.spinner.View())
+		sb.WriteString(" waiting for response…\n")
+	}
+	return sb.String()
+}
+
+func (m *chatModel) renderMessage(msg message) string {
+	switch msg.role {
+	case "user":
+		label := userLabelStyle.Render(m.username + ":")
+		body := m.renderMarkdown(msg.text, true)
+		return lipgloss.JoinVertical(lipgloss.Left, label, body)
+	case "ai":
+		label := aiLabelStyle.Render("Iatreon:")
+		body := m.renderMarkdown(msg.text, false)
+		return lipgloss.JoinVertical(lipgloss.Left, label, body)
+	case "system":
+		return systemStyle.Render(msg.text)
+	default:
+		return msg.text
+	}
+}
+
+func (m *chatModel) refreshViewport() {
+	m.viewport.SetContent(m.renderHistory())
+	m.viewport.GotoBottom()
 }
 
 type chunkMsg struct {
@@ -184,22 +290,32 @@ func streamMessage(conversationID, username, msg string) tea.Cmd {
 	}
 }
 
-func (m chatModel) Init() tea.Cmd {
-	return nil
-}
+func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
+	var (
+		cmd  tea.Cmd
+		cmds []tea.Cmd
+	)
 
-func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		return m, nil
+		m.SetSize(msg.Width, msg.Height)
+		return *m, nil
+
+	case spinner.TickMsg:
+		m.spinner, cmd = m.spinner.Update(msg)
+		if m.isStreaming {
+			m.refreshViewport()
+		}
+		cmds = append(cmds, cmd)
+		return *m, tea.Batch(cmds...)
 
 	case chunkMsg:
 		if msg.err != nil {
 			m.messages = append(m.messages, message{role: "system", text: "❌ **Error:** " + msg.err.Error()})
 			m.isStreaming = false
 			m.streamingMessage = ""
-			return m, nil
+			m.refreshViewport()
+			return *m, nil
 		}
 		if msg.done {
 			if m.streamingMessage != "" {
@@ -210,76 +326,64 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 				m.messages = append(m.messages, message{role: "system", text: msg.content})
 			}
 			m.isStreaming = false
-			return m, nil
+			m.refreshViewport()
+			return *m, nil
 		}
 		m.streamingMessage += msg.content
-		return m, waitForChunk(msg.ch)
+		m.refreshViewport()
+		return *m, waitForChunk(msg.ch)
 
 	case tea.KeyMsg:
 		if m.isStreaming {
-			return m, nil
+			// Let viewport keep scrolling (pgup/pgdown) but ignore typing.
+			m.viewport, cmd = m.viewport.Update(msg)
+			cmds = append(cmds, cmd)
+			return *m, tea.Batch(cmds...)
 		}
 		switch msg.String() {
 		case "enter":
-			text := strings.TrimSpace(m.input)
-			if text != "" {
-				m.messages = append(m.messages, message{role: "user", text: text})
-				m.input = ""
-				m.isStreaming = true
-				return m, streamMessage(m.conversationID, m.username, text)
+			text := strings.TrimSpace(m.input.Value())
+			if text == "" {
+				return *m, nil
 			}
-		case "backspace":
-			if len([]rune(m.input)) > 0 {
-				runes := []rune(m.input)
-				m.input = string(runes[:len(runes)-1])
-			}
+			m.messages = append(m.messages, message{role: "user", text: text})
+			m.input.SetValue("")
+			m.isStreaming = true
+			m.refreshViewport()
+			cmds = append(cmds, streamMessage(m.conversationID, m.username, text))
+			cmds = append(cmds, m.spinner.Tick)
+			return *m, tea.Batch(cmds...)
 		case "esc":
 			m.logout = true
-		default:
-			m.input += keyInput(msg)
+			return *m, nil
 		}
 	}
 
-	return m, nil
+	// Forward all other messages (typing, scrolling) to the text input.
+	m.input, cmd = m.input.Update(msg)
+	cmds = append(cmds, cmd)
+	return *m, tea.Batch(cmds...)
 }
 
-func (m chatModel) View() string {
-	var sb strings.Builder
-
-	for _, msg := range m.messages {
-		switch msg.role {
-		case "user":
-			label := "**" + m.username + ":**\n"
-			rendered := m.renderMarkdown(label+msg.text, true)
-			sb.WriteString(rendered)
-		case "ai":
-			rendered := m.renderMarkdown(msg.text, false)
-			sb.WriteString(rendered)
-		case "system":
-			rendered := m.renderMarkdown(msg.text, false)
-			sb.WriteString(rendered)
-		}
+func (m *chatModel) View() string {
+	if m.width == 0 {
+		return ""
 	}
 
-	// Live streaming AI response
-	if m.streamingMessage != "" {
-		rendered := m.renderMarkdown(m.streamingMessage, false)
-		sb.WriteString(rendered)
-	}
+	header := titleStyle.Width(m.width - 2).Render("Iatreon · " + m.username)
 
-	// Input area
-	sb.WriteString("\n")
-	inputCursor := m.input + "_"
-	if m.isStreaming {
-		inputCursor = "⏳ Waiting for response…"
-	}
-	sb.WriteString("> ")
-	sb.WriteString(inputCursor)
-	sb.WriteString("\n\n")
+	// Update viewport content right before drawing so the live stream is
+	// reflected even when the parent doesn't repaint on every chunk.
+	m.viewport.SetContent(m.renderHistory())
 
-	if !m.isStreaming {
-		sb.WriteString("Enter to send · Esc to log out · Ctrl+C to quit\n")
-	}
+	status := statusStyle.Width(m.width - 2).Render("Enter to send · Esc to log out · Ctrl+C to quit")
 
-	return sb.String()
+	body := lipgloss.JoinVertical(
+		lipgloss.Left,
+		header,
+		m.viewport.View(),
+		m.input.View(),
+		status,
+	)
+	return body
 }

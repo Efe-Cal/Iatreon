@@ -18,37 +18,34 @@ type model struct {
 }
 
 func newModel() model {
+	start := newStartModel()
+	chat := newChatModel("")
 	return model{
 		active: startScreen,
-		start:  newStartModel(),
-		chat:   newChatModel(""),
+		start:  start,
+		chat:   chat,
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return m.start.Init()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = wsm.Width
+		m.height = wsm.Height
 		switch m.active {
-		case chatScreen:
-			chat, cmd := m.chat.Update(msg)
-			m.chat = chat
-			return m, cmd
 		case startScreen:
-			start, cmd := m.start.Update(msg)
-			m.start = start
-			return m, cmd
+			m.start = m.start.SetSize(wsm.Width, wsm.Height)
+		case chatScreen:
+			m.chat.SetSize(wsm.Width, wsm.Height)
 		}
 		return m, nil
-	case tea.KeyMsg:
-		if msg.String() == "ctrl+c" {
-			return m, tea.Quit
-		}
+	}
+
+	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "ctrl+c" {
+		return m, tea.Quit
 	}
 
 	switch m.active {
@@ -62,25 +59,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateStart(msg tea.Msg) (tea.Model, tea.Cmd) {
-	start, cmd := m.start.Update(msg)
-	m.start = start
+	updated, cmd := m.start.Update(msg)
+	m.start = updated
 
-	if start.ready {
-		m.chat = newChatModel(start.username)
+	if m.start.ready {
+		// Move into chat with the entered username.
+		chat := newChatModel(m.start.username())
+		chat.SetSize(m.width, m.height)
+		m.chat = chat
 		m.start = newStartModel()
+		m.start = m.start.SetSize(m.width, m.height)
 		m.active = chatScreen
+		return m, chat.Init()
 	}
 
 	return m, cmd
 }
 
 func (m model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
-	chat, cmd := m.chat.Update(msg)
-	m.chat = chat
+	updated, cmd := m.chat.Update(msg)
+	m.chat = updated
 
-	if chat.logout {
+	if m.chat.logout {
+		start := newStartModel()
+		start = start.SetSize(m.width, m.height)
+		m.start = start
 		m.chat = newChatModel("")
 		m.active = startScreen
+		return m, start.Init()
 	}
 
 	return m, cmd
@@ -97,5 +103,5 @@ func (m model) View() string {
 		body = "Unknown screen"
 	}
 
-	return renderFrame(body, m.width)
+	return renderFrame(body, m.width, m.height)
 }
