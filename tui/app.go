@@ -34,6 +34,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		switch m.active {
+		case chatScreen:
+			chat, cmd := m.chat.Update(msg)
+			m.chat = chat
+			return m, cmd
+		case startScreen:
+			start, cmd := m.start.Update(msg)
+			m.start = start
+			return m, cmd
+		}
 		return m, nil
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
