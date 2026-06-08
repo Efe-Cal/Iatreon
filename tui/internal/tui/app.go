@@ -1,4 +1,4 @@
-package main
+package tui
 
 import tea "github.com/charmbracelet/bubbletea"
 
@@ -17,7 +17,7 @@ type model struct {
 	height int
 }
 
-func newModel() model {
+func NewModel() model {
 	start := newStartModel()
 	chat := newChatModel("")
 	return model{

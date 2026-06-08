@@ -1,7 +1,6 @@
-package main
+package tui
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -56,16 +55,3 @@ var (
 	toolDoneStyle = lipgloss.NewStyle().
 			Foreground(colorAccent)
 )
-
-// keyInput translates a bubbletea key press into a string of printable
-// characters. Non-character keys (arrows, function keys, etc.) return "".
-func keyInput(key tea.KeyMsg) string {
-	switch key.Type {
-	case tea.KeyRunes:
-		return string(key.Runes)
-	case tea.KeySpace:
-		return " "
-	default:
-		return ""
-	}
-}
