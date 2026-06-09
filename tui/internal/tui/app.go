@@ -5,32 +5,40 @@ import tea "github.com/charmbracelet/bubbletea"
 type screen int
 
 const (
-	startScreen screen = iota
+	setupScreen screen = iota
 	chatScreen
 )
 
 type model struct {
-	active screen
-	start  startModel
-	chat   chatModel
-	width  int
-	height int
-	userid string
+	active     screen
+	setup      setupModel
+	chat       chatModel
+	width      int
+	height     int
+	userid     string
+	hasProfile bool
 }
 
-func NewModel(userid string) model {
-	start := newStartModel()
+func NewModel(userid string, hasProfile bool) model {
+	setup := newSetupModel(userid)
 	chat := newChatModel(userid)
+	var active screen
+	if hasProfile {
+		active = chatScreen
+	} else {
+		active = setupScreen
+	}
 	return model{
-		active: startScreen,
-		start:  start,
-		chat:   chat,
-		userid: userid,
+		active:     active,
+		setup:      setup,
+		chat:       chat,
+		userid:     userid,
+		hasProfile: hasProfile,
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return m.start.Init()
+	return m.setup.Init()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -38,8 +46,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = wsm.Width
 		m.height = wsm.Height
 		switch m.active {
-		case startScreen:
-			m.start = m.start.SetSize(wsm.Width, wsm.Height)
+		case setupScreen:
+			m.setup.SetSize(wsm.Width, wsm.Height)
 		case chatScreen:
 			m.chat.SetSize(wsm.Width, wsm.Height)
 		}
@@ -51,8 +59,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.active {
-	case startScreen:
-		return m.updateStart(msg)
+	case setupScreen:
+		return m.updateSetup(msg)
 	case chatScreen:
 		return m.updateChat(msg)
 	default:
@@ -60,17 +68,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m model) updateStart(msg tea.Msg) (tea.Model, tea.Cmd) {
-	updated, cmd := m.start.Update(msg)
-	m.start = updated
+func (m model) updateSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.setup.Update(msg)
+	m.setup = updated
 
-	if m.start.ready {
-		// Move into chat with the entered username.
-		chat := newChatModel(m.chat.userid)
+	if m.setup.submitted {
+		// Move into chat after profile is saved.
+		chat := newChatModel(m.userid)
 		chat.SetSize(m.width, m.height)
 		m.chat = chat
-		m.start = newStartModel()
-		m.start = m.start.SetSize(m.width, m.height)
+		m.setup = newSetupModel(m.userid)
+		m.setup.SetSize(m.width, m.height)
 		m.active = chatScreen
 		return m, chat.Init()
 	}
@@ -83,12 +91,12 @@ func (m model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.chat = updated
 
 	if m.chat.logout {
-		start := newStartModel()
-		start = start.SetSize(m.width, m.height)
-		m.start = start
+		setup := newSetupModel(m.userid)
+		setup.SetSize(m.width, m.height)
+		m.setup = setup
 		m.chat = newChatModel("")
-		m.active = startScreen
-		return m, start.Init()
+		m.active = setupScreen
+		return m, setup.Init()
 	}
 
 	return m, cmd
@@ -97,8 +105,8 @@ func (m model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	var body string
 	switch m.active {
-	case startScreen:
-		body = m.start.View()
+	case setupScreen:
+		body = m.setup.View()
 	case chatScreen:
 		body = m.chat.View()
 	default:

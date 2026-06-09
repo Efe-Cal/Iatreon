@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -54,7 +56,7 @@ class BookSectionData(BaseModel):
     full_text_available: bool = Field(True, description="Whether the full text of the book section is available")
     
 class UserProfileData(BaseModel):
-    user_id: str
+    user_id: UUID
     demographics: dict[str, str] = Field(..., description="The demographic information of the user (e.g., age, gender, etc.)")
     pmh: list[str] = Field(..., description="The past medical history of the user")
     medications: list[str] = Field(..., description="The medications of the user")

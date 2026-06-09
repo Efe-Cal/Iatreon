@@ -25,7 +25,8 @@ import (
 )
 
 type User struct {
-	ID string `json:"user_id"`
+	ID         string `json:"user_id"`
+	HasProfile bool   `json:"has_profile"`
 }
 
 func getUserWithPubKey(ctx ssh.Context, key ssh.PublicKey) bool {
@@ -52,6 +53,7 @@ func getUserWithPubKey(ctx ssh.Context, key ssh.PublicKey) bool {
 		ctx.Permissions().Extensions = make(map[string]string)
 	}
 	ctx.Permissions().Extensions["user_id"] = user.ID
+	ctx.Permissions().Extensions["has_profile"] = fmt.Sprintf("%v", user.HasProfile)
 	return true
 }
 
@@ -68,8 +70,10 @@ func teaHandler(s ssh.Session) (tea.Model, []tea.ProgramOption) {
 		wish.Fatalln(s, "Error: No user ID in session context.")
 		return nil, nil
 	}
+	hasProfileStr, _ := s.Permissions().Extensions["has_profile"]
+	hasProfile := hasProfileStr == "true"
 
-	model := tui.NewModel(userID)
+	model := tui.NewModel(userID, hasProfile)
 	return model, []tea.ProgramOption{tea.WithAltScreen()}
 }
 

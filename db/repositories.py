@@ -540,18 +540,20 @@ class UserRepo:
         stmt = select(User.id).where(User.ssh_key == ssh_key)
         return (await self.db.execute(stmt)).scalar_one_or_none()
     
-    async def get_user_profile(self, user_id: str) -> dict:
-        stmt = select(UserProfile).where(UserProfile.user_id == uuid.UUID(user_id))
+    async def get_user_profile(self, user_id: uuid.UUID) -> dict:
+        stmt = select(UserProfile).where(UserProfile.user_id == user_id)
         user_profile = (await self.db.execute(stmt)).scalar_one_or_none()
         if user_profile is None:
             return {}
         return UserProfileData.model_validate(user_profile).model_dump()
 
     async def update_user_profile(self, profile_data: UserProfileData) -> UserProfile:
-        stmt = select(UserProfile).where(UserProfile.user_id == uuid.UUID(profile_data.user_id))
+        stmt = select(UserProfile).where(UserProfile.user_id == profile_data.user_id)
         user_profile = (await self.db.execute(stmt)).scalar_one_or_none()
         if user_profile is None:
-            user_profile = UserProfile(user_id=uuid.UUID(profile_data.user_id), **profile_data.model_dump())
+            profile_dict = profile_data.model_dump()
+            profile_dict.pop("user_id", None)
+            user_profile = UserProfile(user_id=profile_data.user_id, **profile_dict)
             self.db.add(user_profile)
         else:
             for field, value in profile_data.model_dump().items():

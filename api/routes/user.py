@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+from uuid import UUID
+
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sshpubkeys import SSHKey
 
@@ -49,19 +51,21 @@ async def get_or_create_user(payload: GetOrCreateUserRequest) -> dict:
         user_id = await user_repo.get_user_id_by_ssh_key(ssh_key)
         if not user_id:
             user = await user_repo.create_user(ssh_key)
-            return {"user_id": str(user.id)}
-        return {"user_id": str(user_id)}
+            return {"user_id": str(user.id), "has_profile": False}
+        user_profile = await user_repo.get_user_profile(user_id)
+        has_profile = bool(user_profile)
+        return {"user_id": str(user_id), "has_profile": has_profile}
 
 @router.get("/user-profile")
-async def get_user_profile(user_id: str) -> dict:
+async def get_user_profile(user_id: UUID) -> dict:
     async with SessionLocal() as session:
         user_repo = UserRepo(session)
         profile = await user_repo.get_user_profile(user_id)
         return profile
 
 @router.post("/user-profile")
-async def update_user_profile(user_id: str, profile_data: UserProfileData) -> dict:
+async def update_user_profile(profile_data: UserProfileData) -> dict:
     async with SessionLocal() as session:
         user_repo = UserRepo(session)
-        await user_repo.update_user_profile(user_id, profile_data)
+        await user_repo.update_user_profile(profile_data)
         return {"status": "success"}
