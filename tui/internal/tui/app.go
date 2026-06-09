@@ -15,15 +15,17 @@ type model struct {
 	chat   chatModel
 	width  int
 	height int
+	userid string
 }
 
-func NewModel() model {
+func NewModel(userid string) model {
 	start := newStartModel()
 	chat := newChatModel("")
 	return model{
 		active: startScreen,
 		start:  start,
 		chat:   chat,
+		userid: userid,
 	}
 }
 

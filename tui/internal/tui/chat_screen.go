@@ -24,7 +24,7 @@ type message struct {
 }
 
 type chatModel struct {
-	username       string
+	userid         string
 	conversationID string
 
 	input    textinput.Model
@@ -53,7 +53,7 @@ func generateUUID() string {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-func newChatModel(username string) chatModel {
+func newChatModel(userid string) chatModel {
 	aiRenderer, _ := glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
 		glamour.WithWordWrap(100),
@@ -75,7 +75,7 @@ func newChatModel(username string) chatModel {
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
 
 	return chatModel{
-		username:       username,
+		userid:         userid,
 		conversationID: generateUUID(),
 		messages: []message{
 			{role: "system", text: "Welcome to Iatreon. Let's start by taking an intake."},
@@ -100,7 +100,7 @@ func (m *chatModel) Init() tea.Cmd {
 func (m *chatModel) SetSize(w, h int) {
 	m.width, m.height = w, h
 
-	headerH := lipgloss.Height(titleStyle.Width(w - 2).Render("Iatreon · " + m.username))
+	headerH := lipgloss.Height(titleStyle.Width(w - 2).Render("Iatreon"))
 	statusH := lipgloss.Height(statusStyle.Width(w - 2).Render("Enter to send · Esc to log out · Ctrl+C to quit"))
 	inputH := lipgloss.Height(m.input.View()) // bubbles textinput knows its own height
 
@@ -158,7 +158,7 @@ func (m *chatModel) renderHistory() string {
 func (m *chatModel) renderMessage(msg message) string {
 	switch msg.role {
 	case "user":
-		label := userLabelStyle.Render(m.username + ":")
+		label := userLabelStyle.Render("You :")
 		body := m.renderMarkdown(msg.text, true)
 		return lipgloss.JoinVertical(lipgloss.Left, label, body)
 	case "ai":
@@ -192,7 +192,7 @@ func waitForChunk(ch chan chunkMsg) tea.Cmd {
 	}
 }
 
-func streamMessage(conversationID, username, msg string) tea.Cmd {
+func streamMessage(conversationID, userid, msg string) tea.Cmd {
 	return func() tea.Msg {
 		ch := make(chan chunkMsg)
 		go func() {
@@ -217,7 +217,7 @@ func streamMessage(conversationID, username, msg string) tea.Cmd {
 				return
 			}
 			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("X-User-ID", username)
+			req.Header.Set("X-User-ID", userid)
 
 			client := &http.Client{}
 			resp, err := client.Do(req)
@@ -342,7 +342,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			m.input.SetValue("")
 			m.isStreaming = true
 			m.refreshViewport()
-			cmds = append(cmds, streamMessage(m.conversationID, m.username, text))
+			cmds = append(cmds, streamMessage(m.conversationID, m.userid, text))
 			cmds = append(cmds, m.spinner.Tick)
 			return *m, tea.Batch(cmds...)
 		case "esc":
@@ -366,7 +366,7 @@ func (m *chatModel) View() string {
 		return ""
 	}
 
-	header := titleStyle.Width(m.width - 2).Render("Iatreon · " + m.username)
+	header := titleStyle.Width(m.width - 2).Render("Iatreon")
 
 	// Update viewport content right before drawing so the live stream is
 	// reflected even when the parent doesn't repaint on every chunk.

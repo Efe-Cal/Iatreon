@@ -9,7 +9,7 @@ class User(Base):
     __tablename__ = "users"
     email: Mapped[Optional[str]] = mapped_column(String, unique=True)
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
-    ssh_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    ssh_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
 
 class UserProfile(Base):

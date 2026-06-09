@@ -42,6 +42,8 @@ class GetOrCreateUserRequest(BaseModel):
 @router.post("/user")
 async def get_or_create_user(payload: GetOrCreateUserRequest) -> dict:
     ssh_key = payload.ssh_key
+    if not ssh_key:
+        return {"error": "ssh_key is required"}
     async with SessionLocal() as session:
         user_repo = UserRepo(session)
         user_id = await user_repo.get_user_id_by_ssh_key(ssh_key)
