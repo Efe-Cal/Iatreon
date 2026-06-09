@@ -20,7 +20,7 @@ type model struct {
 
 func NewModel(userid string) model {
 	start := newStartModel()
-	chat := newChatModel("")
+	chat := newChatModel(userid)
 	return model{
 		active: startScreen,
 		start:  start,
@@ -66,7 +66,7 @@ func (m model) updateStart(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if m.start.ready {
 		// Move into chat with the entered username.
-		chat := newChatModel(m.start.username())
+		chat := newChatModel(m.chat.userid)
 		chat.SetSize(m.width, m.height)
 		m.chat = chat
 		m.start = newStartModel()

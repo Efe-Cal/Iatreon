@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"strings"
-
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -37,11 +35,6 @@ func (m startModel) SetSize(w, h int) startModel {
 	}
 	m.input.Width = width
 	return m
-}
-
-// username returns the trimmed value currently in the input field.
-func (m startModel) username() string {
-	return strings.TrimSpace(m.input.Value())
 }
 
 func (m startModel) Update(msg tea.Msg) (startModel, tea.Cmd) {

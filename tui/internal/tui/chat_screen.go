@@ -366,7 +366,7 @@ func (m *chatModel) View() string {
 		return ""
 	}
 
-	header := titleStyle.Width(m.width - 2).Render("Iatreon")
+	header := titleStyle.Width(m.width - 2).Render("Iatreon" + " · " + m.userid)
 
 	// Update viewport content right before drawing so the live stream is
 	// reflected even when the parent doesn't repaint on every chunk.
