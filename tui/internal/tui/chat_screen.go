@@ -2,7 +2,6 @@ package tui
 
 import (
 	"bufio"
-	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -24,6 +23,7 @@ type message struct {
 }
 
 type chatModel struct {
+	agent          AgentHandler
 	userid         string
 	conversationID string
 
@@ -51,6 +51,8 @@ func (m *chatModel) SetFooter(a []string) { m.footerActions = a }
 func (m chatModel) GetHeader() string     { return m.headerText }
 func (m chatModel) GetFooter() []string   { return m.footerActions }
 
+func (m chatModel) Agent() AgentHandler { return m.agent }
+
 func generateUUID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -62,6 +64,10 @@ func generateUUID() string {
 }
 
 func newChatModel(userid string) chatModel {
+	return newChatModelForAgent(AgentIntake, userid)
+}
+
+func newChatModelForAgent(kind AgentKind, userid string) chatModel {
 	aiRenderer, _ := glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
 		glamour.WithWordWrap(100),
@@ -78,15 +84,18 @@ func newChatModel(userid string) chatModel {
 	ti.Focus()
 
 	vp := viewport.New(0, 0)
-	vp.SetContent(welcomeScreen())
+	// vp.SetContent(welcomeScreen())
 
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
 
+	handler := newAgentHandler(kind)
+
 	return chatModel{
+		agent:          handler,
 		userid:         userid,
 		conversationID: generateUUID(),
 		messages: []message{
-			{role: "system", text: "Welcome to Iatreon. Let's start by taking an intake."},
+			{role: "system", text: handler.Welcome()},
 		},
 		input:        ti,
 		viewport:     vp,
@@ -94,11 +103,6 @@ func newChatModel(userid string) chatModel {
 		aiRenderer:   aiRenderer,
 		userRenderer: userRenderer,
 	}
-}
-
-func welcomeScreen() string {
-	return titleStyle.Render("Iatreon") + "\n\n" +
-		systemStyle.Render("Type a message below and press enter to chat with the intake agent.")
 }
 
 func (m *chatModel) Init() tea.Cmd {
@@ -139,6 +143,14 @@ func (m *chatModel) renderMarkdown(text string, isUser bool) string {
 	return out
 }
 
+// agentLabel returns the styled AI label for the active agent.
+func (m *chatModel) agentLabel() string {
+	if m.agent == nil {
+		return aiLabelStyle.Render("Iatreon:")
+	}
+	return aiLabelStyle.Render(m.agent.AgentLabel())
+}
+
 // renderHistory turns the current message list into a single string for the
 // viewport. The live streaming chunk is appended at the end.
 func (m *chatModel) renderHistory() string {
@@ -149,7 +161,7 @@ func (m *chatModel) renderHistory() string {
 	}
 	if m.streamingMessage != "" {
 		// Show the partial response as it streams in.
-		sb.WriteString(aiLabelStyle.Render("Iatreon:"))
+		sb.WriteString(m.agentLabel())
 		sb.WriteString("\n")
 		sb.WriteString(m.renderMarkdown(m.streamingMessage, false))
 		sb.WriteString("\n")
@@ -161,6 +173,16 @@ func (m *chatModel) renderHistory() string {
 	return sb.String()
 }
 
+func (m *chatModel) renderAgentSeperator() string {
+	agentLabel := m.agentLabel() + " Done"
+	half_sep := lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", (m.width-lipgloss.Width(agentLabel))/2-2))
+	return lipgloss.JoinHorizontal(lipgloss.Left,
+		half_sep,
+		agentLabel,
+		half_sep,
+	)
+}
+
 func (m *chatModel) renderMessage(msg message) string {
 	switch msg.role {
 	case "user":
@@ -168,11 +190,13 @@ func (m *chatModel) renderMessage(msg message) string {
 		body := m.renderMarkdown(msg.text, true)
 		return lipgloss.JoinVertical(lipgloss.Left, label, body)
 	case "ai":
-		label := aiLabelStyle.Render("Iatreon:")
+		label := m.agentLabel()
 		body := m.renderMarkdown(msg.text, false)
 		return lipgloss.JoinVertical(lipgloss.Left, label, body)
 	case "system":
 		return systemStyle.Render(msg.text)
+	case "seperator":
+		return m.renderAgentSeperator()
 	default:
 		return msg.text
 	}
@@ -190,7 +214,9 @@ type chunkMsg struct {
 	ch      chan chunkMsg
 }
 
-const apiURL = "http://localhost:8000/chat/intake"
+// apiBaseURL is the FastAPI host. Per-agent paths are owned by each
+// AgentHandler implementation.
+const apiBaseURL = "http://localhost:8000"
 
 func waitForChunk(ch chan chunkMsg) tea.Cmd {
 	return func() tea.Msg {
@@ -198,35 +224,19 @@ func waitForChunk(ch chan chunkMsg) tea.Cmd {
 	}
 }
 
-func streamMessage(conversationID, userid, msg string) tea.Cmd {
+func streamMessage(agent AgentHandler, conversationID, userid, msg string) tea.Cmd {
 	return func() tea.Msg {
 		ch := make(chan chunkMsg)
 		go func() {
 			defer close(ch)
 
-			payload := struct {
-				ConversationID string `json:"conversation_id"`
-				Message        string `json:"message"`
-			}{
-				ConversationID: conversationID,
-				Message:        msg,
-			}
-			reqBytes, err := json.Marshal(payload)
+			req, err := agent.BuildRequest(conversationID, userid, msg)
 			if err != nil {
 				ch <- chunkMsg{err: err}
 				return
 			}
 
-			req, err := http.NewRequest("POST", apiURL, bytes.NewReader(reqBytes))
-			if err != nil {
-				ch <- chunkMsg{err: err}
-				return
-			}
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("X-User-ID", userid)
-
-			client := &http.Client{}
-			resp, err := client.Do(req)
+			resp, err := sharedHTTPDo(req)
 			if err != nil {
 				ch <- chunkMsg{err: err}
 				return
@@ -251,35 +261,28 @@ func streamMessage(conversationID, userid, msg string) tea.Cmd {
 					continue
 				}
 
-				if strings.HasPrefix(line, "data: ") {
-					dataStr := strings.TrimPrefix(line, "data: ")
-					if dataStr == "" {
-						continue
-					}
+				if !strings.HasPrefix(line, "data: ") {
+					continue
+				}
+				dataStr := strings.TrimPrefix(line, "data: ")
+				if dataStr == "" {
+					continue
+				}
 
-					var sseEvent struct {
-						Type    string      `json:"type"`
-						Content interface{} `json:"content"`
-						Name    string      `json:"name"`
-					}
-					if err := json.Unmarshal([]byte(dataStr), &sseEvent); err != nil {
-						ch <- chunkMsg{content: dataStr, ch: ch}
-						continue
-					}
+				var ev sseEvent
+				if err := json.Unmarshal([]byte(dataStr), &ev); err != nil {
+					ch <- chunkMsg{content: dataStr, ch: ch}
+					continue
+				}
 
-					switch sseEvent.Type {
-					case "intake_complete":
-						ch <- chunkMsg{content: "\n\n✅ **Intake completed.** Your profile has been saved.", done: true}
-						return
-					case "message":
-						if contentStr, ok := sseEvent.Content.(string); ok {
-							ch <- chunkMsg{content: contentStr, ch: ch}
-						}
-					case "tool_start":
-						ch <- chunkMsg{content: fmt.Sprintf("\n> 🔍 *Running: %s…*\n", sseEvent.Name), ch: ch}
-					case "tool_end":
-						ch <- chunkMsg{content: fmt.Sprintf("\n> ✔ *%s done.*\n\n", sseEvent.Name), ch: ch}
-					}
+				out := agent.HandleEvent(ev)
+				if out.done || out.err != nil {
+					ch <- out
+					return
+				}
+				if out.content != "" {
+					out.ch = ch
+					ch <- out
 				}
 			}
 		}()
@@ -322,6 +325,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			}
 			if msg.content != "" {
 				m.messages = append(m.messages, message{role: "system", text: msg.content})
+				m.messages = append(m.messages, message{role: "seperator", text: " "})
 			}
 			m.isStreaming = false
 			m.refreshViewport()
@@ -348,7 +352,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			m.input.SetValue("")
 			m.isStreaming = true
 			m.refreshViewport()
-			cmds = append(cmds, streamMessage(m.conversationID, m.userid, text))
+			cmds = append(cmds, streamMessage(m.agent, m.conversationID, m.userid, text))
 			cmds = append(cmds, m.spinner.Tick)
 			return *m, tea.Batch(cmds...)
 		case "esc":

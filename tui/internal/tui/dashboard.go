@@ -13,8 +13,8 @@ type dashboardModel struct {
 	height         int
 	cursor         int
 	startIntake    bool
+	startDoctor    bool
 	goToSetup      bool
-	showDoctor     bool
 	showProfile    bool
 	showSettings   bool
 	placeholderMsg string
@@ -89,9 +89,7 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 				m.startIntake = true
 				return m, nil
 			case 1:
-				m.showDoctor = true
-				m.placeholderMsg = "🚧 The doctor's office is under construction.\n\nThis feature will provide AI-powered differential diagnosis\nand clinical assessments based on your patient profile."
-				m.SetFooter([]string{"Enter Dismiss", "Esc Setup", "Ctrl+C Quit"})
+				m.startDoctor = true
 				return m, nil
 			case 2:
 				m.showProfile = true

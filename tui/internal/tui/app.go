@@ -56,8 +56,7 @@ func NewModel(userid string, hasProfile bool) model {
 	m.dashboard.SetFooter([]string{"↑/↓/←/→ Navigate", "Enter Select", "Esc Setup", "Ctrl+C Quit"})
 	m.setup.SetHeader("Iatreon - Profile Setup")
 	m.setup.SetFooter([]string{"Enter Continue", "Esc Back", "Ctrl+C Quit"})
-	m.chat.SetHeader("Iatreon - Chat")
-	m.chat.SetFooter([]string{"Enter Send", "Esc Logout", "Ctrl+C Quit"})
+	m.applyChatChrome()
 
 	return m
 }
@@ -93,12 +92,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// initScreen applies chrome (header/footer) and size to a freshly created screen.
 func (m *model) initChat(cm chatModel) chatModel {
-	cm.SetHeader("Iatreon - Chat")
-	cm.SetFooter([]string{"Enter Send", "Esc Logout", "Ctrl+C Quit"})
+	cm.SetHeader(cm.Agent().Header())
+	cm.SetFooter(cm.Agent().Footer())
 	cm.SetSize(m.width, m.height-headerFooterHeight)
 	return cm
+}
+
+func (m *model) applyChatChrome() {
+	if m.chat.Agent() == nil {
+		return
+	}
+	m.chat.SetHeader(m.chat.Agent().Header())
+	m.chat.SetFooter(m.chat.Agent().Footer())
 }
 
 func (m *model) initDashboard(dm dashboardModel) dashboardModel {
@@ -120,7 +126,14 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.dashboard = updated
 
 	if m.dashboard.startIntake {
-		m.chat = m.initChat(newChatModel(m.userid))
+		m.chat = m.initChat(newChatModelForAgent(AgentIntake, m.userid))
+		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
+		m.active = chatScreen
+		return m, m.chat.Init()
+	}
+
+	if m.dashboard.startDoctor {
+		m.chat = m.initChat(newChatModelForAgent(AgentDoctor, m.userid))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = chatScreen
 		return m, m.chat.Init()
@@ -156,7 +169,11 @@ func (m model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if m.chat.logout {
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
-		m.chat = m.initChat(newChatModel(""))
+		kind := AgentIntake
+		if h := m.chat.Agent(); h != nil {
+			kind = h.Kind()
+		}
+		m.chat = m.initChat(newChatModelForAgent(kind, m.userid))
 		m.active = dashboardScreen
 		return m, nil
 	}
