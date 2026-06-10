@@ -55,7 +55,15 @@ type setupModel struct {
 	err        error
 	submitted  bool
 	submitting bool
+
+	headerText    string
+	footerActions []string
 }
+
+func (m *setupModel) SetHeader(h string)   { m.headerText = h }
+func (m *setupModel) SetFooter(a []string) { m.footerActions = a }
+func (m setupModel) GetHeader() string     { return m.headerText }
+func (m setupModel) GetFooter() []string   { return m.footerActions }
 
 func newSetupModel(userid string) setupModel {
 	// Age input
@@ -331,6 +339,15 @@ func (m setupModel) advanceStep() (setupModel, tea.Cmd) {
 	}
 	m.step = next
 
+	// Set footer actions based on step type
+	if m.step == stepConfirm {
+		m.SetFooter([]string{"Enter Confirm", "Esc Back", "Ctrl+C Quit"})
+	} else if m.isMultiLineStep() {
+		m.SetFooter([]string{"Enter Add Item", "Enter(empty) Next", "Esc Back", "Ctrl+C Quit"})
+	} else {
+		m.SetFooter([]string{"Enter Continue", "Esc Back", "Ctrl+C Quit"})
+	}
+
 	// Focus the appropriate input for the new step.
 	switch m.step {
 	case stepAge:
@@ -414,7 +431,6 @@ func (m setupModel) View() string {
 }
 
 func (m setupModel) renderLanding() string {
-	title := titleStyle.Render("Welcome to Iatreon")
 	subtitle := systemStyle.Render("Your AI-powered clinical assistant")
 
 	boxStyle := lipgloss.NewStyle().
@@ -433,17 +449,11 @@ func (m setupModel) renderLanding() string {
 	featureList := lipgloss.JoinVertical(lipgloss.Left, features...)
 	box := boxStyle.Render(featureList)
 
-	continueHint := hintStyle.Render("Press any key to set up your profile · ctrl+c to quit")
-
 	content := lipgloss.JoinVertical(
 		lipgloss.Center,
-		title,
-		"",
 		subtitle,
 		"",
 		box,
-		"",
-		continueHint,
 	)
 
 	return lipgloss.Place(
@@ -455,28 +465,22 @@ func (m setupModel) renderLanding() string {
 
 func (m setupModel) renderForm() string {
 	stepLabel := m.stepLabel()
-	title := titleStyle.Render("Profile Setup")
 	subtitle := systemStyle.Render(fmt.Sprintf("Step %d of 10 — %s", m.stepNumber(), stepLabel))
 
 	fieldContent := m.renderField()
 	prompt := hintStyle.Render(m.stepPrompt())
-	nav := hintStyle.Render("Enter to continue · Esc to go back · Ctrl+C to quit")
 
 	if m.err != nil {
-		nav = errorStyle.Render("Error: " + m.err.Error())
+		prompt = errorStyle.Render("Error: " + m.err.Error())
 	}
 
 	content := lipgloss.JoinVertical(
 		lipgloss.Left,
-		title,
-		"",
 		subtitle,
 		"",
 		fieldContent,
 		"",
 		prompt,
-		"",
-		nav,
 	)
 
 	return lipgloss.Place(
@@ -613,8 +617,6 @@ func (m setupModel) renderSummary() string {
 func (m setupModel) renderSubmitting() string {
 	content := lipgloss.JoinVertical(
 		lipgloss.Center,
-		titleStyle.Render("Saving your profile..."),
-		"",
 		systemStyle.Render("Please wait while we set up your account."),
 	)
 	return lipgloss.Place(
@@ -627,8 +629,6 @@ func (m setupModel) renderSubmitting() string {
 func (m setupModel) renderDone() string {
 	content := lipgloss.JoinVertical(
 		lipgloss.Center,
-		titleStyle.Render("Profile Saved!"),
-		"",
 		systemStyle.Render("Your account is ready."),
 		"",
 		hintStyle.Render("Opening chat..."),

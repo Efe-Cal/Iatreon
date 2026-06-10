@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,7 +18,14 @@ type dashboardModel struct {
 	showProfile    bool
 	showSettings   bool
 	placeholderMsg string
+	headerText     string
+	footerActions  []string
 }
+
+func (m *dashboardModel) SetHeader(h string)   { m.headerText = h }
+func (m *dashboardModel) SetFooter(a []string) { m.footerActions = a }
+func (m dashboardModel) GetHeader() string     { return m.headerText }
+func (m dashboardModel) GetFooter() []string   { return m.footerActions }
 
 type dashboardCard struct {
 	title       string
@@ -70,10 +76,12 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 		case "tab", "right", "down":
 			m.cursor = (m.cursor + 1) % len(dashboardCards)
 			m.placeholderMsg = ""
+			m.SetFooter([]string{"↑/↓/←/→ Navigate", "Enter Select", "Esc Setup", "Ctrl+C Quit"})
 			return m, nil
 		case "shift+tab", "left", "up":
 			m.cursor = (m.cursor - 1 + len(dashboardCards)) % len(dashboardCards)
 			m.placeholderMsg = ""
+			m.SetFooter([]string{"↑/↓/←/→ Navigate", "Enter Select", "Esc Setup", "Ctrl+C Quit"})
 			return m, nil
 		case "enter":
 			switch m.cursor {
@@ -83,14 +91,17 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 			case 1:
 				m.showDoctor = true
 				m.placeholderMsg = "🚧 The doctor's office is under construction.\n\nThis feature will provide AI-powered differential diagnosis\nand clinical assessments based on your patient profile."
+				m.SetFooter([]string{"Enter Dismiss", "Esc Setup", "Ctrl+C Quit"})
 				return m, nil
 			case 2:
 				m.showProfile = true
 				m.placeholderMsg = "🚧 Your profile page is coming soon.\n\nYou'll be able to view and manage your medical history,\nmedications, allergies, and family history here."
+				m.SetFooter([]string{"Enter Dismiss", "Esc Setup", "Ctrl+C Quit"})
 				return m, nil
 			case 3:
 				m.showSettings = true
 				m.placeholderMsg = "🚧 Settings are not yet available.\n\nFuture settings will include notification preferences,\ntheme options, and API configuration."
+				m.SetFooter([]string{"Enter Dismiss", "Esc Setup", "Ctrl+C Quit"})
 				return m, nil
 			}
 		}
@@ -104,26 +115,20 @@ func (m dashboardModel) View() string {
 		return ""
 	}
 
-	header := m.renderHeader()
 	cards := m.renderCards()
-	footer := m.renderFooter()
 
 	if m.placeholderMsg != "" {
 		body := lipgloss.JoinVertical(lipgloss.Center,
-			header,
-			"",
 			m.renderPlaceholder(),
 		)
 		body = lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(body)
-		bodyH := lipgloss.Height(body) + lipgloss.Height(footer)
-		pad := m.height - bodyH
+		pad := m.height - lipgloss.Height(body)
 		if pad < 0 {
 			pad = 0
 		}
 		return lipgloss.JoinVertical(lipgloss.Top,
+			strings.Repeat("\n", pad/2),
 			body,
-			strings.Repeat("\n", pad),
-			footer,
 		)
 	}
 
@@ -132,14 +137,13 @@ func (m dashboardModel) View() string {
 	infoPadded := m.renderInfoPadded(maxInfoH)
 
 	body := lipgloss.JoinVertical(lipgloss.Center,
-		header,
 		"",
 		cards,
 		"",
 		infoPadded,
 	)
 	body = lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(body)
-	bodyH := lipgloss.Height(body) + lipgloss.Height(footer)
+	bodyH := lipgloss.Height(body)
 	pad := m.height - bodyH
 	if pad < 0 {
 		pad = 0
@@ -151,7 +155,6 @@ func (m dashboardModel) View() string {
 		strings.Repeat("\n", topPad),
 		body,
 		strings.Repeat("\n", bottomPad),
-		footer,
 	)
 }
 
@@ -188,25 +191,6 @@ func (m dashboardModel) renderInfoPadded(targetH int) string {
 		rendered += strings.Repeat("\n", pad)
 	}
 	return rendered
-}
-
-func (m dashboardModel) renderHeader() string {
-	greeting := fmt.Sprintf("Welcome back, %s", m.userid)
-	nameStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(colorPrimary).
-		Padding(0, 1)
-
-	titleLine := titleStyle.Render("Iatreon")
-	greetingLine := nameStyle.Render(greeting)
-	tagline := systemStyle.Render("Your AI-powered clinical assistant")
-
-	return lipgloss.JoinVertical(lipgloss.Center,
-		titleLine,
-		"",
-		greetingLine,
-		tagline,
-	)
 }
 
 func (m dashboardModel) renderCards() string {
@@ -275,21 +259,4 @@ func (m dashboardModel) renderPlaceholder() string {
 	)
 
 	return content
-}
-
-func (m dashboardModel) renderFooter() string {
-	var hints []string
-	if m.placeholderMsg == "" {
-		hints = append(hints, hintStyle.Render("↑/↓/←/→ Navigate"))
-		hints = append(hints, hintStyle.Render("Enter Select"))
-	}
-	hints = append(hints, hintStyle.Render("Esc Setup"))
-	hints = append(hints, hintStyle.Render("Ctrl+C Quit"))
-
-	statusBar := lipgloss.NewStyle().
-		Width(m.width-2).
-		Padding(0, 1).
-		Align(lipgloss.Center)
-
-	return statusBar.Render(strings.Join(hints, "  ·  "))
 }

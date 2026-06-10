@@ -41,7 +41,15 @@ type chatModel struct {
 
 	aiRenderer   *glamour.TermRenderer
 	userRenderer *glamour.TermRenderer
+
+	headerText    string
+	footerActions []string
 }
+
+func (m *chatModel) SetHeader(h string)   { m.headerText = h }
+func (m *chatModel) SetFooter(a []string) { m.footerActions = a }
+func (m chatModel) GetHeader() string     { return m.headerText }
+func (m chatModel) GetFooter() []string   { return m.footerActions }
 
 func generateUUID() string {
 	b := make([]byte, 16)
@@ -100,11 +108,9 @@ func (m *chatModel) Init() tea.Cmd {
 func (m *chatModel) SetSize(w, h int) {
 	m.width, m.height = w, h
 
-	headerH := lipgloss.Height(titleStyle.Width(w - 2).Render("Iatreon"))
-	statusH := lipgloss.Height(statusStyle.Width(w - 2).Render("Enter to send · Esc to log out · Ctrl+C to quit"))
 	inputH := lipgloss.Height(m.input.View()) // bubbles textinput knows its own height
 
-	vpH := h - headerH - inputH - statusH
+	vpH := h - inputH
 	if vpH < 3 {
 		vpH = 3
 	}
@@ -366,20 +372,14 @@ func (m *chatModel) View() string {
 		return ""
 	}
 
-	header := titleStyle.Width(m.width - 2).Render("Iatreon" + " · " + m.userid)
-
 	// Update viewport content right before drawing so the live stream is
 	// reflected even when the parent doesn't repaint on every chunk.
 	m.viewport.SetContent(m.renderHistory())
 
-	status := statusStyle.Width(m.width - 2).Render("Enter to send · Esc to log out · Ctrl+C to quit")
-
 	body := lipgloss.JoinVertical(
 		lipgloss.Left,
-		header,
 		m.viewport.View(),
 		m.input.View(),
-		status,
 	)
 	return body
 }

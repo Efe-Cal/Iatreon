@@ -1,6 +1,11 @@
 package tui
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
 
 type screen int
 
@@ -9,6 +14,11 @@ const (
 	setupScreen
 	chatScreen
 )
+
+type screenChrome interface {
+	GetHeader() string
+	GetFooter() []string
+}
 
 type model struct {
 	active    screen
@@ -19,6 +29,8 @@ type model struct {
 	height    int
 	userid    string
 }
+
+const headerFooterHeight = 3
 
 func NewModel(userid string, hasProfile bool) model {
 	dash := newDashboardModel(userid)
@@ -32,13 +44,22 @@ func NewModel(userid string, hasProfile bool) model {
 		active = setupScreen
 	}
 
-	return model{
+	m := model{
 		active:    active,
 		dashboard: dash,
 		setup:     setup,
 		chat:      chat,
 		userid:    userid,
 	}
+
+	m.dashboard.SetHeader("Iatreon - Dashboard")
+	m.dashboard.SetFooter([]string{"↑/↓/←/→ Navigate", "Enter Select", "Esc Setup", "Ctrl+C Quit"})
+	m.setup.SetHeader("Iatreon - Profile Setup")
+	m.setup.SetFooter([]string{"Enter Continue", "Esc Back", "Ctrl+C Quit"})
+	m.chat.SetHeader("Iatreon - Chat")
+	m.chat.SetFooter([]string{"Enter Send", "Esc Logout", "Ctrl+C Quit"})
+
+	return m
 }
 
 func (m model) Init() tea.Cmd {
@@ -47,11 +68,12 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
+		chromeH := headerFooterHeight
 		m.width = wsm.Width
 		m.height = wsm.Height
-		m.dashboard.SetSize(wsm.Width, wsm.Height)
-		m.setup.SetSize(wsm.Width, wsm.Height)
-		m.chat.SetSize(wsm.Width, wsm.Height)
+		m.dashboard.SetSize(wsm.Width, wsm.Height-chromeH)
+		m.setup.SetSize(wsm.Width, wsm.Height-chromeH)
+		m.chat.SetSize(wsm.Width, wsm.Height-chromeH)
 		return m, nil
 	}
 
@@ -71,28 +93,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// initScreen applies chrome (header/footer) and size to a freshly created screen.
+func (m *model) initChat(cm chatModel) chatModel {
+	cm.SetHeader("Iatreon - Chat")
+	cm.SetFooter([]string{"Enter Send", "Esc Logout", "Ctrl+C Quit"})
+	cm.SetSize(m.width, m.height-headerFooterHeight)
+	return cm
+}
+
+func (m *model) initDashboard(dm dashboardModel) dashboardModel {
+	dm.SetHeader("Iatreon - Dashboard")
+	dm.SetFooter([]string{"↑/↓/←/→ Navigate", "Enter Select", "Esc Setup", "Ctrl+C Quit"})
+	dm.SetSize(m.width, m.height-headerFooterHeight)
+	return dm
+}
+
+func (m *model) initSetup(sm setupModel) setupModel {
+	sm.SetHeader("Iatreon - Profile Setup")
+	sm.SetFooter([]string{"Enter Continue", "Esc Back", "Ctrl+C Quit"})
+	sm.SetSize(m.width, m.height-headerFooterHeight)
+	return sm
+}
+
 func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 	updated, cmd := m.dashboard.Update(msg)
 	m.dashboard = updated
 
 	if m.dashboard.startIntake {
-		chat := newChatModel(m.userid)
-		chat.SetSize(m.width, m.height)
-		m.chat = chat
-		m.dashboard = newDashboardModel(m.userid)
-		m.dashboard.SetSize(m.width, m.height)
+		m.chat = m.initChat(newChatModel(m.userid))
+		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = chatScreen
-		return m, chat.Init()
+		return m, m.chat.Init()
 	}
 
 	if m.dashboard.goToSetup {
-		setup := newSetupModel(m.userid)
-		setup.SetSize(m.width, m.height)
-		m.setup = setup
-		m.dashboard = newDashboardModel(m.userid)
-		m.dashboard.SetSize(m.width, m.height)
+		m.setup = m.initSetup(newSetupModel(m.userid))
+		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = setupScreen
-		return m, setup.Init()
+		return m, m.setup.Init()
 	}
 
 	return m, cmd
@@ -103,11 +141,8 @@ func (m model) updateSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.setup = updated
 
 	if m.setup.submitted {
-		dash := newDashboardModel(m.userid)
-		dash.SetSize(m.width, m.height)
-		m.dashboard = dash
-		m.setup = newSetupModel(m.userid)
-		m.setup.SetSize(m.width, m.height)
+		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
+		m.setup = m.initSetup(newSetupModel(m.userid))
 		m.active = dashboardScreen
 		return m, nil
 	}
@@ -120,10 +155,8 @@ func (m model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.chat = updated
 
 	if m.chat.logout {
-		dash := newDashboardModel(m.userid)
-		dash.SetSize(m.width, m.height)
-		m.dashboard = dash
-		m.chat = newChatModel("")
+		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
+		m.chat = m.initChat(newChatModel(""))
 		m.active = dashboardScreen
 		return m, nil
 	}
@@ -132,6 +165,21 @@ func (m model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	var chrome screenChrome
+	switch m.active {
+	case dashboardScreen:
+		chrome = m.dashboard
+	case setupScreen:
+		chrome = m.setup
+	case chatScreen:
+		chrome = m.chat
+	default:
+		chrome = m.dashboard
+	}
+
+	header := renderHeader(chrome.GetHeader(), m.width)
+	footer := renderFooter(chrome.GetFooter(), m.width)
+
 	var body string
 	switch m.active {
 	case dashboardScreen:
@@ -144,5 +192,36 @@ func (m model) View() string {
 		body = "Unknown screen"
 	}
 
-	return body
+	return lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		body,
+		footer,
+	)
+}
+
+// renderHeader renders a styled header bar across the full width.
+func renderHeader(text string, width int) string {
+	sep := lipgloss.NewStyle().
+		Foreground(colorBorder).
+		Render(strings.Repeat("━", width))
+	return lipgloss.JoinVertical(lipgloss.Left,
+		titleStyle.Width(width).Render(text),
+		sep,
+	)
+}
+
+// renderFooter renders a hint bar across the full width.
+func renderFooter(actions []string, width int) string {
+	if len(actions) == 0 {
+		return ""
+	}
+	var styled []string
+	for _, a := range actions {
+		styled = append(styled, hintStyle.Render(a))
+	}
+	return lipgloss.NewStyle().
+		Width(width).
+		Padding(0, 1).
+		Align(lipgloss.Center).
+		Render(strings.Join(styled, "  ·  "))
 }
