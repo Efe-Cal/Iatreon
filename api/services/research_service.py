@@ -27,8 +27,10 @@ async def stream_research(intake_id: UUID, user_id) -> AsyncIterable:
                     research_report=research_report,
                     citations=citations,
                 )
+
+                citation_payload = citations if isinstance(citations, dict) else {}
                 print("Research complete, yielding final result...")
                 yield {
                     "type": "research_complete",
-                    "data": {"report": research_report, "citations": citations},
+                    "data": {"report": research_report, "citations": citation_payload},
                 }
