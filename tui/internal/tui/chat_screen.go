@@ -176,7 +176,7 @@ func (m *chatModel) renderHistory() string {
 }
 
 func (m *chatModel) renderAgentSeperator(agent string) string {
-	agentLabel := " " + lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Render(agent+" Done ")
+	agentLabel := "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Render(agent+" Done  ")
 	half_sep := lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", (m.width-lipgloss.Width(agentLabel))/2-2))
 	return lipgloss.JoinHorizontal(lipgloss.Left,
 		half_sep,
@@ -355,14 +355,10 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		switch msg.agentKind {
 		case AgentIntake:
 			m.agent = newAgentHandler(AgentResearch)
-			m.messages = append(m.messages, message{role: "system", text: "Starting research..."})
-			m.refreshViewport()
 			m.invokeAgentWithEnter = true
 			return *m, nil
 		case AgentResearch:
 			m.agent = newAgentHandler(AgentDiagnosis)
-			m.messages = append(m.messages, message{role: "system", text: "Starting diagnosis..."})
-			m.refreshViewport()
 			m.invokeAgentWithEnter = true
 			return *m, nil
 		}
@@ -378,6 +374,8 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		case "enter":
 			if m.invokeAgentWithEnter {
 				m.invokeAgentWithEnter = false
+				m.messages = append(m.messages, message{role: "system", text: "Starting " + m.agent.AgentLabel() + "..."})
+				m.refreshViewport()
 				return *m, streamMessage(m.agent, m.conversationID, m.userid, "")
 			}
 			text := strings.TrimSpace(m.input.Value())

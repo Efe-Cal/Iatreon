@@ -58,6 +58,7 @@ type sseEvent struct {
 	Content json.RawMessage `json:"content"`
 	Name    string          `json:"name"`
 	Profile json.RawMessage `json:"profile"`
+	Data    json.RawMessage `json:"data"`
 }
 
 func (e sseEvent) contentString() string {
@@ -165,8 +166,19 @@ func (*researchHandler) BuildRequest(conversationID, userid, message string) (*h
 func (*researchHandler) HandleEvent(ev sseEvent) chunkMsg {
 	switch ev.Type {
 	case "research_complete":
+		var data struct {
+			Report    string   `json:"report"`
+			Citations []string `json:"citations"`
+		}
+		if err := json.Unmarshal(ev.Data, &data); err != nil {
+			return chunkMsg{
+				content: "\n\n✅ **Research complete.** Citations are saved with the report.",
+				done:    true,
+			}
+		}
+
 		return chunkMsg{
-			content: "\n\n✅ **Research complete.** Citations are saved with the report.",
+			content: "\n\n✅ **Research complete.** Citations are saved with the report." + fmt.Sprintf("\n\n**Report:**\n%s\n\n**Citations:**\n- %s", data.Report, strings.Join(data.Citations, "\n- ")),
 			done:    true,
 		}
 	case "message":
@@ -213,8 +225,17 @@ func (*diagnosisHandler) BuildRequest(conversationID, userid, message string) (*
 func (*diagnosisHandler) HandleEvent(ev sseEvent) chunkMsg {
 	switch ev.Type {
 	case "diagnosis_complete":
+		var data struct {
+			Report string `json:"report"`
+		}
+		if err := json.Unmarshal(ev.Data, &data); err != nil {
+			return chunkMsg{
+				content: "\n\n✅ **Diagnosis complete.** Error occurred trying to unmarshal the response.",
+				done:    true,
+			}
+		}
 		return chunkMsg{
-			content: "\n\n✅ **Diagnosis complete.** See the report above.",
+			content: fmt.Sprintf("\n\n✅ **Diagnosis complete.** See the report below.\n\n**Report:**\n%s", data.Report),
 			done:    true,
 		}
 	case "message":

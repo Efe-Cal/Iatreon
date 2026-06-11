@@ -166,10 +166,10 @@ Medical Summary: {medical_summary}
         messages = [{"role": "user", "content": user_message}]
         parts = []
         async for event in self.agent.astream_events({"messages": messages}, config=self.config, version="v2"):
-            print(f"Received event: {event}")
+            print(f"Received event: {event['event']}")
             if event["event"] == "on_chat_model_stream":
                 chunk: AIMessageChunk = event["data"]["chunk"]
-                print(f"Received chunk: {chunk}")
+                # print(f"Received chunk: {chunk.content}")
                 if chunk.content:
                     if isinstance(chunk.content, str):
                         print(chunk.content, end="", flush=True)
@@ -183,15 +183,19 @@ Medical Summary: {medical_summary}
                                 parts.append(text)
                     
             if event["event"] == "on_tool_start":
-                if event["name"] == "web_search":
-                    yield f"Searching the web for: {event['data']['input']['query']}\n"
-                elif event["name"] == "fetch_web_content":
-                    yield f"Fetching content from URL: {event['data']['input']['url']}\n"
-                elif event["name"] == "search_medical_literature":
-                        yield f"Searching medical literature for query: {event['data']['input']['query']}\n"
+                yield {"type": "tool_start", "name": event["name"], "content": event["data"]["input"]["query"] if "query" in event["data"]["input"] else event["data"]["input"]["url"] if "url" in event["data"]["input"] else str(event["data"]["input"])}
+                # if event["name"] == "web_search":
+                #     yield f"Searching the web for: {event['data']['input']['query']}\n"
+                # elif event["name"] == "fetch_web_content":
+                #     yield f"Fetching content from URL: {event['data']['input']['url']}\n"
+                # elif event["name"] == "search_medical_literature":
+                #         yield f"Searching medical literature for query: {event['data']['input']['query']}\n"
                 # yield "Tool called: " + event["name"] + " with input: " + str(event["data"]["input"])
             # else:
             #     print(f"Event: {event['event']}, Data: {event['data']}")
+            elif event["event"] == "on_tool_end":
+                yield {"type": "tool_end", "name": event["name"], "content": event["data"]["output"]}
+                # yield "Tool finished: " + event["name"] + " with output: " + str(event["data"]["output"])
             
         final_message = "".join(parts)
             
