@@ -44,6 +44,8 @@ type chatModel struct {
 
 	headerText    string
 	footerActions []string
+
+	invokeAgentWithEnter bool
 }
 
 func (m *chatModel) SetHeader(h string)   { m.headerText = h }
@@ -173,8 +175,8 @@ func (m *chatModel) renderHistory() string {
 	return sb.String()
 }
 
-func (m *chatModel) renderAgentSeperator() string {
-	agentLabel := m.agentLabel() + " Done"
+func (m *chatModel) renderAgentSeperator(agent string) string {
+	agentLabel := " " + lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Render(agent+" Done ")
 	half_sep := lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", (m.width-lipgloss.Width(agentLabel))/2-2))
 	return lipgloss.JoinHorizontal(lipgloss.Left,
 		half_sep,
@@ -196,7 +198,7 @@ func (m *chatModel) renderMessage(msg message) string {
 	case "system":
 		return systemStyle.Render(msg.text)
 	case "seperator":
-		return m.renderAgentSeperator()
+		return m.renderAgentSeperator(msg.text)
 	default:
 		return msg.text
 	}
@@ -212,6 +214,16 @@ type chunkMsg struct {
 	err     error
 	done    bool
 	ch      chan chunkMsg
+}
+
+type continueAgent struct {
+	agentKind AgentKind
+}
+
+func continueFromAgent(agentKind AgentKind) tea.Cmd {
+	return func() tea.Msg {
+		return continueAgent{agentKind: agentKind}
+	}
 }
 
 // apiBaseURL is the FastAPI host. Per-agent paths are owned by each
@@ -325,7 +337,11 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			}
 			if msg.content != "" {
 				m.messages = append(m.messages, message{role: "system", text: msg.content})
-				m.messages = append(m.messages, message{role: "seperator", text: " "})
+				m.isStreaming = false
+				m.messages = append(m.messages, message{role: "seperator", text: m.agent.AgentLabel()})
+				m.messages = append(m.messages, message{role: "system", text: "Press Enter to continue to diagnosis"})
+				m.refreshViewport()
+				return *m, continueFromAgent(m.agent.Kind())
 			}
 			m.isStreaming = false
 			m.refreshViewport()
@@ -334,6 +350,22 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		m.streamingMessage += msg.content
 		m.refreshViewport()
 		return *m, waitForChunk(msg.ch)
+
+	case continueAgent:
+		switch msg.agentKind {
+		case AgentIntake:
+			m.agent = newAgentHandler(AgentResearch)
+			m.messages = append(m.messages, message{role: "system", text: "Starting research..."})
+			m.refreshViewport()
+			m.invokeAgentWithEnter = true
+			return *m, nil
+		case AgentResearch:
+			m.agent = newAgentHandler(AgentDiagnosis)
+			m.messages = append(m.messages, message{role: "system", text: "Starting diagnosis..."})
+			m.refreshViewport()
+			m.invokeAgentWithEnter = true
+			return *m, nil
+		}
 
 	case tea.KeyMsg:
 		if m.isStreaming {
@@ -344,6 +376,10 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "enter":
+			if m.invokeAgentWithEnter {
+				m.invokeAgentWithEnter = false
+				return *m, streamMessage(m.agent, m.conversationID, m.userid, "")
+			}
 			text := strings.TrimSpace(m.input.Value())
 			if text == "" {
 				return *m, nil

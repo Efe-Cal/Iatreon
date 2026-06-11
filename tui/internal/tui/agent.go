@@ -197,7 +197,7 @@ func (*diagnosisHandler) Footer() []string {
 func (*diagnosisHandler) Welcome() string {
 	return "Describe your symptoms and I'll work through a differential diagnosis."
 }
-func (*diagnosisHandler) AgentLabel() string { return "Doctor:" }
+func (*diagnosisHandler) AgentLabel() string { return "Diagnostician:" }
 
 func (*diagnosisHandler) BuildRequest(conversationID, userid, message string) (*http.Request, error) {
 	url := fmt.Sprintf("%s/diagnose?intake_id=%s", apiBaseURL, conversationID)

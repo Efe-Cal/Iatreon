@@ -11,5 +11,5 @@ router = APIRouter()
 @router.post("/research", response_class=EventSourceResponse)
 async def stream_research(intake_id: str, request: Request) -> AsyncIterable:
     user_id = get_user_id_or_400(request)
-    async for event in stream_research_service(intake_id, user_id):
+    async for event in stream_research_service(intake_id.replace("-", ""), user_id):
         yield event
