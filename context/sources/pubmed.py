@@ -1,18 +1,14 @@
-import time
 import xml.etree.ElementTree as ET
 
-import requests
-
-from ..config import NCBI_API_KEY, NCBI_BASE, RATE_LIMIT_DELAY
+from ..config import NCBI_API_KEY, NCBI_BASE
 from ..models import Article
+from .ncbi_rate_limit import ncbi_get
 
 
 class PubMedClient:
     def search(self, query: str, max_results: int = 20) -> list[str]:
         """Search PubMed and return a list of PubMed IDs."""
         # print(f"\n[PubMed] Searching: '{query}' (max {max_results} results)")
-
-        time.sleep(RATE_LIMIT_DELAY)
 
         params = {
             "db": "pubmed",
@@ -24,11 +20,11 @@ class PubMedClient:
         if NCBI_API_KEY:
             params["api_key"] = NCBI_API_KEY
 
-        r = requests.get(f"{NCBI_BASE}/esearch.fcgi", params=params)
+        r = ncbi_get(f"{NCBI_BASE}/esearch.fcgi", params=params)
         r.raise_for_status()
         try:
             ids = r.json()["esearchresult"]["idlist"]
-        except requests.exceptions.JSONDecodeError:
+        except ValueError:
             print(f"Error decoding JSON for query: {query}")
             print(f"Response content: {r.text}")
             return []
@@ -51,9 +47,7 @@ class PubMedClient:
         if NCBI_API_KEY:
             params["api_key"] = NCBI_API_KEY
 
-        time.sleep(RATE_LIMIT_DELAY)
-
-        r = requests.get(f"{NCBI_BASE}/efetch.fcgi", params=params)
+        r = ncbi_get(f"{NCBI_BASE}/efetch.fcgi", params=params)
         r.raise_for_status()
 
         return self._parse_pubmed_xml(r.text)

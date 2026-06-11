@@ -1,15 +1,13 @@
-import time
 from dotenv import load_dotenv
 import os
 
 from exa_py import Exa
 from bs4 import BeautifulSoup
-import requests
 from markdownify import markdownify as md
 
 from context.models import BookSection
 
-from ..config import RATE_LIMIT_DELAY 
+from .ncbi_rate_limit import ncbi_get
 
 load_dotenv()
 
@@ -55,9 +53,9 @@ class BookshelfClient:
         return books
 
     def get_book_html_content(self, url: str) -> str:
-        time.sleep(RATE_LIMIT_DELAY)
-        HEADERS.update({"User-Agent": USER_AGENTS[int(time.time()) % len(USER_AGENTS)]})
-        response = requests.get(url, headers=HEADERS)
+        headers = HEADERS.copy()
+        headers.update({"User-Agent": USER_AGENTS[hash(url) % len(USER_AGENTS)]})
+        response = ncbi_get(url, headers=headers)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, "html.parser")
             content_div = soup.find("div", class_="document")

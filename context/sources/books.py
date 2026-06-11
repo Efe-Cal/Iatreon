@@ -1,6 +1,5 @@
 # Deprecated
 
-import time
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from io import BytesIO
@@ -9,8 +8,9 @@ from typing import Optional
 
 import requests
 
-from ..config import NCBI_API_KEY, NCBI_BASE, RATE_LIMIT_DELAY
+from ..config import NCBI_API_KEY, NCBI_BASE
 from ..models import BookSection
+from .ncbi_rate_limit import ncbi_get
 
 
 class NCBIBooksClient:
@@ -28,10 +28,9 @@ class NCBIBooksClient:
         if NCBI_API_KEY:
             params["api_key"] = NCBI_API_KEY
 
-        r = requests.get(f"{NCBI_BASE}/esearch.fcgi", params=params)
+        r = ncbi_get(f"{NCBI_BASE}/esearch.fcgi", params=params)
         r.raise_for_status()
         ids = r.json()["esearchresult"]["idlist"]
-        time.sleep(RATE_LIMIT_DELAY)
 
         if not ids:
             print("[NCBI Books] No results found")
@@ -54,9 +53,8 @@ class NCBIBooksClient:
         if NCBI_API_KEY:
             params["api_key"] = NCBI_API_KEY
 
-        r = requests.get(f"{NCBI_BASE}/esummary.fcgi", params=params)
+        r = ncbi_get(f"{NCBI_BASE}/esummary.fcgi", params=params)
         r.raise_for_status()
-        time.sleep(RATE_LIMIT_DELAY)
 
         summary = r.json().get("result", {})
         sections = []
@@ -91,7 +89,7 @@ class NCBIBooksClient:
         target_section_id = self._extract_section_id(record.get("rid", ""))
 
         try:
-            r = requests.get(
+            r = ncbi_get(
                 page_url,
                 headers={
                     "User-Agent": "Mozilla/5.0",
@@ -103,7 +101,6 @@ class NCBIBooksClient:
             print(f"[NCBI Books] Failed to fetch {page_accession}: {e}")
             return None
 
-        time.sleep(RATE_LIMIT_DELAY)
         text = self._extract_text_from_book_html(r.text, target_section_id=target_section_id)
         if not text:
             return None
@@ -139,7 +136,7 @@ class NCBIBooksClient:
             return ""
 
         try:
-            r = requests.get(
+            r = ncbi_get(
                 pdf_url,
                 headers={
                     "User-Agent": "Mozilla/5.0",
@@ -150,8 +147,6 @@ class NCBIBooksClient:
         except requests.RequestException as e:
             print(f"[NCBI Books] Failed to fetch PDF {pdf_url}: {e}")
             return ""
-
-        time.sleep(RATE_LIMIT_DELAY)
 
         content_type = r.headers.get("Content-Type", "").lower()
         if "pdf" not in content_type and not r.content.startswith(b"%PDF"):

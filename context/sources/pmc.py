@@ -1,12 +1,10 @@
 import random
-import time
 import xml.etree.ElementTree as ET
 from typing import Optional
 
-import requests
-
 from ..models import Article
-from ..config import RATE_LIMIT_DELAY, NCBI_API_KEY, NCBI_BASE, HEADERS, USER_AGENTS
+from ..config import NCBI_API_KEY, NCBI_BASE, HEADERS, USER_AGENTS
+from .ncbi_rate_limit import ncbi_get
 
 class PMCClient:
     def get_pmc_id(self, pubmed_id: str) -> Optional[str]:
@@ -21,10 +19,9 @@ class PMCClient:
             params["api_key"] = NCBI_API_KEY
 
         try:
-            time.sleep(RATE_LIMIT_DELAY)
             headers = HEADERS.copy()
             headers.update({"User-Agent": random.choice(USER_AGENTS)})
-            r = requests.get(f"{NCBI_BASE}/elink.fcgi", params=params, headers=headers)
+            r = ncbi_get(f"{NCBI_BASE}/elink.fcgi", params=params, headers=headers)
             r.raise_for_status()
         except Exception as e:
             print(f"Error fetching PMC ID for PubMed ID {pubmed_id}: {e}")
@@ -35,7 +32,7 @@ class PMCClient:
             return str(links[0]) if links else None
         except (KeyError, IndexError):
             return None
-        except requests.exceptions.JSONDecodeError:
+        except ValueError:
             print(f"Error decoding JSON for PubMed ID: {pubmed_id}")
             return None
 
@@ -50,9 +47,7 @@ class PMCClient:
         if NCBI_API_KEY:
             params["api_key"] = NCBI_API_KEY
 
-        time.sleep(RATE_LIMIT_DELAY)
-
-        r = requests.get(f"{NCBI_BASE}/efetch.fcgi", params=params)
+        r = ncbi_get(f"{NCBI_BASE}/efetch.fcgi", params=params)
         r.raise_for_status()
 
         return self._extract_text_from_xml(r.text)
