@@ -21,16 +21,14 @@ class PMCClient:
             params["api_key"] = NCBI_API_KEY
 
         try:
+            time.sleep(RATE_LIMIT_DELAY)
             headers = HEADERS.copy()
             headers.update({"User-Agent": random.choice(USER_AGENTS)})
             r = requests.get(f"{NCBI_BASE}/elink.fcgi", params=params, headers=headers)
             r.raise_for_status()
         except Exception as e:
             print(f"Error fetching PMC ID for PubMed ID {pubmed_id}: {e}")
-            time.sleep(RATE_LIMIT_DELAY)
             return None
-
-        time.sleep(RATE_LIMIT_DELAY)
 
         try:
             links = r.json()["linksets"][0]["linksetdbs"][0]["links"]
@@ -52,9 +50,10 @@ class PMCClient:
         if NCBI_API_KEY:
             params["api_key"] = NCBI_API_KEY
 
+        time.sleep(RATE_LIMIT_DELAY)
+
         r = requests.get(f"{NCBI_BASE}/efetch.fcgi", params=params)
         r.raise_for_status()
-        time.sleep(RATE_LIMIT_DELAY)
 
         return self._extract_text_from_xml(r.text)
 

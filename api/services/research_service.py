@@ -27,4 +27,8 @@ async def stream_research(intake_id: UUID, user_id) -> AsyncIterable:
                     research_report=research_report,
                     citations=citations,
                 )
-                yield {"event": "research_complete", "data": {"report": research_report, "citations": citations}}
+                print("Research complete, yielding final result...")
+                yield {
+                    "type": "research_complete",
+                    "data": {"report": research_report, "citations": citations},
+                }

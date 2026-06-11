@@ -20,4 +20,4 @@ async def stream_diagnosis(intake_id: str, user_id: str) -> AsyncIterable:
         research_session = await ResearchRepo(session, user_id).get_research_session_by_intake_id(intake_session.id)
         diagnosis_agent = DiagnosisAgent(intake_session, research_session)
         async for diagnosis_chunk in diagnosis_agent.diagnose():
-            yield {"event": "diagnosis_complete", "data": {"report": diagnosis_chunk}}
+            yield {"type": "diagnosis_complete", "data": {"report": diagnosis_chunk}}

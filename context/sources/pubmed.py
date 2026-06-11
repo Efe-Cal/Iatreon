@@ -12,6 +12,8 @@ class PubMedClient:
         """Search PubMed and return a list of PubMed IDs."""
         # print(f"\n[PubMed] Searching: '{query}' (max {max_results} results)")
 
+        time.sleep(RATE_LIMIT_DELAY)
+
         params = {
             "db": "pubmed",
             "term": query,
@@ -49,9 +51,10 @@ class PubMedClient:
         if NCBI_API_KEY:
             params["api_key"] = NCBI_API_KEY
 
+        time.sleep(RATE_LIMIT_DELAY)
+
         r = requests.get(f"{NCBI_BASE}/efetch.fcgi", params=params)
         r.raise_for_status()
-        time.sleep(RATE_LIMIT_DELAY)
 
         return self._parse_pubmed_xml(r.text)
 

@@ -37,6 +37,7 @@ class MedicalKnowledgePipeline:
         articles = await asyncio.to_thread(self.openalex.enrich_articles, articles)
         for article in articles:
             if not article.full_text_available and article.pdf_url:
+                #TODO: URGENT! migrate to pdf_utils_v2
                 article.full_text = await self.pdf_client.get_pdf_content(article.pdf_url)
                 article.full_text_available = bool(article.full_text)
 

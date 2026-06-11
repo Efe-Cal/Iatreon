@@ -176,11 +176,20 @@ func (*researchHandler) HandleEvent(ev sseEvent) chunkMsg {
 				done:    true,
 			}
 		}
-
-		return chunkMsg{
-			content: "\n\n✅ **Research complete.** Citations are saved with the report." + fmt.Sprintf("\n\n**Report:**\n%s\n\n**Citations:**\n- %s", data.Report, strings.Join(data.Citations, "\n- ")),
-			done:    true,
+		content := "\n\n✅ **Research complete.** See the report below.\n\n**Report:**\n"
+		if data.Report != "" {
+			content += data.Report
+		} else {
+			content += "_(no report content)_"
 		}
+		if len(data.Citations) > 0 {
+			content += "\n\n**Citations:**\n"
+			for _, c := range data.Citations {
+				content += fmt.Sprintf("- %s\n", c)
+			}
+		}
+		return chunkMsg{content: content, done: true}
+
 	case "message":
 		return chunkMsg{content: ev.contentString()}
 	case "tool_start":
