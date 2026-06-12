@@ -29,7 +29,7 @@ var (
 			Padding(0, 1)
 
 	hintStyle = lipgloss.NewStyle().
-			Foreground(colorMuted).
+			Foreground(colorBorder).
 			Padding(0, 1)
 
 	userLabelStyle = lipgloss.NewStyle().

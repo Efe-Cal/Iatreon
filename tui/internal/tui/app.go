@@ -234,7 +234,12 @@ func renderFooter(actions []string, width int) string {
 	}
 	var styled []string
 	for _, a := range actions {
-		styled = append(styled, hintStyle.Render(a))
+		action := strings.Split(a, " ")
+		key := action[0]
+		desc := strings.Join(action[1:], " ")
+		styledKey := hintStyle.Copy().Bold(true).Render(key)
+		styledDesc := hintStyle.Render(desc)
+		styled = append(styled, lipgloss.JoinHorizontal(lipgloss.Left, styledKey, styledDesc))
 	}
 	return lipgloss.NewStyle().
 		Width(width).

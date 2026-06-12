@@ -128,12 +128,18 @@ class ResearchRepo:
         return session
 
     async def get_research_session(self, session_id: uuid.UUID) -> ResearchSession | None:
+        if isinstance(session_id, str):
+            session_id = uuid.UUID(session_id)
+        
         session = await self.db.get(ResearchSession, session_id)
         if session and session.user_id == self.user_id:
             return session
         return None
 
     async def get_research_session_by_intake_id(self, intake_session_id: uuid.UUID) -> ResearchSession | None:
+        if isinstance(intake_session_id, str):
+            intake_session_id = uuid.UUID(intake_session_id)
+
         stmt = select(ResearchSession).where(
             ResearchSession.intake_session_id == intake_session_id,
             ResearchSession.user_id == self.user_id,

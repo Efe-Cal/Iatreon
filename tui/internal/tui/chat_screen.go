@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -52,6 +53,9 @@ func (m *chatModel) SetHeader(h string)   { m.headerText = h }
 func (m *chatModel) SetFooter(a []string) { m.footerActions = a }
 func (m chatModel) GetHeader() string     { return m.headerText }
 func (m chatModel) GetFooter() []string   { return m.footerActions }
+func (m chatModel) UpdateFooter(a string, idx int) {
+	m.footerActions = slices.Replace(m.footerActions, idx, idx+1, a)
+}
 
 func (m chatModel) Agent() AgentHandler { return m.agent }
 
@@ -339,7 +343,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 				m.messages = append(m.messages, message{role: "system", text: msg.content})
 				m.isStreaming = false
 				m.messages = append(m.messages, message{role: "seperator", text: m.agent.AgentLabel()})
-				m.messages = append(m.messages, message{role: "system", text: "Press Enter to continue to diagnosis"})
+				m.messages = append(m.messages, message{role: "system", text: "Press Enter to continue to the next step."})
 				m.refreshViewport()
 				return *m, continueFromAgent(m.agent.Kind())
 			}
@@ -356,10 +360,12 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		case AgentIntake:
 			m.agent = newAgentHandler(AgentResearch)
 			m.invokeAgentWithEnter = true
+			m.UpdateFooter("Enter Start Research agent", 0)
 			return *m, nil
 		case AgentResearch:
 			m.agent = newAgentHandler(AgentDiagnosis)
 			m.invokeAgentWithEnter = true
+			m.UpdateFooter("Enter Start Diagnosis agent", 0)
 			return *m, nil
 		}
 
