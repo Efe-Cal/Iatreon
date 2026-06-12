@@ -182,12 +182,13 @@ func (*researchHandler) HandleEvent(ev sseEvent) chunkMsg {
 		} else {
 			content += "_(no report content)_"
 		}
-		if len(data.Citations) > 0 {
-			content += "\n\n**Citations:**\n"
-			for _, c := range data.Citations {
-				content += fmt.Sprintf("- %s\n", string(c))
-			}
-		}
+		// TODO: add citations
+		// if len(data.Citations) > 0 {
+		// 	content += "\n\n**Citations:**\n"
+		// 	for _, c := range data.Citations {
+		// 		content += fmt.Sprintf("- %s\n", string(c))
+		// 	}
+		// }
 		return chunkMsg{content: content, done: true}
 
 	case "message":

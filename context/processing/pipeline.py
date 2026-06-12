@@ -4,7 +4,7 @@ from dataclasses import asdict
 import re
 import unicodedata
 
-from .pdf_utils import PDFClient
+from .pdf_utils_v2 import PDFClient
 from ..models import Article, BookSection
 from ..sources.openalex import OpenAlexClient
 from ..sources.pmc import PMCClient
@@ -38,8 +38,11 @@ class MedicalKnowledgePipeline:
         for article in articles:
             if not article.full_text_available and article.pdf_url:
                 #TODO: URGENT! migrate to pdf_utils_v2
-                article.full_text = await self.pdf_client.get_pdf_content(article.pdf_url)
-                article.full_text_available = bool(article.full_text)
+                try:
+                    article.full_text = await self.pdf_client.get_pdf_content(article.pdf_url)
+                    article.full_text_available = bool(article.full_text)
+                except Exception as e:
+                    print(f"Error fetching PDF content for {article.pdf_url}: {e}")
 
         openalex_articles = await self.openalex.search_directly(query, max_results=int(max_results*0.6))
         articles.extend(openalex_articles)

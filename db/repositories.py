@@ -88,6 +88,9 @@ class IntakeRepo:
         return "OK"
 
     async def get_session(self, session_id: uuid.UUID) -> IntakeSession | None:
+        if isinstance(session_id, str):
+            session_id = uuid.UUID(session_id)
+            
         session = await self.db.get(IntakeSession, session_id)
         if session and session.user_id == self.user_id:
             return session

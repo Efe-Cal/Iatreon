@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 import requests
 
 from .pmc import PMCClient
-from ..processing.pdf_utils import PDFClient
+from ..processing.pdf_utils_v2 import PDFClient
 from ..models import Article
 from ..config import RATE_LIMIT_DELAY
 
