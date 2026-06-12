@@ -17,10 +17,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// message holds a single chat entry.
-type message struct {
+// messageItem holds a single chat entry.
+type messageItem struct {
 	role string // "user", "ai", or "system"
 	text string
+	toolMessage
 }
 
 type chatModel struct {
@@ -32,7 +33,7 @@ type chatModel struct {
 	viewport viewport.Model
 	spinner  spinner.Model
 
-	messages         []message
+	history          []messageItem
 	streamingMessage string
 	isStreaming      bool
 
@@ -100,7 +101,7 @@ func newChatModelForAgent(kind AgentKind, userid string) chatModel {
 		agent:          handler,
 		userid:         userid,
 		conversationID: generateUUID(),
-		messages: []message{
+		history: []messageItem{
 			{role: "system", text: handler.Welcome()},
 		},
 		input:        ti,
@@ -161,7 +162,7 @@ func (m *chatModel) agentLabel() string {
 // viewport. The live streaming chunk is appended at the end.
 func (m *chatModel) renderHistory() string {
 	var sb strings.Builder
-	for _, msg := range m.messages {
+	for _, msg := range m.history {
 		sb.WriteString(m.renderMessage(msg))
 		sb.WriteString("\n")
 	}
@@ -189,7 +190,7 @@ func (m *chatModel) renderAgentSeperator(agent string) string {
 	)
 }
 
-func (m *chatModel) renderMessage(msg message) string {
+func (m *chatModel) renderMessage(msg messageItem) string {
 	switch msg.role {
 	case "user":
 		label := userLabelStyle.Render("You :")
@@ -203,6 +204,8 @@ func (m *chatModel) renderMessage(msg message) string {
 		return systemStyle.Render(msg.text)
 	case "seperator":
 		return m.renderAgentSeperator(msg.text)
+	case "tool":
+		return msg.text
 	default:
 		return msg.text
 	}
@@ -218,6 +221,7 @@ type chunkMsg struct {
 	err     error
 	done    bool
 	ch      chan chunkMsg
+	toolMessage
 }
 
 type continueAgent struct {
@@ -328,7 +332,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 
 	case chunkMsg:
 		if msg.err != nil {
-			m.messages = append(m.messages, message{role: "system", text: "❌ **Error:** " + msg.err.Error()})
+			m.history = append(m.history, messageItem{role: "system", text: "❌ **Error:** " + msg.err.Error()})
 			m.isStreaming = false
 			m.streamingMessage = ""
 			m.refreshViewport()
@@ -336,14 +340,14 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		}
 		if msg.done {
 			if m.streamingMessage != "" {
-				m.messages = append(m.messages, message{role: "ai", text: m.streamingMessage})
+				m.history = append(m.history, messageItem{role: "ai", text: m.streamingMessage})
 				m.streamingMessage = ""
 			}
 			if msg.content != "" {
-				m.messages = append(m.messages, message{role: "system", text: msg.content})
+				m.history = append(m.history, messageItem{role: "system", text: msg.content})
 				m.isStreaming = false
-				m.messages = append(m.messages, message{role: "seperator", text: m.agent.AgentLabel()})
-				m.messages = append(m.messages, message{role: "system", text: "Press Enter to continue to the next step."})
+				m.history = append(m.history, messageItem{role: "seperator", text: m.agent.AgentLabel()})
+				m.history = append(m.history, messageItem{role: "system", text: "Press Enter to continue to the next step."})
 				m.refreshViewport()
 				return *m, continueFromAgent(m.agent.Kind())
 			}
@@ -351,7 +355,11 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			m.refreshViewport()
 			return *m, nil
 		}
-		m.streamingMessage += msg.content
+		if msg.toolMessage.toolID == "" {
+			m.streamingMessage += msg.content
+		} else {
+			m.history = append(m.history, messageItem{role: "tool", text: msg.content, toolMessage: msg.toolMessage})
+		}
 		m.refreshViewport()
 		return *m, waitForChunk(msg.ch)
 
@@ -380,7 +388,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		case "enter":
 			if m.invokeAgentWithEnter {
 				m.invokeAgentWithEnter = false
-				m.messages = append(m.messages, message{role: "system", text: "Starting " + m.agent.AgentLabel() + "..."})
+				m.history = append(m.history, messageItem{role: "system", text: "Starting " + m.agent.AgentLabel() + "..."})
 				m.refreshViewport()
 				return *m, streamMessage(m.agent, m.conversationID, m.userid, "")
 			}
@@ -388,7 +396,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			if text == "" {
 				return *m, nil
 			}
-			m.messages = append(m.messages, message{role: "user", text: text})
+			m.history = append(m.history, messageItem{role: "user", text: text})
 			m.input.SetValue("")
 			m.isStreaming = true
 			m.refreshViewport()

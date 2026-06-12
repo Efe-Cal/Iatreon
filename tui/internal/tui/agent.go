@@ -18,6 +18,12 @@ const (
 	AgentDoctor
 )
 
+type toolMessage struct {
+	toolID   string
+	toolName string
+	running  bool
+}
+
 func (k AgentKind) String() string {
 	switch k {
 	case AgentDiagnosis:
@@ -54,11 +60,12 @@ type AgentHandler interface {
 //	{"type": "tool_end",       "name": "..."}
 //	{"type": "intake_complete","profile": {...}, "transcript": "..."}
 type sseEvent struct {
-	Type    string          `json:"type"`
-	Content json.RawMessage `json:"content"`
-	Name    string          `json:"name"`
-	Profile json.RawMessage `json:"profile"`
-	Data    json.RawMessage `json:"data"`
+	Type       string          `json:"type"`
+	Content    json.RawMessage `json:"content"`
+	Name       string          `json:"name"`
+	Profile    json.RawMessage `json:"profile"`
+	Data       json.RawMessage `json:"data"`
+	ToolCallID string          `json:"tool_call_id"`
 }
 
 func (e sseEvent) contentString() string {
@@ -131,9 +138,9 @@ func (*intakeHandler) HandleEvent(ev sseEvent) chunkMsg {
 	case "message":
 		return chunkMsg{content: ev.contentString()}
 	case "tool_start":
-		return chunkMsg{content: fmt.Sprintf("\n> 🔍 *Running: %s…*\n", ev.Name)}
+		return chunkMsg{content: string(ev.Data), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: true}}
 	case "tool_end":
-		return chunkMsg{content: fmt.Sprintf("\n> ✔ *%s done.*\n\n", ev.Name)}
+		return chunkMsg{content: string(ev.Data), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: false}}
 	}
 	return chunkMsg{}
 }
@@ -194,9 +201,9 @@ func (*researchHandler) HandleEvent(ev sseEvent) chunkMsg {
 	case "message":
 		return chunkMsg{content: ev.contentString()}
 	case "tool_start":
-		return chunkMsg{content: fmt.Sprintf("\n> 🔍 *Running: %s…*\n", ev.Name)}
+		return chunkMsg{content: string(ev.Data), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: true}}
 	case "tool_end":
-		return chunkMsg{content: fmt.Sprintf("\n> ✔ *%s done.*\n\n", ev.Name)}
+		return chunkMsg{content: string(ev.Data), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: false}}
 	}
 	if len(ev.Type) == 0 && len(ev.Content) > 0 {
 		return chunkMsg{content: ev.contentString()}

@@ -182,8 +182,9 @@ Medical Summary: {medical_summary}
                                 print(text, end="", flush=True)
                                 parts.append(text)
                     
-            if event["event"] == "on_tool_start":
-                yield {"type": "tool_start", "name": event["name"], "content": event["data"]["input"]["query"] if "query" in event["data"]["input"] else event["data"]["input"]["url"] if "url" in event["data"]["input"] else str(event["data"]["input"])}
+            if event["event"] in ["on_tool_start", "on_tool_end"]:
+                content = event["data"]["input"]["query"] if "query" in event["data"]["input"] else event["data"]["input"]["url"] if "url" in event["data"]["input"] else str(event["data"]["input"])
+                yield {"type": event["event"].replace("on_", ""), "name": event["name"], "content": content, "tool_call_id": event["data"]["tool_call_id"]}
                 # if event["name"] == "web_search":
                 #     yield f"Searching the web for: {event['data']['input']['query']}\n"
                 # elif event["name"] == "fetch_web_content":
@@ -193,8 +194,8 @@ Medical Summary: {medical_summary}
                 # yield "Tool called: " + event["name"] + " with input: " + str(event["data"]["input"])
             # else:
             #     print(f"Event: {event['event']}, Data: {event['data']}")
-            elif event["event"] == "on_tool_end":
-                yield {"type": "tool_end", "name": event["name"], "content": event["data"]["output"]}
+            # elif event["event"] == "on_tool_end":
+            #     yield {"type": "tool_end", "name": event["name"], "content": event["data"]["output"]}
                 # yield "Tool finished: " + event["name"] + " with output: " + str(event["data"]["output"])
             
         final_message = "".join(parts)

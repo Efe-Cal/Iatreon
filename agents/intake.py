@@ -77,13 +77,13 @@ async def run_intake_cli(message: str, conversation_id: str) -> AsyncGenerator[s
             elif event.get("name") == "infer_condition":
                 infer_condition_active = True
                 # tool_input = event["data"]["input"]["summary"]
-                yield {"type": "tool_start", "name": "infer_condition"}
+                yield {"type": "tool_start", "name": "infer_condition", "tool_call_id": event["data"]["tool_call_id"]}
             continue
 
         elif event["event"] == "on_tool_end":
             if event.get("name") == "infer_condition":
                 infer_condition_active = False
-                yield {"type": "tool_end", "name": "infer_condition"}
+                yield {"type": "tool_end", "name": "infer_condition", "tool_call_id": event["data"]["tool_call_id"]}
             continue
 
         if event["event"] == "on_chat_model_stream":
