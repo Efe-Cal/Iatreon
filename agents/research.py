@@ -56,9 +56,11 @@ class ResearchAgent:
         self.article_repo = ArticleRepo(self.db)
         self.book_section_repo = BookSectionRepo(self.db)
         self.web_search_result_repo = WebSearchResultRepo(self.db)
-        
+
         self.citation_num = 0
         self._citation_lock = asyncio.Lock()
+
+        self._db_lock = asyncio.Lock()
     
     async def _web_search(self, query: str) -> str:
         print(f"Performing web search for query: {query}")
@@ -69,18 +71,19 @@ class ResearchAgent:
             self.citation_num += len(results)
 
         for citation_num, result in enumerate(results, start=start):
-            db_result = await self.web_search_result_repo.upsert(
-                query=query,
-                url=result["url"],
-                title=result.get("title"),
-                highlights="\n".join(result.get("highlights", [])),
-                full_content=None,
-            )
-            await self.web_search_result_repo.link_to_session(
-                session_id=self.session_id,
-                web_search_result_id=db_result.id,
-                citation_num=citation_num
-            )
+            async with self._db_lock:
+                db_result = await self.web_search_result_repo.upsert(
+                    query=query,
+                    url=result["url"],
+                    title=result.get("title"),
+                    highlights="\n".join(result.get("highlights", [])),
+                    full_content=None,
+                )
+                await self.web_search_result_repo.link_to_session(
+                    session_id=self.session_id,
+                    web_search_result_id=db_result.id,
+                    citation_num=citation_num
+                )
 
         formatted_results = "\n\n".join(
             [
@@ -122,26 +125,28 @@ class ResearchAgent:
         content = f"Search results for query: '{query}'\n\nArticles:\n"
         for i, article in enumerate(articles, start=start):
             content += f"[{i}] {article['title']} ({article['journal']}, {article['year']}, Citations: {article['citation_count']})\nAuthors: {', '.join(article['authors'])}\nAbstract: {article['abstract']}\n\n"
-            db_article = await self.article_repo.upsert(ArticleData(**article))
-            await self.article_repo.link_to_session(
-                session_id=self.session_id,
-                article_id=db_article.id,
-                query=query,
-                quality_score=article.get("quality_score", 0.0) or 0.0,
-                citation_num=i
-            )
-            
+            async with self._db_lock:
+                db_article = await self.article_repo.upsert(ArticleData(**article))
+                await self.article_repo.link_to_session(
+                    session_id=self.session_id,
+                    article_id=db_article.id,
+                    query=query,
+                    quality_score=article.get("quality_score", 0.0) or 0.0,
+                    citation_num=i
+                )
+
         if books:
             content += f"Relevant Book Sections:\n"
             for i, book in enumerate(books, start + len(articles)):
                 content += f"[{i}] {book['title']}\nContent: {book['text']}\n\n"
-                db_section = await self.book_section_repo.upsert(BookSectionData(**book))
-                await self.book_section_repo.link_to_session(
-                    session_id=self.session_id,
-                    book_section_id=db_section.id,
-                    query=query,
-                    citation_num=i
-                )
+                async with self._db_lock:
+                    db_section = await self.book_section_repo.upsert(BookSectionData(**book))
+                    await self.book_section_repo.link_to_session(
+                        session_id=self.session_id,
+                        book_section_id=db_section.id,
+                        query=query,
+                        citation_num=i
+                    )
 
         return "<source>\n" + content + "\n</source>"
     
@@ -183,21 +188,10 @@ Medical Summary: {medical_summary}
                                 parts.append(text)
                     
             if event["event"] in ["on_tool_start", "on_tool_end"]:
+                print(event["run_id"])
                 content = event["data"]["input"]["query"] if "query" in event["data"]["input"] else event["data"]["input"]["url"] if "url" in event["data"]["input"] else str(event["data"]["input"])
-                yield {"type": event["event"].replace("on_", ""), "name": event["name"], "content": content, "tool_call_id": event["data"]["tool_call_id"]}
-                # if event["name"] == "web_search":
-                #     yield f"Searching the web for: {event['data']['input']['query']}\n"
-                # elif event["name"] == "fetch_web_content":
-                #     yield f"Fetching content from URL: {event['data']['input']['url']}\n"
-                # elif event["name"] == "search_medical_literature":
-                #         yield f"Searching medical literature for query: {event['data']['input']['query']}\n"
-                # yield "Tool called: " + event["name"] + " with input: " + str(event["data"]["input"])
-            # else:
-            #     print(f"Event: {event['event']}, Data: {event['data']}")
-            # elif event["event"] == "on_tool_end":
-            #     yield {"type": "tool_end", "name": event["name"], "content": event["data"]["output"]}
-                # yield "Tool finished: " + event["name"] + " with output: " + str(event["data"]["output"])
-            
+                yield {"type": event["event"].replace("on_", ""), "name": event["name"], "content": content, "tool_call_id": event["run_id"]}
+
         final_message = "".join(parts)
             
         # final_message = response["messages"][-1].content

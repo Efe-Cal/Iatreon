@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"tui/internal/ssh"
 	"tui/internal/tui"
@@ -18,6 +19,14 @@ func main() {
 	flag.IntVar(&port, "port", 2222, "The port number to use")
 
 	flag.Parse()
+
+	f, err := tea.LogToFile("debug.log", "debug")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+
+	log.Println("Debug logging started")
 
 	if *sshEnabled {
 		fmt.Printf("Starting SSH server on port %d...\n", port)

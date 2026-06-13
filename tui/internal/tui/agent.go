@@ -61,27 +61,11 @@ type AgentHandler interface {
 //	{"type": "intake_complete","profile": {...}, "transcript": "..."}
 type sseEvent struct {
 	Type       string          `json:"type"`
-	Content    json.RawMessage `json:"content"`
+	Content    string          `json:"content"`
 	Name       string          `json:"name"`
 	Profile    json.RawMessage `json:"profile"`
 	Data       json.RawMessage `json:"data"`
 	ToolCallID string          `json:"tool_call_id"`
-}
-
-func (e sseEvent) contentString() string {
-	if len(e.Content) == 0 {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(e.Content, &s); err == nil {
-		return s
-	}
-	// Fall back to a compact JSON rendering for non-string content.
-	var pretty bytes.Buffer
-	if err := json.Indent(&pretty, e.Content, "", "  "); err == nil {
-		return pretty.String()
-	}
-	return string(e.Content)
 }
 
 func newAgentHandler(kind AgentKind) AgentHandler {
@@ -136,11 +120,11 @@ func (*intakeHandler) HandleEvent(ev sseEvent) chunkMsg {
 			done:    true,
 		}
 	case "message":
-		return chunkMsg{content: ev.contentString()}
+		return chunkMsg{content: ev.Content}
 	case "tool_start":
-		return chunkMsg{content: string(ev.Data), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: true}}
+		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: true}}
 	case "tool_end":
-		return chunkMsg{content: string(ev.Data), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: false}}
+		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: false}}
 	}
 	return chunkMsg{}
 }
@@ -199,15 +183,13 @@ func (*researchHandler) HandleEvent(ev sseEvent) chunkMsg {
 		return chunkMsg{content: content, done: true}
 
 	case "message":
-		return chunkMsg{content: ev.contentString()}
+		return chunkMsg{content: ev.Content}
 	case "tool_start":
-		return chunkMsg{content: string(ev.Data), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: true}}
+		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: true}}
 	case "tool_end":
-		return chunkMsg{content: string(ev.Data), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: false}}
+		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: false}}
 	}
-	if len(ev.Type) == 0 && len(ev.Content) > 0 {
-		return chunkMsg{content: ev.contentString()}
-	}
+
 	return chunkMsg{}
 }
 
@@ -256,15 +238,15 @@ func (*diagnosisHandler) HandleEvent(ev sseEvent) chunkMsg {
 			done:    true,
 		}
 	case "message":
-		return chunkMsg{content: ev.contentString()}
+		return chunkMsg{content: ev.Content}
 	case "tool_start":
-		return chunkMsg{content: fmt.Sprintf("\n> 🔍 *Running: %s…*\n", ev.Name)}
+		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: true}}
 	case "tool_end":
-		return chunkMsg{content: fmt.Sprintf("\n> ✔ *%s done.*\n\n", ev.Name)}
+		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: false}}
 	}
 
 	if len(ev.Type) == 0 && len(ev.Content) > 0 {
-		return chunkMsg{content: ev.contentString()}
+		return chunkMsg{content: ev.Content}
 	}
 	return chunkMsg{}
 }

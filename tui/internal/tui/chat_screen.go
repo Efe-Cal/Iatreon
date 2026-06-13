@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"log"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -32,6 +34,9 @@ type chatModel struct {
 	input    textinput.Model
 	viewport viewport.Model
 	spinner  spinner.Model
+
+	toolSpinner  spinner.Model
+	shimmerFrame float64
 
 	history          []messageItem
 	streamingMessage string
@@ -109,11 +114,12 @@ func newChatModelForAgent(kind AgentKind, userid string) chatModel {
 		spinner:      sp,
 		aiRenderer:   aiRenderer,
 		userRenderer: userRenderer,
+		toolSpinner:  spinner.New(spinner.WithSpinner(spinner.Points)),
 	}
 }
 
 func (m *chatModel) Init() tea.Cmd {
-	return tea.Batch(textinput.Blink, m.spinner.Tick)
+	return tea.Batch(textinput.Blink, m.spinner.Tick, m.toolSpinner.Tick)
 }
 
 func (m *chatModel) SetSize(w, h int) {
@@ -180,6 +186,20 @@ func (m *chatModel) renderHistory() string {
 	return sb.String()
 }
 
+func (m *chatModel) shimmer(text string, offset float64) string {
+	var builder strings.Builder
+	for i, r := range text {
+
+		wave := math.Sin(float64(i)*0.4 - m.shimmerFrame + offset)
+		brightness := int(175 + 80*wave)
+
+		hexColor := fmt.Sprintf("#%02x%02x%02x", brightness, brightness, brightness)
+		style := lipgloss.NewStyle().Foreground(lipgloss.Color(hexColor))
+		builder.WriteString(style.Render(string(r)))
+	}
+	return builder.String()
+}
+
 func (m *chatModel) renderAgentSeperator(agent string) string {
 	agentLabel := "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Render(agent+" Done  ")
 	half_sep := lipgloss.NewStyle().Foreground(colorBorder).Render(strings.Repeat("─", (m.width-lipgloss.Width(agentLabel))/2-2))
@@ -190,17 +210,32 @@ func (m *chatModel) renderAgentSeperator(agent string) string {
 	)
 }
 
-func (m *chatModel) renderToolMessage(toolMsg messageItem) string {
-	spinner := spinner.New(spinner.WithSpinner(spinner.Points))
-	toolLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Render("Tool: " + toolMsg.toolMessage.toolName + " " + toolMsg.text)
-	if toolMsg.toolMessage.running {
-		return lipgloss.JoinHorizontal(lipgloss.Left, toolLabel, spinner.View())
+func getPhaseOffset(toolID string) float64 {
+	if toolID == "" {
+		return 0
 	}
+	var sum int
+	for _, r := range toolID {
+		sum += int(r)
+	}
+	return float64(sum%360) * (math.Pi / 180.0)
+}
 
-	return toolLabel + " (completed)"
+func (m *chatModel) renderToolMessage(toolMsg messageItem) string {
+	log.Printf("Rendering tool message: %+v\n", toolMsg)
+	rawText := "Tool: " + toolMsg.toolName + " " + toolMsg.text
+
+	if toolMsg.toolMessage.running {
+		offset := getPhaseOffset(toolMsg.toolMessage.toolID)
+		shimmeringText := m.shimmer(rawText, offset)
+		return lipgloss.JoinHorizontal(lipgloss.Left, m.toolSpinner.View(), " ", shimmeringText)
+	}
+	completedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	return completedStyle.Render("✓ " + rawText)
 }
 
 func (m *chatModel) renderMessage(msg messageItem) string {
+	log.Printf("Rendering message: %+v\n", msg)
 	switch msg.role {
 	case "user":
 		label := userLabelStyle.Render("You :")
@@ -221,9 +256,11 @@ func (m *chatModel) renderMessage(msg messageItem) string {
 	}
 }
 
-func (m *chatModel) refreshViewport() {
+func (m *chatModel) refreshViewport(scrollToBottom ...bool) {
 	m.viewport.SetContent(m.renderHistory())
-	m.viewport.GotoBottom()
+	if len(scrollToBottom) > 0 && scrollToBottom[0] {
+		m.viewport.GotoBottom()
+	}
 }
 
 type chunkMsg struct {
@@ -244,8 +281,6 @@ func continueFromAgent(agentKind AgentKind) tea.Cmd {
 	}
 }
 
-// apiBaseURL is the FastAPI host. Per-agent paths are owned by each
-// AgentHandler implementation.
 const apiBaseURL = "http://localhost:8000"
 
 func waitForChunk(ch chan chunkMsg) tea.Cmd {
@@ -310,7 +345,7 @@ func streamMessage(agent AgentHandler, conversationID, userid, msg string) tea.C
 					ch <- out
 					return
 				}
-				if out.content != "" {
+				if out.content != "" || out.toolMessage.toolID != "" {
 					out.ch = ch
 					ch <- out
 				}
@@ -334,10 +369,14 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 
 	case spinner.TickMsg:
 		m.spinner, cmd = m.spinner.Update(msg)
-		if m.isStreaming {
-			m.refreshViewport()
-		}
 		cmds = append(cmds, cmd)
+
+		m.toolSpinner, cmd = m.toolSpinner.Update(msg)
+		cmds = append(cmds, cmd)
+
+		m.shimmerFrame += 0.25
+
+		m.refreshViewport()
 		return *m, tea.Batch(cmds...)
 
 	case chunkMsg:
@@ -345,7 +384,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			m.history = append(m.history, messageItem{role: "system", text: "❌ **Error:** " + msg.err.Error()})
 			m.isStreaming = false
 			m.streamingMessage = ""
-			m.refreshViewport()
+			m.refreshViewport(true)
 			return *m, nil
 		}
 		if msg.done {
@@ -358,24 +397,27 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 				m.isStreaming = false
 				m.history = append(m.history, messageItem{role: "seperator", text: m.agent.AgentLabel()})
 				m.history = append(m.history, messageItem{role: "system", text: "Press Enter to continue to the next step."})
-				m.refreshViewport()
+				m.refreshViewport(true)
 				return *m, continueFromAgent(m.agent.Kind())
 			}
 			m.isStreaming = false
-			m.refreshViewport()
+			m.refreshViewport(true)
 			return *m, nil
 		}
 		if msg.toolMessage.toolID == "" {
 			m.streamingMessage += msg.content
 		} else {
 			found := false
-			for _, item := range m.history {
-				if item.toolMessage.toolID == msg.toolMessage.toolID {
-					item.toolMessage = msg.toolMessage
+			log.Printf("Rendering tool message: %+v\n", msg.toolMessage)
+			for i := range m.history {
+				if m.history[i].toolMessage.toolID == msg.toolMessage.toolID {
+					m.history[i].toolMessage = msg.toolMessage
 					found = true
+					break // Stop searching once found
 				}
 			}
 			if !found {
+				log.Printf("Adding new tool message: %+v\n", msg.toolMessage)
 				m.history = append(m.history, messageItem{role: "tool", text: msg.content, toolMessage: msg.toolMessage})
 			}
 		}
