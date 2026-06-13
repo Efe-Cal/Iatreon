@@ -190,6 +190,16 @@ func (m *chatModel) renderAgentSeperator(agent string) string {
 	)
 }
 
+func (m *chatModel) renderToolMessage(toolMsg messageItem) string {
+	spinner := spinner.New(spinner.WithSpinner(spinner.Points))
+	toolLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Render("Tool: " + toolMsg.toolMessage.toolName + " " + toolMsg.text)
+	if toolMsg.toolMessage.running {
+		return lipgloss.JoinHorizontal(lipgloss.Left, toolLabel, spinner.View())
+	}
+
+	return toolLabel + " (completed)"
+}
+
 func (m *chatModel) renderMessage(msg messageItem) string {
 	switch msg.role {
 	case "user":
@@ -205,7 +215,7 @@ func (m *chatModel) renderMessage(msg messageItem) string {
 	case "seperator":
 		return m.renderAgentSeperator(msg.text)
 	case "tool":
-		return msg.text
+		return m.renderToolMessage(msg)
 	default:
 		return msg.text
 	}
@@ -358,7 +368,16 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		if msg.toolMessage.toolID == "" {
 			m.streamingMessage += msg.content
 		} else {
-			m.history = append(m.history, messageItem{role: "tool", text: msg.content, toolMessage: msg.toolMessage})
+			found := false
+			for _, item := range m.history {
+				if item.toolMessage.toolID == msg.toolMessage.toolID {
+					item.toolMessage = msg.toolMessage
+					found = true
+				}
+			}
+			if !found {
+				m.history = append(m.history, messageItem{role: "tool", text: msg.content, toolMessage: msg.toolMessage})
+			}
 		}
 		m.refreshViewport()
 		return *m, waitForChunk(msg.ch)
