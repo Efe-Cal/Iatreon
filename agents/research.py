@@ -13,6 +13,7 @@ from agents.shared import create_agent_by_type
 from db.models import Article, BookSection, IntakeSession, ResearchSession, WebSearchResult
 from db.repositories import ArticleRepo, BookSectionRepo, ResearchRepo, WebSearchResultRepo
 from db.schemas import ArticleData, BookSectionData
+from db.db import unit_of_work, read_only_session
 
 from context.processing.pipeline import run_pipeline
 from context.websearch import web_search, fetch_web_content
@@ -24,7 +25,7 @@ load_dotenv()
 #TODO: Have another agent (inference) guess some probable diseases based on the profile then use that in research agent
 #TODO: Add demographics to the profile
 class ResearchAgent:
-    def __init__(self, db, research_repo: ResearchRepo, research_session_id: UUID):
+    def __init__(self, research_repo: ResearchRepo, research_session_id: UUID):
         self.checkpointer = InMemorySaver()
         self.session_id = research_session_id
         self.config: RunnableConfig = {"configurable": {"thread_id": str(self.session_id)}}
@@ -50,15 +51,13 @@ class ResearchAgent:
 
         self.agent = create_agent_by_type("research", tools=[self.web_search_tool, self.fetch_web_content_tool, self.search_medical_literature_tool], checkpointer=self.checkpointer)
 
-        self.db = db
-        self.article_repo = ArticleRepo(self.db)
-        self.book_section_repo = BookSectionRepo(self.db)
-        self.web_search_result_repo = WebSearchResultRepo(self.db)
+        self.article_repo = ArticleRepo()
+        self.book_section_repo = BookSectionRepo()
+        self.web_search_result_repo = WebSearchResultRepo()
 
+        #TODO: DB-assigned sequence: make citation_num an auto-increment per research_session_id
         self.citation_num = 0
         self._citation_lock = asyncio.Lock()
-
-        self._db_lock = asyncio.Lock()
     
     async def _web_search(self, query: str) -> str:
         print(f"Performing web search for query: {query}")
@@ -68,9 +67,10 @@ class ResearchAgent:
             start = self.citation_num + 1
             self.citation_num += len(results)
 
-        for citation_num, result in enumerate(results, start=start):
-            async with self._db_lock:
+        async with unit_of_work() as db:
+            for citation_num, result in enumerate(results, start=start):
                 db_result = await self.web_search_result_repo.upsert(
+                    db=db,
                     query=query,
                     url=result["url"],
                     title=result.get("title"),
@@ -78,6 +78,7 @@ class ResearchAgent:
                     full_content=None,
                 )
                 await self.web_search_result_repo.link_to_session(
+                    db=db,
                     session_id=self.session_id,
                     web_search_result_id=db_result.id,
                     citation_num=citation_num
@@ -121,11 +122,12 @@ class ResearchAgent:
             self.citation_num += len(articles) + len(books)
         
         content = f"Search results for query: '{query}'\n\nArticles:\n"
-        for i, article in enumerate(articles, start=start):
-            content += f"[{i}] {article['title']} ({article['journal']}, {article['year']}, Citations: {article['citation_count']})\nAuthors: {', '.join(article['authors'])}\nAbstract: {article['abstract']}\n\n"
-            async with self._db_lock:
-                db_article = await self.article_repo.upsert(ArticleData(**article))
+        async with unit_of_work() as db:
+            for i, article in enumerate(articles, start=start):
+                content += f"[{i}] {article['title']} ({article['journal']}, {article['year']}, Citations: {article['citation_count']})\nAuthors: {', '.join(article['authors'])}\nAbstract: {article['abstract']}\n\n"
+                db_article = await self.article_repo.upsert(db, ArticleData(**article))
                 await self.article_repo.link_to_session(
+                    db=db,
                     session_id=self.session_id,
                     article_id=db_article.id,
                     query=query,
@@ -133,13 +135,13 @@ class ResearchAgent:
                     citation_num=i
                 )
 
-        if books:
-            content += f"Relevant Book Sections:\n"
-            for i, book in enumerate(books, start + len(articles)):
-                content += f"[{i}] {book['title']}\nContent: {book['text']}\n\n"
-                async with self._db_lock:
-                    db_section = await self.book_section_repo.upsert(BookSectionData(**book))
+            if books:
+                content += f"Relevant Book Sections:\n"
+                for i, book in enumerate(books, start + len(articles)):
+                    content += f"[{i}] {book['title']}\nContent: {book['text']}\n\n"
+                    db_section = await self.book_section_repo.upsert(db, BookSectionData(**book))
                     await self.book_section_repo.link_to_session(
+                        db=db,
                         session_id=self.session_id,
                         book_section_id=db_section.id,
                         query=query,
@@ -148,7 +150,7 @@ class ResearchAgent:
 
         return "<source>\n" + content + "\n</source>"
     
-    async def run(self, profile: IntakeSession) -> AsyncGenerator[str | tuple[str, dict[int, dict]], None]:
+    async def run(self, profile: IntakeSession) -> AsyncGenerator[dict | tuple[str, dict[int, dict]], None]:
         symptoms = ', '.join(s["name"] for s in profile.symptoms) if profile.symptoms else "None provided"
         red_flags = ', '.join(profile.red_flags) if profile.red_flags else "None provided"
         medical_summary = profile.medical_summary if profile.medical_summary else "None provided"
@@ -184,15 +186,16 @@ Medical Summary: {medical_summary}
                                 text = block["text"]
                                 print(text, end="", flush=True)
                                 parts.append(text)
+                                yield {"type": "message", "content": text}
                     
             if event["event"] in ["on_tool_start", "on_tool_end"]:
                 print(event["run_id"])
-                content = event["data"]["input"]["query"] if "query" in event["data"]["input"] else event["data"]["input"]["url"] if "url" in event["data"]["input"] else str(event["data"]["input"])
+                # content = event["data"]["input"]["query"] if "query" in event["data"]["input"] else event["data"]["input"]["url"] if "url" in event["data"]["input"] else str(event["data"]["input"])
+                inp = event["data"].get("input", {})
+                content = inp.get("query") or inp.get("url") or str(inp)
                 yield {"type": event["event"].replace("on_", ""), "name": event["name"], "content": content, "tool_call_id": event["run_id"]}
 
         final_message = "".join(parts)
-            
-        # final_message = response["messages"][-1].content
         
         research_report = final_message if isinstance(final_message, str) else str(final_message)
         
@@ -202,16 +205,17 @@ Medical Summary: {medical_summary}
     
     
     async def _get_citation_lookup(self) -> dict[int, tuple[str, Article | BookSection | WebSearchResult]]:
-        sources = await self.research_repo.get_all_session_sources(session_id=self.session_id)
-        lookup: dict[int, tuple[str, Article | BookSection | WebSearchResult]] = {}
+        async with read_only_session() as db:
+            sources = await self.research_repo.get_all_session_sources(db=db, session_id=self.session_id)
+            lookup: dict[int, tuple[str, Article | BookSection | WebSearchResult]] = {}
 
-        for source_type, source_rows in sources.items():
-            for source, citation_num in source_rows:
-                if citation_num is None:
-                    continue
-                lookup[int(citation_num)] = (source_type, source)
+            for source_type, source_rows in sources.items():
+                for source, citation_num in source_rows:
+                    if citation_num is None:
+                        continue
+                    lookup[int(citation_num)] = (source_type, source)
 
-        return lookup
+            return lookup
 
     def _serialize_citation(self, citation_num: int, source_type: str, source: Article | BookSection | WebSearchResult) -> dict:
         if source_type == "articles":
@@ -265,60 +269,3 @@ Medical Summary: {medical_summary}
 
         return citation_manifest
 
-    async def find_citation(self, content: str) -> dict[int, Article | BookSection | WebSearchResult]:
-        citation_pattern = r"\[(\d+)\]"
-        matches = re.findall(citation_pattern, content)
-
-        if not matches:
-            return {}
-
-        citation_lookup = await self._get_citation_lookup()
-        cited_sources: dict[int, Article | BookSection | WebSearchResult] = {}
-        seen_citations: set[int] = set()
-
-        for match in matches:
-            citation_num = int(match)
-            if citation_num in seen_citations:
-                continue
-
-            lookup_entry = citation_lookup.get(citation_num)
-            if lookup_entry is None:
-                continue
-
-            cited_sources[citation_num] = lookup_entry[1]
-            seen_citations.add(citation_num)
-
-        return cited_sources
-
-if __name__ == "__main__":
-    async def main():
-        from db.db import SessionLocal
-        from db.repositories import IntakeRepo, ResearchRepo
-
-        async with SessionLocal() as db:
-            intake_repo = IntakeRepo(db)
-            research_repo = ResearchRepo(db)
-
-            intake_session = await intake_repo.get_session(UUID("73aa1e576fe244f1b294b93fb1179c58"))
-            if intake_session is None:
-                print("No intake session found. Please run the intake process first.")
-            else:
-                research_session = await research_repo.create_research_session(intake_session.user_id, intake_session.id)
-                ResearchSession(intake_session_id=intake_session.id, user_id=intake_session.user_id)
-                research_agent = ResearchAgent(db, research_repo, research_session.id)
-                async for chunk in research_agent.run(intake_session):
-                    if isinstance(chunk, str):
-                        print(chunk)
-                    elif isinstance(chunk, tuple) and len(chunk) == 2:
-                        research_report, citations = chunk
-                        print(citations.keys())
-                print("Final Research Report:")
-                print(research_report)
-            
-            await research_repo.update_research_session(
-                session_id=research_session.id,
-                research_report=research_report,
-                citations=citations,
-            )
-    import asyncio
-    asyncio.run(main())

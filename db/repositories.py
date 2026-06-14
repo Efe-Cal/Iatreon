@@ -30,8 +30,7 @@ def _normalize_unique_identifier(value: str | None) -> str | None:
     return normalized.lower()
 
 class IntakeRepo:
-    def __init__(self, db: AsyncSession, user_id: str):
-        self.db = db
+    def __init__(self, user_id: str):
         self.user_id = uuid.UUID(user_id)
 
     @staticmethod
@@ -46,28 +45,26 @@ class IntakeRepo:
                 serialized_transcript.append({"type": message.__class__.__name__, "content": str(message)})
         return serialized_transcript
 
-    async def create_session(self) -> IntakeSession:
+    async def create_session(self, db: AsyncSession) -> IntakeSession:
         session = IntakeSession(user_id=self.user_id, status="in_progress", raw_transcript=[])
-        self.db.add(session)
-        await self.db.commit()
-        await self.db.refresh(session)
+        db.add(session)
+        await db.flush()
         return session
 
-    async def get_or_create_session(self, session_id: uuid.UUID) -> IntakeSession:
-        session = await self.db.get(IntakeSession, session_id)
+    async def get_or_create_session(self, db: AsyncSession, session_id: uuid.UUID) -> IntakeSession:
+        session = await db.get(IntakeSession, session_id)
         if session:
             if session.user_id != self.user_id:
                 raise ValueError("Unauthorized: User ID mismatch")
             return session
         
         session = IntakeSession(id=session_id, user_id=self.user_id, status="in_progress", raw_transcript=[])
-        self.db.add(session)
-        await self.db.commit()
-        await self.db.refresh(session)
+        db.add(session)
+        await db.flush()
         return session
 
-    async def update_session(self, session_id: uuid.UUID, profile: IntakeProfile, transcript: list):
-        session = await self.db.get(IntakeSession, session_id)
+    async def update_session(self, db: AsyncSession, session_id: uuid.UUID, profile: IntakeProfile, transcript: list):
+        session = await db.get(IntakeSession, session_id)
         if session.user_id != self.user_id:
             return "Error: Unauthorized"
         session.chief_complaint = profile.chief_complaint
@@ -75,46 +72,45 @@ class IntakeRepo:
         session.red_flags = profile.red_flags
         session.medical_summary = profile.medical_summary
         session.raw_transcript = self._serialize_transcript(transcript)
-        await self.db.commit()
+        await db.flush()
         return "OK"
 
-    async def complete_session(self, session_id: uuid.UUID):
-        session = await self.db.get(IntakeSession, session_id)
+    async def complete_session(self, db: AsyncSession, session_id: uuid.UUID):
+        session = await db.get(IntakeSession, session_id)
         if session.user_id != self.user_id:
             return "Error: Unauthorized"
         session.status = "complete"
         session.completed_at = datetime.utcnow()
-        await self.db.commit()
+        await db.flush()
         return "OK"
 
-    async def get_session(self, session_id: uuid.UUID) -> IntakeSession | None:
+    async def get_session(self, db: AsyncSession, session_id: uuid.UUID) -> IntakeSession | None:
         if isinstance(session_id, str):
             session_id = uuid.UUID(session_id)
-            
-        session = await self.db.get(IntakeSession, session_id)
+
+        session = await db.get(IntakeSession, session_id)
         if session and session.user_id == self.user_id:
             return session
         return None
 
 class ResearchRepo:
-    def __init__(self, db: AsyncSession, user_id: str):
-        self.db = db
+    def __init__(self, user_id: str):
         self.user_id = uuid.UUID(user_id)
 
-    async def create_research_session(self, intake_session_id: uuid.UUID) -> ResearchSession:
+    async def create_research_session(self, db: AsyncSession, intake_session_id: uuid.UUID) -> ResearchSession:
         session = ResearchSession(user_id=self.user_id, intake_session_id=intake_session_id)
-        self.db.add(session)
-        await self.db.commit()
-        await self.db.refresh(session)
+        db.add(session)
+        await db.flush()
         return session
 
     async def update_research_session(
         self,
+        db: AsyncSession,
         session_id: uuid.UUID,
         research_report: str | None = None,
         citations: dict[int, dict] | None = None,
     ) -> ResearchSession | None:
-        session = await self.db.get(ResearchSession, session_id)
+        session = await db.get(ResearchSession, session_id)
         if session is None or session.user_id != self.user_id:
             return None
 
@@ -123,20 +119,19 @@ class ResearchRepo:
         if citations is not None:
             session.citations = citations
 
-        await self.db.commit()
-        await self.db.refresh(session)
+        await db.flush()
         return session
 
-    async def get_research_session(self, session_id: uuid.UUID) -> ResearchSession | None:
+    async def get_research_session(self, db: AsyncSession, session_id: uuid.UUID) -> ResearchSession | None:
         if isinstance(session_id, str):
             session_id = uuid.UUID(session_id)
         
-        session = await self.db.get(ResearchSession, session_id)
+        session = await db.get(ResearchSession, session_id)
         if session and session.user_id == self.user_id:
             return session
         return None
 
-    async def get_research_session_by_intake_id(self, intake_session_id: uuid.UUID) -> ResearchSession | None:
+    async def get_research_session_by_intake_id(self, db: AsyncSession, intake_session_id: uuid.UUID) -> ResearchSession | None:
         if isinstance(intake_session_id, str):
             intake_session_id = uuid.UUID(intake_session_id)
 
@@ -144,20 +139,19 @@ class ResearchRepo:
             ResearchSession.intake_session_id == intake_session_id,
             ResearchSession.user_id == self.user_id,
         )
-        return (await self.db.execute(stmt)).scalar_one_or_none()
+        return (await db.execute(stmt)).scalar_one_or_none()
 
-    async def link_article(self, session_id: uuid.UUID, article_id: uuid.UUID, query: str, quality_score: float | None = None) -> SessionArticle:
+    async def link_article(self, db: AsyncSession, session_id: uuid.UUID, article_id: uuid.UUID, query: str, quality_score: float | None = None) -> SessionArticle:
         existing_stmt = select(SessionArticle).where(
             SessionArticle.session_id == session_id,
             SessionArticle.article_id == article_id,
         )
-        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
 
         if existing is not None:
             existing.query = query
             existing.quality_score = quality_score
-            await self.db.commit()
-            await self.db.refresh(existing)
+            await db.flush()
             return existing
 
         link = SessionArticle(
@@ -166,22 +160,20 @@ class ResearchRepo:
             query=query,
             quality_score=quality_score,
         )
-        self.db.add(link)
-        await self.db.commit()
-        await self.db.refresh(link)
+        db.add(link)
+        await db.flush()
         return link
 
-    async def link_book_section(self, session_id: uuid.UUID, book_section_id: uuid.UUID, query: str) -> SessionBookSection:
+    async def link_book_section(self, db: AsyncSession, session_id: uuid.UUID, book_section_id: uuid.UUID, query: str) -> SessionBookSection:
         existing_stmt = select(SessionBookSection).where(
             SessionBookSection.session_id == session_id,
             SessionBookSection.book_section_id == book_section_id,
         )
-        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
 
         if existing is not None:
             existing.query = query
-            await self.db.commit()
-            await self.db.refresh(existing)
+            await db.flush()
             return existing
 
         link = SessionBookSection(
@@ -189,17 +181,16 @@ class ResearchRepo:
             book_section_id=book_section_id,
             query=query,
         )
-        self.db.add(link)
-        await self.db.commit()
-        await self.db.refresh(link)
+        db.add(link)
+        await db.flush()
         return link
 
-    async def link_web_search_result(self, session_id: uuid.UUID, web_search_result_id: uuid.UUID) -> SessionWebSearchResult:
+    async def link_web_search_result(self, db: AsyncSession, session_id: uuid.UUID, web_search_result_id: uuid.UUID) -> SessionWebSearchResult:
         existing_stmt = select(SessionWebSearchResult).where(
             SessionWebSearchResult.session_id == session_id,
             SessionWebSearchResult.web_search_result_id == web_search_result_id,
         )
-        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
 
         if existing is not None:
             return existing
@@ -208,12 +199,11 @@ class ResearchRepo:
             session_id=session_id,
             web_search_result_id=web_search_result_id,
         )
-        self.db.add(link)
-        await self.db.commit()
-        await self.db.refresh(link)
+        db.add(link)
+        await db.flush()
         return link
 
-    async def get_session_articles(self, session_id: uuid.UUID, limit: int = 8) -> list[Article]:
+    async def get_session_articles(self, db: AsyncSession, session_id: uuid.UUID, limit: int = 8) -> list[Article]:
         stmt = (
             select(Article)
             .join(SessionArticle, SessionArticle.article_id == Article.id)
@@ -221,18 +211,18 @@ class ResearchRepo:
             .order_by(SessionArticle.quality_score.desc().nullslast())
             .limit(limit)
         )
-        return list((await self.db.execute(stmt)).scalars())
+        return list((await db.execute(stmt)).scalars())
 
-    async def get_session_book_sections(self, session_id: uuid.UUID, limit: int = 8) -> list[BookSection]:
+    async def get_session_book_sections(self, db: AsyncSession, session_id: uuid.UUID, limit: int = 8) -> list[BookSection]:
         stmt = (
             select(BookSection)
             .join(SessionBookSection, SessionBookSection.book_section_id == BookSection.id)
             .where(SessionBookSection.session_id == session_id)
             .limit(limit)
         )
-        return list((await self.db.execute(stmt)).scalars())
+        return list((await db.execute(stmt)).scalars())
 
-    async def get_session_web_search_results(self, session_id: uuid.UUID, limit: int = 8) -> list[WebSearchResult]:
+    async def get_session_web_search_results(self, db: AsyncSession, session_id: uuid.UUID, limit: int = 8) -> list[WebSearchResult]:
         stmt = (
             select(WebSearchResult)
             .join(SessionWebSearchResult, SessionWebSearchResult.web_search_result_id == WebSearchResult.id)
@@ -240,29 +230,29 @@ class ResearchRepo:
             .order_by(WebSearchResult.fetched_at.desc())
             .limit(limit)
         )
-        return list((await self.db.execute(stmt)).scalars())
+        return list((await db.execute(stmt)).scalars())
     
-    async def get_all_session_sources(self, session_id: uuid.UUID) -> dict[str, list[tuple[Article | BookSection | WebSearchResult, int | None]]]:
+    async def get_all_session_sources(self, db: AsyncSession, session_id: uuid.UUID) -> dict[str, list[tuple[Article | BookSection | WebSearchResult, int | None]]]:
         stmt = (
             select(Article, SessionArticle)
             .join(SessionArticle, SessionArticle.article_id == Article.id)
             .where(SessionArticle.session_id == session_id)
         )
-        articles = (await self.db.execute(stmt)).all()
+        articles = (await db.execute(stmt)).all()
         
         stmt = (
             select(BookSection, SessionBookSection)
             .join(SessionBookSection, SessionBookSection.book_section_id == BookSection.id)
             .where(SessionBookSection.session_id == session_id)
         )
-        book_sections = (await self.db.execute(stmt)).all()
+        book_sections = (await db.execute(stmt)).all()
         
         stmt = (
             select(WebSearchResult, SessionWebSearchResult)
             .join(SessionWebSearchResult, SessionWebSearchResult.web_search_result_id == WebSearchResult.id)
             .where(SessionWebSearchResult.session_id == session_id)
         )
-        web_search_results = (await self.db.execute(stmt)).all()
+        web_search_results = (await db.execute(stmt)).all()
         
         sources = {
             "articles": [(article, session_article.citation_num )for article, session_article in articles],
@@ -272,10 +262,10 @@ class ResearchRepo:
         return sources
 
 class ArticleRepo:
-    def __init__(self, db: AsyncSession):
-        self.db = db
-    
-    async def upsert(self, data: ArticleData) -> Article:
+    def __init__(self):
+        pass
+
+    async def upsert(self, db: AsyncSession, data: ArticleData) -> Article:
         """Insert or update an article row and return it."""
         pubmed_id = _normalize_unique_identifier(data.pubmed_id)
         pmc_id = _normalize_unique_identifier(data.pmc_id)
@@ -315,23 +305,22 @@ class ArticleRepo:
         existing = None
         if identity_filters:
             existing_stmt = select(Article).where(or_(*identity_filters))
-            existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+            existing = (await db.execute(existing_stmt)).scalar_one_or_none()
 
         if existing is not None:
             for field, value in payload.items():
                 setattr(existing, field, value)
-            await self.db.commit()
-            await self.db.refresh(existing)
+            await db.flush()
             return existing
 
         article = Article(**payload)
-        self.db.add(article)
-        await self.db.commit()
-        await self.db.refresh(article)
+        await db.add(article)
+        await db.flush()
         return article
 
     async def get_cached(
         self,
+        db: AsyncSession,
         pubmed_id: str | None = None,
         pmc_id: str | None = None,
         doi: str | None = None,
@@ -354,21 +343,20 @@ class ArticleRepo:
             return None
 
         stmt = select(Article).where(or_(*identity_filters), Article.fetched_at > cutoff)
-        return (await self.db.execute(stmt)).scalar_one_or_none()
+        return (await db.execute(stmt)).scalar_one_or_none()
     
-    async def link_to_session(self, session_id: uuid.UUID, article_id: uuid.UUID, query: str, quality_score: float, citation_num: int = 0) -> SessionArticle:
+    async def link_to_session(self, db: AsyncSession, session_id: uuid.UUID, article_id: uuid.UUID, query: str, quality_score: float, citation_num: int = 0) -> SessionArticle:
         existing_stmt = select(SessionArticle).where(
             SessionArticle.session_id == session_id,
             SessionArticle.article_id == article_id,
         )
-        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
 
         if existing is not None:
             existing.query = query
             existing.quality_score = quality_score
             existing.citation_num = citation_num
-            await self.db.commit()
-            await self.db.refresh(existing)
+            await db.flush()
             return existing
 
         link = SessionArticle(
@@ -378,12 +366,11 @@ class ArticleRepo:
             quality_score=quality_score,
             citation_num=citation_num,
         )
-        self.db.add(link)
-        await self.db.commit()
-        await self.db.refresh(link)
+        await db.add(link)
+        await db.flush()
         return link
-    
-    async def get_session_articles(self, session_id: uuid.UUID, limit: int = 8) -> list[Article]:
+
+    async def get_session_articles(self, db: AsyncSession, session_id: uuid.UUID, limit: int = 8) -> list[Article]:
         stmt = (
             select(Article)
             .join(SessionArticle, SessionArticle.article_id == Article.id)
@@ -391,18 +378,18 @@ class ArticleRepo:
             .order_by(SessionArticle.quality_score.desc().nullslast())
             .limit(limit)
         )
-        return list((await self.db.execute(stmt)).scalars())
+        return list((await db.execute(stmt)).scalars())
     
-    async def get_article_by_id(self, article_id: uuid.UUID) -> Article | None:
-        return await self.db.get(Article, article_id)
+    async def get_article_by_id(self, db: AsyncSession, article_id: uuid.UUID) -> Article | None:
+        return await db.get(Article, article_id)
 
 class BookSectionRepo:
-    def __init__(self, db: AsyncSession):
-        self.db = db
+    def __init__(self):
+        pass
     
-    async def upsert(self, data: BookSectionData) -> BookSection:
+    async def upsert(self, db: AsyncSession, data: BookSectionData) -> BookSection:
         existing_stmt = select(BookSection).where(BookSection.accession_id == data.accession_id)
-        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
 
         if existing is not None:
             existing.title = data.title
@@ -410,8 +397,7 @@ class BookSectionRepo:
             existing.text = data.text
             existing.url = data.url
             existing.full_text_available = data.full_text_available
-            await self.db.commit()
-            await self.db.refresh(existing)
+            await db.flush()
             return existing
 
         section = BookSection(
@@ -422,27 +408,25 @@ class BookSectionRepo:
             url=data.url,
             full_text_available=data.full_text_available,
         )
-        self.db.add(section)
-        await self.db.commit()
-        await self.db.refresh(section)
+        await db.add(section)
+        await db.flush()
         return section
-    
-    async def get_by_accession_id(self, accession_id: str) -> BookSection | None:
+
+    async def get_by_accession_id(self, db: AsyncSession, accession_id: str) -> BookSection | None:
         stmt = select(BookSection).where(BookSection.accession_id == accession_id)
-        return (await self.db.execute(stmt)).scalar_one_or_none()
+        return (await db.execute(stmt)).scalar_one_or_none()
     
-    async def link_to_session(self, session_id: uuid.UUID, book_section_id: uuid.UUID, query: str, citation_num: int = 0) -> SessionBookSection:
+    async def link_to_session(self, db: AsyncSession, session_id: uuid.UUID, book_section_id: uuid.UUID, query: str, citation_num: int = 0) -> SessionBookSection:
         existing_stmt = select(SessionBookSection).where(
             SessionBookSection.session_id == session_id,
             SessionBookSection.book_section_id == book_section_id,
         )
-        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
 
         if existing is not None:
             existing.query = query
             existing.citation_num = citation_num
-            await self.db.commit()
-            await self.db.refresh(existing)
+            await db.flush()
             return existing
 
         link = SessionBookSection(
@@ -451,38 +435,36 @@ class BookSectionRepo:
             query=query,
             citation_num=citation_num
         )
-        self.db.add(link)
-        await self.db.commit()
-        await self.db.refresh(link)
+        await db.add(link)
+        await db.flush()
         return link
         
-    async def get_session_book_sections(self, session_id: uuid.UUID, limit: int = 8) -> list[BookSection]:
+    async def get_session_book_sections(self, db: AsyncSession, session_id: uuid.UUID, limit: int = 8) -> list[BookSection]:
         stmt = (
             select(BookSection)
             .join(SessionBookSection, SessionBookSection.book_section_id == BookSection.id)
             .where(SessionBookSection.session_id == session_id)
             .limit(limit)
         )
-        return list((await self.db.execute(stmt)).scalars())
+        return list((await db.execute(stmt)).scalars())
     
-    async def get_book_section_by_id(self, book_section_id: uuid.UUID) -> BookSection | None:
-        return await self.db.get(BookSection, book_section_id)
+    async def get_book_section_by_id(self, db: AsyncSession, book_section_id: uuid.UUID) -> BookSection | None:
+        return await db.get(BookSection, book_section_id)
 
 class WebSearchResultRepo:
-    def __init__(self, db: AsyncSession):
-        self.db = db
-    
-    async def upsert(self, query: str, url: str, title: str | None, highlights: str | None, full_content: str | None) -> WebSearchResult:
+    def __init__(self):
+        pass
+
+    async def upsert(self, db: AsyncSession, query: str, url: str, title: str | None, highlights: str | None, full_content: str | None) -> WebSearchResult:
         existing_stmt = select(WebSearchResult).where(WebSearchResult.query == query, WebSearchResult.url == url)
-        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
 
         if existing is not None:
             existing.title = title
             existing.highlights = highlights
             existing.full_content = full_content
             existing.fetched_at = datetime.utcnow()
-            await self.db.commit()
-            await self.db.refresh(existing)
+            await db.flush()
             return existing
 
         result = WebSearchResult(
@@ -492,22 +474,20 @@ class WebSearchResultRepo:
             highlights=highlights,
             full_content=full_content,
         )
-        self.db.add(result)
-        await self.db.commit()
-        await self.db.refresh(result)
+        await db.add(result)
+        await db.flush()
         return result
 
-    async def link_to_session(self, session_id: uuid.UUID, web_search_result_id: uuid.UUID, citation_num: int = 0) -> SessionWebSearchResult:
+    async def link_to_session(self, db: AsyncSession, session_id: uuid.UUID, web_search_result_id: uuid.UUID, citation_num: int = 0) -> SessionWebSearchResult:
         existing_stmt = select(SessionWebSearchResult).where(
             SessionWebSearchResult.session_id == session_id,
             SessionWebSearchResult.web_search_result_id == web_search_result_id,
         )
-        existing = (await self.db.execute(existing_stmt)).scalar_one_or_none()
+        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
 
         if existing is not None:
             existing.citation_num = citation_num
-            await self.db.commit()
-            await self.db.refresh(existing)
+            await db.flush()
             return existing
 
         link = SessionWebSearchResult(
@@ -515,12 +495,11 @@ class WebSearchResultRepo:
             web_search_result_id=web_search_result_id,
             citation_num=citation_num,
         )
-        self.db.add(link)
-        await self.db.commit()
-        await self.db.refresh(link)
+        await db.add(link)
+        await db.flush()
         return link
 
-    async def get_session_web_search_results(self, session_id: uuid.UUID, limit: int = 8) -> list[WebSearchResult]:
+    async def get_session_web_search_results(self, db: AsyncSession, session_id: uuid.UUID, limit: int = 8) -> list[WebSearchResult]:
         stmt = (
             select(WebSearchResult)
             .join(SessionWebSearchResult, SessionWebSearchResult.web_search_result_id == WebSearchResult.id)
@@ -528,45 +507,44 @@ class WebSearchResultRepo:
             .order_by(WebSearchResult.fetched_at.desc())
             .limit(limit)
         )
-        return list((await self.db.execute(stmt)).scalars())
+        return list((await db.execute(stmt)).scalars())
 
-    async def get_web_search_result_by_id(self, web_search_result_id: uuid.UUID) -> WebSearchResult | None:
-        return await self.db.get(WebSearchResult, web_search_result_id)
+    async def get_web_search_result_by_id(self, db: AsyncSession, web_search_result_id: uuid.UUID) -> WebSearchResult | None:
+        return await db.get(WebSearchResult, web_search_result_id)
 
 
 class UserRepo:
-    def __init__(self, db: AsyncSession):
-        self.db = db
+    def __init__(self):
+        pass
     
-    async def create_user(self, ssh_key: str) -> User:
+    async def create_user(self, db: AsyncSession, ssh_key: str) -> User:
         user = User(ssh_key=ssh_key)
-        self.db.add(user)
-        await self.db.commit()
-        await self.db.refresh(user)
+        await db.add(user)
+        await db.commit()
+        await db.refresh(user)
         return user
 
-    async def get_user_id_by_ssh_key(self, ssh_key: str) -> uuid.UUID | None:
+    async def get_user_id_by_ssh_key(self, db: AsyncSession, ssh_key: str) -> uuid.UUID | None:
         stmt = select(User.id).where(User.ssh_key == ssh_key)
-        return (await self.db.execute(stmt)).scalar_one_or_none()
+        return (await db.execute(stmt)).scalar_one_or_none()
     
-    async def get_user_profile(self, user_id: uuid.UUID) -> dict:
+    async def get_user_profile(self, db: AsyncSession, user_id: uuid.UUID) -> dict:
         stmt = select(UserProfile).where(UserProfile.user_id == user_id)
-        user_profile = (await self.db.execute(stmt)).scalar_one_or_none()
+        user_profile = (await db.execute(stmt)).scalar_one_or_none()
         if user_profile is None:
             return {}
         return UserProfileData.model_validate(user_profile).model_dump()
 
-    async def update_user_profile(self, profile_data: UserProfileData) -> UserProfile:
+    async def update_user_profile(self, db: AsyncSession, profile_data: UserProfileData) -> UserProfile:
         stmt = select(UserProfile).where(UserProfile.user_id == profile_data.user_id)
-        user_profile = (await self.db.execute(stmt)).scalar_one_or_none()
+        user_profile = (await db.execute(stmt)).scalar_one_or_none()
         if user_profile is None:
             profile_dict = profile_data.model_dump()
             profile_dict.pop("user_id", None)
             user_profile = UserProfile(user_id=profile_data.user_id, **profile_dict)
-            self.db.add(user_profile)
+            await db.add(user_profile)
         else:
             for field, value in profile_data.model_dump().items():
                 setattr(user_profile, field, value)
-        await self.db.commit()
-        await self.db.refresh(user_profile)
+        await db.flush()
         return user_profile

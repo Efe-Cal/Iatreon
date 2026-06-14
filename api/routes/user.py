@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sshpubkeys import SSHKey
 
-from db.db import SessionLocal
+from db.db import unit_of_work
 from db.repositories import UserRepo
 from db.schemas import UserProfileData
 
@@ -46,26 +46,26 @@ async def get_or_create_user(payload: GetOrCreateUserRequest) -> dict:
     ssh_key = payload.ssh_key
     if not ssh_key:
         return {"error": "ssh_key is required"}
-    async with SessionLocal() as session:
-        user_repo = UserRepo(session)
-        user_id = await user_repo.get_user_id_by_ssh_key(ssh_key)
+    async with unit_of_work() as db:
+        user_repo = UserRepo()
+        user_id = await user_repo.get_user_id_by_ssh_key(db, ssh_key)
         if not user_id:
-            user = await user_repo.create_user(ssh_key)
+            user = await user_repo.create_user(db, ssh_key)
             return {"user_id": str(user.id), "has_profile": False}
-        user_profile = await user_repo.get_user_profile(user_id)
+        user_profile = await user_repo.get_user_profile(db, user_id)
         has_profile = bool(user_profile)
         return {"user_id": str(user_id), "has_profile": has_profile}
 
 @router.get("/user-profile")
 async def get_user_profile(user_id: UUID) -> dict:
-    async with SessionLocal() as session:
-        user_repo = UserRepo(session)
-        profile = await user_repo.get_user_profile(user_id)
+    async with unit_of_work() as db:
+        user_repo = UserRepo()
+        profile = await user_repo.get_user_profile(db, user_id)
         return profile
 
 @router.post("/user-profile")
 async def update_user_profile(profile_data: UserProfileData) -> dict:
-    async with SessionLocal() as session:
-        user_repo = UserRepo(session)
-        await user_repo.update_user_profile(profile_data)
+    async with unit_of_work() as db:
+        user_repo = UserRepo()
+        await user_repo.update_user_profile(db, profile_data)
         return {"status": "success"}

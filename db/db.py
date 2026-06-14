@@ -1,7 +1,8 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass
-from sqlalchemy.pool import StaticPool
 import os
+from contextlib import asynccontextmanager
+
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://app:app@localhost:5432/app")
 
@@ -22,6 +23,18 @@ SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
     expire_on_commit=False,
 )
 
+@asynccontextmanager
+async def unit_of_work():
+    """One session, one transaction. Commits on success, rolls back on error."""
+    async with SessionLocal() as db:
+        async with db.begin():
+            yield db
+
+@asynccontextmanager
+async def read_only_session():
+    """For read-only operations — no transaction overhead needed."""
+    async with SessionLocal() as db:
+        yield db
 
 class Base(MappedAsDataclass, DeclarativeBase):
     def to_dict(self):

@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from langchain_core.tools import StructuredTool
 
 from db.models import IntakeSession, ResearchSession
-from db.db import SessionLocal
+from db.db import unit_of_work, read_only_session
 from db.repositories import ArticleRepo, BookSectionRepo, WebSearchResultRepo
 from agents.shared import create_agent_by_type, web_search_tool
 
@@ -39,7 +39,7 @@ class DiagnosisAgent():
         
 
     async def _get_full_source(self, citation_id: int):
-        async with SessionLocal() as db:
+        async with read_only_session() as db:
             source_info = self.research_session.citations.get(citation_id)
             
             if not source_info:
@@ -50,17 +50,17 @@ class DiagnosisAgent():
             
             #TODO: use the markdown util for sources 
             if source_type == "article":
-                article = await ArticleRepo(db).get_article_by_id(source_id)
+                article = await ArticleRepo().get_article_by_id(db, source_id)
                 if article:
                     return f"Title: {article.title}\nAbstract: {article.abstract}\n" + (f"Full Text: {article.full_text}" if article.full_text_available else "")
             
             elif source_type == "web_search_result":
-                web_search_result = await WebSearchResultRepo(db).get_web_search_result_by_id(source_id)
+                web_search_result = await WebSearchResultRepo().get_web_search_result_by_id(db, source_id)
                 if web_search_result:
                     return f"Title: {web_search_result.title}\nURL: {web_search_result.url}\nHighlights: {web_search_result.highlights}\n"+ (f"Full Content:\n{web_search_result.full_content}" if web_search_result.full_content.strip() else "")
             
             elif source_type == "book_section":
-                book_section = await BookSectionRepo(db).get_book_section_by_id(source_id)
+                book_section = await BookSectionRepo().get_book_section_by_id(db, source_id)
                 if book_section:
                     return f"Title: {book_section.title}\nContent: {book_section.text}"
             
