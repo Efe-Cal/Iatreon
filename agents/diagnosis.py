@@ -13,7 +13,7 @@ load_dotenv()
 
 #TODO: (importance: HIGH) diagnosis agent should have a request_reseach tool instead of web_search, which would trigger a subset of the research agent (?), properly handling the sources and stuff
 
-#TODO: proper system prompt; get_full_source tool
+#TODO: proper system prompt
 class DiagnosisAgent():
     def __init__(self, intake_session: IntakeSession, research_session: ResearchSession | None):
         

@@ -1,5 +1,4 @@
 import asyncio
-import os
 import re
 from typing import AsyncGenerator
 from dotenv import load_dotenv
@@ -10,7 +9,6 @@ from langgraph.config import RunnableConfig
 from langchain_core.tools import StructuredTool
 from langchain_core.messages import AIMessageChunk
 
-from agents.serial_tool_middleware import SerialToolMiddleware
 from agents.shared import create_agent_by_type
 from db.models import Article, BookSection, IntakeSession, ResearchSession, WebSearchResult
 from db.repositories import ArticleRepo, BookSectionRepo, ResearchRepo, WebSearchResultRepo

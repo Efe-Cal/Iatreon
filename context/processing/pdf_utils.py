@@ -18,7 +18,7 @@ NON_PDF_EXTENSIONS = {
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".tif", ".tiff"
 }
 
-#TODO: use markitdown and seleniumbase
+
 class PDFClient:
     def _is_probable_pdf_url(self, url: str) -> bool:
         parsed = urlparse(url)

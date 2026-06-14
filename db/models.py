@@ -1,4 +1,5 @@
-from sqlalchemy import String, Text, Integer, Float, Boolean, ForeignKey, DateTime, JSON, Uuid
+from sqlalchemy import String, Text, Integer, Float, Boolean, ForeignKey, DateTime, Uuid
+from sqlalchemy.dialects.postgresql import JSONB as JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime
 from typing import Optional

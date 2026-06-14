@@ -3,23 +3,26 @@ from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass
 from sqlalchemy.pool import StaticPool
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://app:app@localhost:5432/app")
+
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
+    pool_size=20,
+    max_overflow=10,
+    pool_pre_ping=True,
+    pool_recycle=1800,
 )
-SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
+
 
 class Base(MappedAsDataclass, DeclarativeBase):
     def to_dict(self):
         return {c.name: getattr(self, c.name) for c in self.__table__.columns}
-
-
-async def init_db() -> None:
-    from db import models  # noqa: F401
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)

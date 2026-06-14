@@ -16,16 +16,10 @@ config = context.config
 
 # Override sqlalchemy.url from the DATABASE_URL environment variable
 # Alembic uses synchronous drivers, so we convert async schemes to sync.
-database_url = os.getenv("DATABASE_URL")
-if database_url:
-    # Convert common async driver schemes to their sync equivalents
-    # e.g. sqlite+aiosqlite:// -> sqlite://, postgresql+asyncpg:// -> postgresql://
-    sync_url = re.sub(
-        r"^([^+]+)\+[^:]+://",
-        r"\1://",
-        database_url,
-    )
-    config.set_main_option("sqlalchemy.url", sync_url)
+
+db_url = os.environ["DATABASE_URL"].replace("+asyncpg", "+psycopg2")
+config.set_main_option("sqlalchemy.url", db_url)
+
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
