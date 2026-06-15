@@ -7,7 +7,7 @@ from langchain.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import RunnableConfig
 
-from agents.shared import create_agent_by_type, get_model
+from agents.shared import create_agent_by_type, get_model, get_user_info
 from db.schemas import IntakeProfile
 from agents.inference import run_inference
 
@@ -50,10 +50,10 @@ def _iter_stream_text(content: str | list[dict] | None):
             yield block["text"]
 
 #TODO: Take demographics at the start before starting intake, no chat approach, then pass demographics to intake agent.
-async def run_intake_cli(message: str, conversation_id: str) -> AsyncGenerator[str | dict | tuple[IntakeProfile, list[dict[str, str]]], None]:
+async def run_intake_cli(message: str, conversation_id: str, user_id: str) -> AsyncGenerator[str | dict | tuple[IntakeProfile, list[dict[str, str]]], None]:
     config: RunnableConfig = {"configurable": {"thread_id": conversation_id}}
     messages = [
-        # {"role": "system", "content": system_prompt},
+        {"role": "system", "content": await get_user_info(user_id=user_id)},
         {"role": "assistant", "content": "What brings you in today?"}
     ]
 

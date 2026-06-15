@@ -9,6 +9,8 @@ from langgraph.graph.state import CompiledStateGraph
 from langchain_core.tools import tool
 
 from context.websearch import web_search
+from db.db import read_only_session
+from db.repositories import UserRepo
 
 load_dotenv()
 
@@ -54,3 +56,35 @@ async def web_search_tool(query: str, num_results: int = 5):
         The search highlights.
     """
     return await asyncio.to_thread(web_search, query, num_results)
+
+
+async def get_user_info(user_id: str):
+    user_repo = UserRepo()
+    async with read_only_session() as db:
+        info = "# Patient Profile\n"
+        user_profile = await user_repo.get_user_profile(db, user_id)
+        
+        info += f"## Demographics:\n"
+        demographics = user_profile.demographics
+        for key, value in demographics.items():
+            info += f"{key.capitalize()}: {value}\n"
+        
+        allergies = user_profile.allergies
+        if allergies:
+            info += "## Allergies:\n"
+            for allergy in allergies:
+                info += f"- {allergy}\n"
+        
+        medications = user_profile.medications
+        if medications:
+            info += "## Medications:\n"
+            for medication in medications:
+                info += f"- {medication}\n"
+        
+        social = user_profile.social
+        if social:
+            info += "## Social History:\n"
+            for key, value in social.items():
+                info += f"{key.capitalize()}: {value}\n"
+        
+        return info

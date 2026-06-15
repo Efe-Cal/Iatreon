@@ -9,7 +9,7 @@ from langgraph.config import RunnableConfig
 from langchain_core.tools import StructuredTool
 from langchain_core.messages import AIMessageChunk
 
-from agents.shared import create_agent_by_type
+from agents.shared import create_agent_by_type, get_user_info
 from db.models import Article, BookSection, IntakeSession, ResearchSession, WebSearchResult
 from db.repositories import ArticleRepo, BookSectionRepo, ResearchRepo, WebSearchResultRepo
 from db.schemas import ArticleData, BookSectionData
@@ -23,7 +23,8 @@ load_dotenv()
 
 #TODO: In addition to the pipeline allow single source queries too
 #TODO: Have another agent (inference) guess some probable diseases based on the profile then use that in research agent
-#TODO: Add demographics to the profile
+# ^^ Maybe run diagnosis agent with a fast model as a middle step
+#TODO: Have "research effort" that changes the prompt (tell the model to be fast) and the model tier 
 class ResearchAgent:
     def __init__(self, research_repo: ResearchRepo, research_session_id: UUID):
         self.checkpointer = InMemorySaver()
@@ -155,6 +156,7 @@ class ResearchAgent:
         red_flags = ', '.join(profile.red_flags) if profile.red_flags else "None provided"
         medical_summary = profile.medical_summary if profile.medical_summary else "None provided"
 
+        patient_profile = await get_user_info(user_id=profile.user_id)
         
         user_message = f"""Given the following patient profile, perform research to gather relevant medical information. Use the tools at your disposal to search the web and medical literature for insights related to the patient's chief complaint, symptoms, and red flags. Summarize your findings in a comprehensive report.
 
@@ -162,7 +164,9 @@ Prioritize urgent/emergent causes first when red flags are present. Normalize la
 
 Produce a comprehensive, citation-grounded report
 
-# Patient Profile
+{patient_profile}
+
+# Patient Case:
 Chief Complaint: {profile.chief_complaint}
 Symptoms: {symptoms}
 Red Flags: {red_flags}

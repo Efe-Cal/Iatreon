@@ -4,16 +4,16 @@ from dotenv import load_dotenv
 from langchain_core.tools import StructuredTool
 
 from db.models import IntakeSession, ResearchSession
-from db.db import unit_of_work, read_only_session
+from db.db import read_only_session
 from db.repositories import ArticleRepo, BookSectionRepo, WebSearchResultRepo
-from agents.shared import create_agent_by_type, web_search_tool
+from agents.shared import create_agent_by_type, get_user_info, web_search_tool
 
 
 load_dotenv()
 
 #TODO: (importance: HIGH) diagnosis agent should have a request_reseach tool instead of web_search, which would trigger a subset of the research agent (?), properly handling the sources and stuff
 
-#TODO: proper system prompt
+#TODO: (importance: HIGH-) proper system prompt
 class DiagnosisAgent():
     def __init__(self, intake_session: IntakeSession, research_session: ResearchSession | None):
         
@@ -36,6 +36,8 @@ class DiagnosisAgent():
         self.agent = create_agent_by_type("diagnosis", tools=tools, system_prompt_format=system_prompt_format)
         self.intake_session = intake_session
         self.research_session = research_session
+        
+        self.user_id = intake_session.user_id
         
 
     async def _get_full_source(self, citation_id: int):
@@ -68,9 +70,17 @@ class DiagnosisAgent():
 
     async def diagnose(self):
         logging.info("Starting diagnosis agent")
-        user_message = f"""# Patient Information
-    Chief complaint: {self.intake_session.chief_complaint or "N/A"}
-    Medical Summary: {self.intake_session.medical_summary}"""
+        
+        patient_info = await get_user_info(user_id=self.user_id)
+        
+        user_message = f"""Given the following patient profile and any relevant research findings, provide a detailed diagnosis and potential conditions that may explain the patient's symptoms. Include a rationale for your diagnosis and any recommended next steps for further evaluation or treatment.
+
+{patient_info}
+        
+# Patient Case
+Chief complaint: {self.intake_session.chief_complaint or "N/A"}
+Symptoms: {', '.join(self.intake_session.symptoms) if self.intake_session.symptoms else "N/A"}
+Medical Summary: {self.intake_session.medical_summary}"""
         if self.research_session and self.research_session.research_report:
             user_message += f"\n\n# Research Findings\n{self.research_session.research_report}"
         
