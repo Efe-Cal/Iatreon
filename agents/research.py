@@ -10,6 +10,7 @@ from langchain_core.tools import StructuredTool
 from langchain_core.messages import AIMessageChunk
 
 from agents.shared import create_agent_by_type, get_user_info
+from context.sources.openalex import OpenAlexClient
 from db.models import Article, BookSection, IntakeSession, ResearchSession, WebSearchResult
 from db.repositories import ArticleRepo, BookSectionRepo, ResearchRepo, WebSearchResultRepo
 from db.schemas import ArticleData, BookSectionData
@@ -17,13 +18,13 @@ from db.db import unit_of_work, read_only_session
 
 from context.processing.pipeline import run_pipeline
 from context.websearch import web_search, fetch_web_content
+from context.sources.get_ncbi_books import BookshelfClient
 
 load_dotenv()
 
 
-#TODO: In addition to the pipeline allow single source queries too
 #TODO: Have another agent (inference) guess some probable diseases based on the profile then use that in research agent
-# ^^ Maybe run diagnosis agent with a fast model as a middle step
+#TODO ^^ Maybe run diagnosis agent with a fast model as a middle step
 #TODO: Have "research effort" that changes the prompt (tell the model to be fast) and the model tier 
 class ResearchAgent:
     def __init__(self, research_repo: ResearchRepo, research_session_id: UUID):
@@ -47,10 +48,25 @@ class ResearchAgent:
         self.search_medical_literature_tool = StructuredTool.from_function(
             coroutine=self._search_medical_literature,
             name="search_medical_literature",
-            description="Run the medical literature search with a given query.",
         )
-
-        self.agent = create_agent_by_type("research", tools=[self.web_search_tool, self.fetch_web_content_tool, self.search_medical_literature_tool], checkpointer=self.checkpointer)
+        
+        self.book_search_tool = StructuredTool.from_function(
+            coroutine=self._book_search_tool,
+            name="book_search"
+        )
+        
+        self.openalex_search_tool = StructuredTool.from_function(
+            coroutine=self.openalex_search,
+            name="openalex_search"
+        )
+        
+        self.agent = create_agent_by_type("research", tools=[
+            self.web_search_tool,
+            self.fetch_web_content_tool,
+            self.search_medical_literature_tool,
+            self.book_search_tool,
+            self.openalex_search_tool],
+                                          checkpointer=self.checkpointer)
 
         self.article_repo = ArticleRepo()
         self.book_section_repo = BookSectionRepo()
@@ -151,6 +167,77 @@ class ResearchAgent:
 
         return "<source>\n" + content + "\n</source>"
     
+    async def _book_search_tool(self, query: str) -> str:
+        """Search for relevant book sections from NCBI Bookshelf based on a given query.
+        
+        Args:
+            query (str): The search query to find relevant book sections.
+        
+        Returns:
+            str: A formatted string containing the search results from NCBI Bookshelf.
+        """
+        
+        book_client = BookshelfClient()
+        books = await book_client.get_book_contents(query)
+        
+        async with self._citation_lock:
+            start = self.citation_num + 1
+            self.citation_num += len(books)
+        
+        async with unit_of_work() as db:
+            for i, book in enumerate(books, start=start):
+                db_section = await self.book_section_repo.upsert(db, BookSectionData(**book))
+                await self.book_section_repo.link_to_session(
+                    db=db,
+                    session_id=self.session_id,
+                    book_section_id=db_section.id,
+                    query=query,
+                    citation_num=i
+                )
+        formatted_books = "\n\n".join(
+            [
+                f"- {b['title']} ({b['url']})\nContent: {b['text']}..." for b in books
+            ]
+        )
+        return f"<source>\nBook search results for query '{query}':\n{formatted_books}\n</source>"
+            
+    async def openalex_search(self, query: str) -> str:
+        """
+        Perform a semantic search using the OpenAlex API for the given query.
+        
+        Args:
+            query (str): The search query to be sent to the OpenAlex API, which **should be a longer than a typical keyword search and more of a natural language query**
+        
+        Returns:
+            str: A formatted string containing the search results from OpenAlex.
+        """
+        open_alex_client = OpenAlexClient()
+        articles = await open_alex_client.search_directly(query=query, semantic=True)
+
+        with self._citation_lock:
+            start = self.citation_num + 1
+            self.citation_num += len(articles)
+        
+        async with unit_of_work() as db:
+            for i, article in enumerate(articles, start=start):
+                db_article = await self.article_repo.upsert(db, article)
+                await self.article_repo.link_to_session(
+                    db=db,
+                    session_id=self.session_id,
+                    article_id=db_article.id,
+                    query=query,
+                    quality_score=article.quality_score or 0.0,
+                    citation_num=i
+                )
+
+        formatted_articles = "\n\n".join(
+            [
+                f"- {a.title} ({a.doi})\nAbstract: {a.abstract}" for a in articles
+            ]
+        )
+
+        return f"<source>\nOpenAlex search results for query '{query}':\n{formatted_articles}\n</source>"
+            
     async def run(self, profile: IntakeSession) -> AsyncGenerator[dict | tuple[str, dict[int, dict]], None]:
         symptoms = ', '.join(s["name"] for s in profile.symptoms) if profile.symptoms else "None provided"
         red_flags = ', '.join(profile.red_flags) if profile.red_flags else "None provided"

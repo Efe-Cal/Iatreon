@@ -8,8 +8,10 @@ import requests
 
 from .pmc import PMCClient
 from ..processing.pdf_utils_v2 import PDFClient
+from ..processing.ranking import QualityRanker
 from ..models import Article
 from ..config import RATE_LIMIT_DELAY
+from db.db import unit_of_work
 
 load_dotenv()
 
@@ -61,11 +63,11 @@ class OpenAlexClient:
         return articles
        
 
-    async def search_directly(self, query: str, max_results: int = 10) -> list[Article]:
+    async def search_directly(self, query: str, max_results: int = 10, semantic: bool = False) -> list[Article]:
         # print(f"\n[OpenAlex] Direct search: '{query}'")
 
         params = {
-            "search": query,
+            f"search{'.semantic' if semantic else ''}": query,
             "filter": "open_access.is_oa:true",
             "per-page": max_results,
             "select": "id,title,abstract_inverted_index,doi,cited_by_count,open_access,publication_year,authorships,primary_location,type,concepts",
@@ -83,6 +85,8 @@ class OpenAlexClient:
         
         results = r.json().get("results", [])
         articles = []
+
+        quality_ranker = QualityRanker()
 
         for item in results:
             a = Article()
@@ -133,8 +137,10 @@ class OpenAlexClient:
             a.journal = source.get("display_name", "")
 
             a.keywords = [c["display_name"] for c in item.get("concepts", [])[:5]]
+            
+            a.quality_score = quality_ranker.score(a)
             articles.append(a)
-
+        
         return articles
 
     def _fetch_by_doi(self, doi: str) -> Optional[dict]:
