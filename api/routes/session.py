@@ -7,7 +7,7 @@ from db.repositories import SessionRepo
 
 router = APIRouter()
 
-@router.get("/create_session")
+@router.get("/create-session")
 async def create_session(user_id: UUID):
     async with unit_of_work() as db:
         session_repo = SessionRepo()

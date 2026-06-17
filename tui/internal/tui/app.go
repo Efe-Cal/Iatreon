@@ -126,14 +126,14 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.dashboard = updated
 
 	if m.dashboard.startIntake {
-		m.chat = m.initChat(newChatModelForAgent(AgentIntake, m.userid))
+		m.chat = m.initChat(newChatModelForAgent(AgentIntake, m.userid, ""))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = chatScreen
 		return m, m.chat.Init()
 	}
 
 	if m.dashboard.startDoctor {
-		m.chat = m.initChat(newChatModelForAgent(AgentDoctor, m.userid))
+		m.chat = m.initChat(newChatModelForAgent(AgentDoctor, m.userid, ""))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = chatScreen
 		return m, m.chat.Init()
@@ -173,7 +173,7 @@ func (m model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if h := m.chat.Agent(); h != nil {
 			kind = h.Kind()
 		}
-		m.chat = m.initChat(newChatModelForAgent(kind, m.userid))
+		m.chat = m.initChat(newChatModelForAgent(kind, m.userid, ""))
 		m.active = dashboardScreen
 		return m, nil
 	}

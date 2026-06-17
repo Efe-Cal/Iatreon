@@ -30,6 +30,7 @@ type chatModel struct {
 	agent          AgentHandler
 	userid         string
 	conversationID string
+	sessionID      string
 
 	input    textinput.Model
 	viewport viewport.Model
@@ -76,10 +77,10 @@ func generateUUID() string {
 }
 
 func newChatModel(userid string) chatModel {
-	return newChatModelForAgent(AgentIntake, userid)
+	return newChatModelForAgent(AgentIntake, userid, "")
 }
 
-func newChatModelForAgent(kind AgentKind, userid string) chatModel {
+func newChatModelForAgent(kind AgentKind, userid string, session_id string) chatModel {
 	aiRenderer, _ := glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
 		glamour.WithWordWrap(100),
@@ -102,6 +103,23 @@ func newChatModelForAgent(kind AgentKind, userid string) chatModel {
 
 	handler := newAgentHandler(kind)
 
+	if session_id == "" {
+		resp, err := http.Get(apiBaseURL + "/create-session?user_id=" + userid)
+		if err != nil {
+			log.Printf("Error creating session: %v", err)
+		} else {
+			defer resp.Body.Close()
+			type payload struct {
+				SessionID string `json:"session_id"`
+			}
+			var p payload
+			if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+				log.Printf("Error decoding session response: %v", err)
+			}
+			session_id = p.SessionID
+		}
+	}
+
 	return chatModel{
 		agent:          handler,
 		userid:         userid,
@@ -115,6 +133,7 @@ func newChatModelForAgent(kind AgentKind, userid string) chatModel {
 		aiRenderer:   aiRenderer,
 		userRenderer: userRenderer,
 		toolSpinner:  spinner.New(spinner.WithSpinner(spinner.Points)),
+		sessionID:    session_id,
 	}
 }
 
@@ -289,13 +308,13 @@ func waitForChunk(ch chan chunkMsg) tea.Cmd {
 	}
 }
 
-func streamMessage(agent AgentHandler, conversationID, userid, msg string) tea.Cmd {
+func (m *chatModel) streamMessage(agent AgentHandler, conversationID, userid, msg string) tea.Cmd {
 	return func() tea.Msg {
 		ch := make(chan chunkMsg)
 		go func() {
 			defer close(ch)
 
-			req, err := agent.BuildRequest(conversationID, userid, msg)
+			req, err := agent.BuildRequest(conversationID, userid, msg, m.sessionID)
 			if err != nil {
 				ch <- chunkMsg{err: err}
 				return
@@ -451,7 +470,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 				m.invokeAgentWithEnter = false
 				m.history = append(m.history, messageItem{role: "system", text: "Starting " + m.agent.AgentLabel() + "..."})
 				m.refreshViewport()
-				return *m, streamMessage(m.agent, m.conversationID, m.userid, "")
+				return *m, m.streamMessage(m.agent, m.conversationID, m.userid, "")
 			}
 			text := strings.TrimSpace(m.input.Value())
 			if text == "" {
@@ -461,7 +480,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			m.input.SetValue("")
 			m.isStreaming = true
 			m.refreshViewport()
-			cmds = append(cmds, streamMessage(m.agent, m.conversationID, m.userid, text))
+			cmds = append(cmds, m.streamMessage(m.agent, m.conversationID, m.userid, text))
 			cmds = append(cmds, m.spinner.Tick)
 			return *m, tea.Batch(cmds...)
 		case "esc":

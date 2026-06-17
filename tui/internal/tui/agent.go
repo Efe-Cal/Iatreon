@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 )
 
 type AgentKind int
@@ -48,7 +47,7 @@ type AgentHandler interface {
 
 	AgentLabel() string
 
-	BuildRequest(conversationID, userid, message string) (*http.Request, error)
+	BuildRequest(conversationID, userid, message, sessionID string) (*http.Request, error)
 
 	HandleEvent(ev sseEvent) chunkMsg
 }
@@ -91,13 +90,15 @@ func (*intakeHandler) Footer() []string   { return []string{"Enter Send", "Esc L
 func (*intakeHandler) Welcome() string    { return "Welcome to Iatreon. Let's start by taking an intake." }
 func (*intakeHandler) AgentLabel() string { return "Iatreon:" }
 
-func (*intakeHandler) BuildRequest(conversationID, userid, message string) (*http.Request, error) {
+func (*intakeHandler) BuildRequest(conversationID, userid, message, sessionID string) (*http.Request, error) {
 	payload := struct {
 		ConversationID string `json:"conversation_id"`
 		Message        string `json:"message"`
+		SessionID      string `json:"session_id"`
 	}{
 		ConversationID: conversationID,
 		Message:        message,
+		SessionID:      sessionID,
 	}
 	reqBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -143,13 +144,25 @@ func (*researchHandler) Welcome() string {
 }
 func (*researchHandler) AgentLabel() string { return "Researcher:" }
 
-func (*researchHandler) BuildRequest(conversationID, userid, message string) (*http.Request, error) {
-	url := fmt.Sprintf("%s/research?intake_id=%s", apiBaseURL, conversationID)
-	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(message))
+func (*researchHandler) BuildRequest(conversationID, userid, message, sessionID string) (*http.Request, error) {
+	payload := struct {
+		IntakeID  string `json:"intake_id"`
+		SessionID string `json:"session_id"`
+	}{
+		IntakeID:  conversationID,
+		SessionID: sessionID,
+	}
+
+	reqBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "text/plain")
+
+	req, err := http.NewRequest(http.MethodPost, apiBaseURL+"/research", bytes.NewReader(reqBytes))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-ID", userid)
 	return req, nil
 }
@@ -210,13 +223,26 @@ func (*diagnosisHandler) Welcome() string {
 }
 func (*diagnosisHandler) AgentLabel() string { return "Diagnostician:" }
 
-func (*diagnosisHandler) BuildRequest(conversationID, userid, message string) (*http.Request, error) {
-	url := fmt.Sprintf("%s/diagnose?intake_id=%s", apiBaseURL, conversationID)
-	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(message))
+func (*diagnosisHandler) BuildRequest(conversationID, userid, message, sessionID string) (*http.Request, error) {
+
+	payload := struct {
+		IntakeID  string `json:"intake_id"`
+		SessionID string `json:"session_id"`
+	}{
+		IntakeID:  conversationID,
+		SessionID: sessionID,
+	}
+
+	reqBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "text/plain")
+
+	req, err := http.NewRequest(http.MethodPost, apiBaseURL+"/diagnose", bytes.NewReader(reqBytes))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-ID", userid)
 	return req, nil
 }

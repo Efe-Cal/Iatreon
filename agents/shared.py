@@ -65,23 +65,23 @@ async def get_user_info(user_id: str):
         user_profile = await user_repo.get_user_profile(db, user_id)
         
         info += f"## Demographics:\n"
-        demographics = user_profile.demographics
+        demographics = user_profile["demographics"]
         for key, value in demographics.items():
             info += f"{key.capitalize()}: {value}\n"
         
-        allergies = user_profile.allergies
+        allergies = user_profile["allergies"]
         if allergies:
             info += "## Allergies:\n"
             for allergy in allergies:
                 info += f"- {allergy}\n"
         
-        medications = user_profile.medications
+        medications = user_profile["medications"]
         if medications:
             info += "## Medications:\n"
             for medication in medications:
                 info += f"- {medication}\n"
         
-        social = user_profile.social
+        social = user_profile["social"]
         if social:
             info += "## Social History:\n"
             for key, value in social.items():

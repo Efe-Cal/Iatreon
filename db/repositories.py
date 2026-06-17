@@ -313,7 +313,7 @@ class ArticleRepo:
             return existing
 
         article = Article(**payload)
-        await db.add(article)
+        db.add(article)
         await db.flush()
         return article
 
@@ -365,7 +365,7 @@ class ArticleRepo:
             quality_score=quality_score,
             citation_num=citation_num,
         )
-        await db.add(link)
+        db.add(link)
         await db.flush()
         return link
 
@@ -407,7 +407,7 @@ class BookSectionRepo:
             url=data.url,
             full_text_available=data.full_text_available,
         )
-        await db.add(section)
+        db.add(section)
         await db.flush()
         return section
 
@@ -434,7 +434,7 @@ class BookSectionRepo:
             query=query,
             citation_num=citation_num
         )
-        await db.add(link)
+        db.add(link)
         await db.flush()
         return link
         
@@ -473,7 +473,7 @@ class WebSearchResultRepo:
             highlights=highlights,
             full_content=full_content,
         )
-        await db.add(result)
+        db.add(result)
         await db.flush()
         return result
 
@@ -494,7 +494,7 @@ class WebSearchResultRepo:
             web_search_result_id=web_search_result_id,
             citation_num=citation_num,
         )
-        await db.add(link)
+        db.add(link)
         await db.flush()
         return link
 
@@ -518,9 +518,8 @@ class UserRepo:
     
     async def create_user(self, db: AsyncSession, ssh_key: str) -> User:
         user = User(ssh_key=ssh_key)
-        await db.add(user)
-        await db.commit()
-        await db.refresh(user)
+        db.add(user)
+        await db.flush()
         return user
 
     async def get_user_id_by_ssh_key(self, db: AsyncSession, ssh_key: str) -> uuid.UUID | None:
@@ -541,7 +540,7 @@ class UserRepo:
             profile_dict = profile_data.model_dump()
             profile_dict.pop("user_id", None)
             user_profile = UserProfile(user_id=profile_data.user_id, **profile_dict)
-            await db.add(user_profile)
+            db.add(user_profile)
         else:
             for field, value in profile_data.model_dump().items():
                 setattr(user_profile, field, value)
@@ -554,7 +553,7 @@ class SessionRepo:
         if isinstance(user_id, str):
             user_id = uuid.UUID(user_id)
         session = ChatSession(user_id=user_id)
-        await db.add(session)
+        db.add(session)
         await db.flush()
         return session
 
