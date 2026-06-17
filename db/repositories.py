@@ -1,5 +1,3 @@
-from calendar import c
-
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
@@ -13,6 +11,7 @@ from .models import (
     SessionBookSection,
     User,
     UserProfile,
+    ChatSession,
     WebSearchResult,
     SessionWebSearchResult,
 )
@@ -548,3 +547,41 @@ class UserRepo:
                 setattr(user_profile, field, value)
         await db.flush()
         return user_profile
+
+
+class SessionRepo:
+    async def create_session(self, db: AsyncSession, user_id: uuid.UUID) -> ChatSession:
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+        session = ChatSession(user_id=user_id)
+        await db.add(session)
+        await db.flush()
+        return session
+
+    async def get_session(self, db: AsyncSession, user_id: uuid.UUID, session_id: uuid.UUID) -> ChatSession | None:
+        if isinstance(session_id, str):
+            session_id = uuid.UUID(session_id)
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+        session = await db.get(ChatSession, session_id)
+        if session is None or session.user_id != user_id:
+            return None
+        return session
+
+    async def link_intake_session(self, db: AsyncSession, user_id: uuid.UUID, session_id: uuid.UUID, intake_session_id: uuid.UUID) -> ChatSession | None:
+        session = await self.get_session(db, user_id, session_id)
+        if session is None:
+            return None
+        session.intake_session_id = intake_session_id
+        await db.flush()
+        return session
+
+    async def link_research_session(self, db: AsyncSession, user_id: uuid.UUID, session_id: uuid.UUID, research_session_id: uuid.UUID) -> ChatSession | None:
+        session = await self.get_session(db, user_id, session_id)
+        if session is None:
+            return None
+        session.research_session_id = research_session_id
+        await db.flush()
+        return session
+    
+    

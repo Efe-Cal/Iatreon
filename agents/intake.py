@@ -49,7 +49,6 @@ def _iter_stream_text(content: str | list[dict] | None):
         if block.get("type") == "text" and block.get("text"):
             yield block["text"]
 
-#TODO: Take demographics at the start before starting intake, no chat approach, then pass demographics to intake agent.
 async def run_intake_cli(message: str, conversation_id: str, user_id: str) -> AsyncGenerator[str | dict | tuple[IntakeProfile, list[dict[str, str]]], None]:
     config: RunnableConfig = {"configurable": {"thread_id": conversation_id}}
     messages = [

@@ -25,6 +25,20 @@ class UserProfile(Base):
     medical_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow, onupdate=datetime.utcnow)
 
+class ChatSession(Base):
+    __tablename__ = "user_sessions"
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
+    intake_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("intake_sessions.id"), default=None
+    )
+    research_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("research_sessions.id"), default=None
+    )
+    intake_session: Mapped[Optional["IntakeSession"]] = relationship(foreign_keys=[intake_session_id], default=None)
+    research_session: Mapped[Optional["ResearchSession"]] = relationship(foreign_keys=[research_session_id], default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
+
 class IntakeSession(Base):
     __tablename__ = "intake_sessions"
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id"))
@@ -42,7 +56,7 @@ class ResearchSession(Base):
     __tablename__ = "research_sessions"
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id"))
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
-    intake_session_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("intake_sessions.id"), default=None)
+    intake_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid(as_uuid=True), ForeignKey("intake_sessions.id"), default=None)
     articles: Mapped[list["SessionArticle"]] = relationship(back_populates="session", default_factory=list, cascade="all, delete-orphan")
     books: Mapped[list["SessionBookSection"]] = relationship(back_populates="session", default_factory=list, cascade="all, delete-orphan")
     web_search_results: Mapped[list["SessionWebSearchResult"]] = relationship(back_populates="session", default_factory=list, cascade="all, delete-orphan")
@@ -59,7 +73,6 @@ class WebSearchResult(Base):
     highlights: Mapped[Optional[str]] = mapped_column(Text, default="")
     full_content: Mapped[Optional[str]] = mapped_column(Text, default="")
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
-
 
 class Article(Base):
     __tablename__ = "articles"
@@ -93,7 +106,6 @@ class BookSection(Base):
     url: Mapped[Optional[str]] = mapped_column(String)
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
     full_text_available: Mapped[bool] = mapped_column(Boolean, default=False)
-
 
 class SessionArticle(Base):
     __tablename__ = "session_articles"
