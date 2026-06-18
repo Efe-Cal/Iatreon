@@ -88,3 +88,19 @@ async def get_user_info(user_id: str):
                 info += f"{key.capitalize()}: {value}\n"
         
         return info
+
+def _iter_stream_text(content: str | list[dict] | None):
+    if isinstance(content, str):
+        if content:
+            yield content
+        return
+
+    if not isinstance(content, list):
+        return
+
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+
+        if block.get("type") == "text" and block.get("text"):
+            yield block["text"]

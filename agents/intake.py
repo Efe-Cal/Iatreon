@@ -7,7 +7,7 @@ from langchain.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import RunnableConfig
 
-from agents.shared import create_agent_by_type, get_model, get_user_info
+from agents.shared import create_agent_by_type, get_model, get_user_info, _iter_stream_text
 from db.schemas import IntakeProfile
 from agents.inference import run_inference
 
@@ -33,21 +33,6 @@ checkpointer = InMemorySaver()
 agent = create_agent_by_type("intake", tools=[end_of_intake, infer_condition], checkpointer=checkpointer)
 
 #TODO: Have the model NOT produce an output normally in conversation. all we need will be produced at structured call
-def _iter_stream_text(content: str | list[dict] | None):
-    if isinstance(content, str):
-        if content:
-            yield content
-        return
-
-    if not isinstance(content, list):
-        return
-
-    for block in content:
-        if not isinstance(block, dict):
-            continue
-
-        if block.get("type") == "text" and block.get("text"):
-            yield block["text"]
 
 async def run_intake_cli(message: str, conversation_id: str, user_id: str) -> AsyncGenerator[str | dict | tuple[IntakeProfile, list[dict[str, str]]], None]:
     config: RunnableConfig = {"configurable": {"thread_id": conversation_id}}
