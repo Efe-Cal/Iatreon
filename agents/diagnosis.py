@@ -5,9 +5,9 @@ from langchain_core.tools import StructuredTool
 
 from db.models import IntakeSession, ResearchSession
 from db.db import read_only_session
-from db.repositories import ArticleRepo, BookSectionRepo, WebSearchResultRepo
+from db.repositories import ArticleRepo, BookSectionRepo, IntakeRepo, ResearchRepo, WebSearchResultRepo
 from agents.shared import create_agent_by_type, get_user_info, web_search_tool
-
+from db.schemas import DiagnosisReport
 
 load_dotenv()
 
@@ -33,7 +33,11 @@ class DiagnosisAgent():
   - Input parameters: `citation_id` (the citation number of the research finding, as provided in the research report's References section)
   - Output: The full content of the research finding's source\n""" if research_session else ""
         
-        self.agent = create_agent_by_type("diagnosis", tools=tools, system_prompt_format=system_prompt_format)
+        self.agent = create_agent_by_type("diagnosis", 
+                                          tools=tools, 
+                                          system_prompt_format=system_prompt_format,
+                                          response_format=DiagnosisReport)
+
         self.intake_session = intake_session
         self.research_session = research_session
         
@@ -87,4 +91,25 @@ Medical Summary: {self.intake_session.medical_summary}"""
         logging.debug(f"Diagnosis agent input message: {user_message}")
         
         response = await self.agent.ainvoke(user_message)
+        print(response["structured_response"])
         return response["messages"][-1].content
+    
+
+if __name__ == "__main__":
+    import asyncio
+    from uuid import UUID
+    
+    async def main():
+        # Example usage
+        intake_session_id = UUID("your-intake-session-uuid-here")
+        research_session_id = UUID("your-research-session-uuid-here")  # Optional, can be None
+        
+        async with read_only_session() as db:
+            intake_session = await IntakeRepo().get_session(db, intake_session_id)
+            research_session = await ResearchRepo().get_research_session(db, research_session_id) if research_session_id else None
+            
+            diagnosis_agent = DiagnosisAgent(intake_session, research_session)
+            diagnosis_report = await diagnosis_agent.diagnose()
+            print(diagnosis_report)
+    
+    asyncio.run(main())

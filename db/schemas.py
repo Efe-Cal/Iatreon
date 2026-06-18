@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional
+from typing import Literal, Optional
 
 class Symptom(BaseModel):
     name: str = Field(..., description="The name of the symptom")
@@ -26,6 +26,25 @@ class IntakeProfile(BaseModel):
     family_history: str = Field(..., description="The family history of the patient")
     red_flags: list[str] = Field(..., description="The red flags of the patient (e.g., shortness of breath, chest pain, etc.)")
     medical_summary: str = Field(..., description="An extensive and detailed summary of the patient's medical information. It MUST BE in Markdown format, structured with headings and bullet points for clarity.")
+
+class DifferentialItem(BaseModel):
+    condition: str
+    likelihood: Literal["primary", "possible", "unlikely_but_considered"]
+    supporting_evidence: list[str] = Field(default_factory=list)
+    against_evidence: list[str] = Field(default_factory=list)
+ 
+ 
+class DiagnosisReport(BaseModel):
+    primary_diagnosis: str
+    confidence: Literal["high", "moderate", "low"]
+    differential: list[DifferentialItem] = Field(default_factory=list)
+    reasoning_summary: str = Field(
+        description="Short clinical reasoning narrative tying evidence to conclusion"
+    )
+    recommended_next_steps: list[str] = Field(default_factory=list)
+    red_flags_to_monitor: list[str] = Field(
+        default_factory=list, description="Symptoms that should trigger urgent care if they appear"
+    )
 
 class ArticleData(BaseModel):
     pubmed_id: Optional[str] = Field(None, description="The PubMed ID for the article, if available")
