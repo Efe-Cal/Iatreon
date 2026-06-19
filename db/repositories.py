@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
 import uuid
 from .models import (
+    DoctorSession,
     IntakeSession,
     Article,
     ResearchSession,
@@ -62,7 +63,7 @@ class IntakeRepo:
         await db.flush()
         return session
 
-    async def update_session(self, db: AsyncSession, session_id: uuid.UUID, profile: IntakeProfile, transcript: list):
+    async def update_session(self, db: AsyncSession, session_id: uuid.UUID, profile: IntakeProfile, conversation_thread_id: str):
         session = await db.get(IntakeSession, session_id)
         if session.user_id != self.user_id:
             return "Error: Unauthorized"
@@ -70,7 +71,7 @@ class IntakeRepo:
         session.symptoms = [s.model_dump() for s in profile.symptoms]
         session.red_flags = profile.red_flags
         session.medical_summary = profile.medical_summary
-        session.raw_transcript = self._serialize_transcript(transcript)
+        session.thread_id = conversation_thread_id
         await db.flush()
         return "OK"
 
@@ -566,21 +567,41 @@ class SessionRepo:
         if session is None or session.user_id != user_id:
             return None
         return session
-
-    async def link_intake_session(self, db: AsyncSession, user_id: uuid.UUID, session_id: uuid.UUID, intake_session_id: uuid.UUID) -> ChatSession | None:
+    
+    async def link_session(self, db: AsyncSession, user_id: uuid.UUID, session_id: uuid.UUID, session_to_link: IntakeSession | ResearchSession | DoctorSession) -> ChatSession:
         session = await self.get_session(db, user_id, session_id)
         if session is None:
             return None
-        session.intake_session_id = intake_session_id
+        
+        if isinstance(session_to_link, IntakeSession):
+            session.intake_session_id = session_to_link.id
+        elif isinstance(session_to_link, ResearchSession):
+            session.research_session_id = session_to_link.id
+        elif isinstance(session_to_link, DoctorSession):
+            session.doctor_session_id = session_to_link.id
+        else:
+            raise ValueError("Invalid session type to link")
+        
+        await db.flush()
+        return session
+    
+class DoctorRepo:
+    async def create_doctor_session(self, db: AsyncSession, user_id: uuid.UUID, chat_session_id: uuid.UUID, thread_id: str) -> DoctorSession:
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+        if isinstance(chat_session_id, str):
+            chat_session_id = uuid.UUID(chat_session_id)
+        session = DoctorSession(user_id=user_id, chat_session_id=chat_session_id, thread_id=thread_id)
+        db.add(session)
         await db.flush()
         return session
 
-    async def link_research_session(self, db: AsyncSession, user_id: uuid.UUID, session_id: uuid.UUID, research_session_id: uuid.UUID) -> ChatSession | None:
-        session = await self.get_session(db, user_id, session_id)
-        if session is None:
+    async def get_doctor_session(self, db: AsyncSession, user_id: uuid.UUID, session_id: uuid.UUID) -> DoctorSession | None:
+        if isinstance(session_id, str):
+            session_id = uuid.UUID(session_id)
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+        session = await db.get(DoctorSession, session_id)
+        if session is None or session.user_id != user_id:
             return None
-        session.research_session_id = research_session_id
-        await db.flush()
         return session
-    
-    

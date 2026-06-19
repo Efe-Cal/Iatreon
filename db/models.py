@@ -26,7 +26,7 @@ class UserProfile(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow, onupdate=datetime.utcnow)
 
 class ChatSession(Base):
-    __tablename__ = "user_sessions"
+    __tablename__ = "chat_sessions"
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id"))
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
     intake_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
@@ -35,8 +35,12 @@ class ChatSession(Base):
     research_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("research_sessions.id"), default=None
     )
+    doctor_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("doctor_sessions.id"), default=None
+    )
     intake_session: Mapped[Optional["IntakeSession"]] = relationship(foreign_keys=[intake_session_id], default=None)
     research_session: Mapped[Optional["ResearchSession"]] = relationship(foreign_keys=[research_session_id], default=None)
+    doctor_session: Mapped[Optional["DoctorSession"]] = relationship(foreign_keys=[doctor_session_id], default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
 
 class IntakeSession(Base):
@@ -47,7 +51,8 @@ class IntakeSession(Base):
     symptoms: Mapped[Optional[list]] = mapped_column(JSON, default_factory=list)
     red_flags: Mapped[Optional[list]] = mapped_column(JSON, default_factory=list)
     medical_summary: Mapped[Optional[str]] = mapped_column(Text, default=None)
-    raw_transcript: Mapped[Optional[list]] = mapped_column(JSON, default_factory=list)
+    # raw_transcript: Mapped[Optional[list]] = mapped_column(JSON, default_factory=list)
+    thread_id: Mapped[Optional[str]] = mapped_column(String, default=None)
     status: Mapped[str] = mapped_column(String, default="in_progress")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
@@ -63,6 +68,13 @@ class ResearchSession(Base):
     research_report: Mapped[Optional[str]] = mapped_column(Text, default=None)
     citations: Mapped[Optional[dict[int, dict]]] = mapped_column(JSON, default_factory=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
+
+class DoctorSession(Base):
+    __tablename__ = "doctor_sessions"
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id"))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
+    chat_session_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("chat_sessions.id"), default=None)
+    thread_id: Mapped[str] = mapped_column(String, default=None)
 
 class WebSearchResult(Base):
     __tablename__ = "web_search_results"

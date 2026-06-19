@@ -8,8 +8,10 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import RunnableConfig
 
 from agents.shared import create_agent_by_type, get_model, get_user_info, _iter_stream_text
-from db.schemas import IntakeProfile
 from agents.inference import run_inference
+
+from db.schemas import IntakeProfile
+from db.db import checkpointer_manager
 
 from .mock_patient import mock_patient_response
 
@@ -28,7 +30,7 @@ async def infer_condition(summary: str) -> str:
     
     return await run_inference(summary)
 
-checkpointer = InMemorySaver()
+checkpointer = checkpointer_manager.get_checkpointer()
 
 agent = create_agent_by_type("intake", tools=[end_of_intake, infer_condition], checkpointer=checkpointer)
 
@@ -87,7 +89,7 @@ async def run_intake_cli(message: str, conversation_id: str, user_id: str) -> As
             final_patient_data = await structured_model.ainvoke(conversation_state.values["messages"])
 
             yield f"I have compiled the final patient data."
-            yield final_patient_data, conversation_state.values["messages"]
+            yield final_patient_data, conversation_state.config["configurable"]["thread_id"]
         except Exception as e:
             print(f"\nFailed to generate final report: {e}")
 

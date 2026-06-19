@@ -2,8 +2,9 @@ from langchain.messages import HumanMessage, AIMessage
 from agents.shared import get_model
 
 
-patient_model = get_model("intake", temperature=1)
-
+patient_model = get_model("intake", temperature=1.2)
+patient_model.cache = False
+patient_model.top_p = 0.95
 
 async def mock_patient_response(messages):
     messages.pop(0)

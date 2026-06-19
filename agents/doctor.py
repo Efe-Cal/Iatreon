@@ -1,4 +1,3 @@
-import os
 from typing import AsyncGenerator
 from dotenv import load_dotenv
 
@@ -8,10 +7,11 @@ from langgraph.config import RunnableConfig
 
 from agents.shared import create_agent_by_type, get_user_info, _iter_stream_text
 from db.schemas import IntakeProfile
+from db.db import checkpointer_manager
 
 load_dotenv()
 
-checkpointer = InMemorySaver()
+checkpointer = checkpointer_manager.get_checkpointer()
 
 
 class DoctorAgent:
