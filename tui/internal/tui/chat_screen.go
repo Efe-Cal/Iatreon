@@ -283,10 +283,12 @@ func (m *chatModel) refreshViewport(scrollToBottom ...bool) {
 }
 
 type chunkMsg struct {
-	content string
-	err     error
-	done    bool
-	ch      chan chunkMsg
+	content        string
+	err            error
+	done           bool
+	sessionID      string
+	conversationID string
+	ch             chan chunkMsg
 	toolMessage
 }
 
@@ -364,7 +366,7 @@ func (m *chatModel) streamMessage(agent AgentHandler, conversationID, userid, ms
 					ch <- out
 					return
 				}
-				if out.content != "" || out.toolMessage.toolID != "" {
+				if out.content != "" || out.toolMessage.toolID != "" || out.sessionID != "" || out.conversationID != "" {
 					out.ch = ch
 					ch <- out
 				}
@@ -399,6 +401,15 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		return *m, tea.Batch(cmds...)
 
 	case chunkMsg:
+		if msg.sessionID != "" {
+			m.sessionID = msg.sessionID
+		}
+		if msg.conversationID != "" {
+			m.conversationID = msg.conversationID
+		}
+		if msg.err == nil && !msg.done && msg.content == "" && msg.toolMessage.toolID == "" {
+			return *m, waitForChunk(msg.ch)
+		}
 		if msg.err != nil {
 			m.history = append(m.history, messageItem{role: "system", text: "❌ **Error:** " + msg.err.Error()})
 			m.isStreaming = false

@@ -16,12 +16,14 @@ async def stream_doctor_chat(chat_request: ChatRequest, user_id: str) -> AsyncIt
 
     if not chat_request.conversation_id:
         chat_request.conversation_id = uuid.uuid4()
-        
+    
     doctor_agent = DoctorAgent()
     
     async with unit_of_work() as db:
         doctor_session: DoctorSession = await doctor_repo.create_doctor_session(db, user_id, chat_request.session_id, chat_request.conversation_id)
         await chat_session_repo.link_session(db, user_id, chat_request.session_id, doctor_session)
     
-    async for event in doctor_agent.run_doctor():
+    yield {"type": "session_started", "session_id": doctor_session.id, "conversation_id": chat_request.conversation_id}
+
+    async for event in doctor_agent.run_doctor(chat_request.message, doctor_session.id, user_id):
         yield event

@@ -59,12 +59,14 @@ type AgentHandler interface {
 //	{"type": "tool_end",       "name": "..."}
 //	{"type": "intake_complete","profile": {...}, "transcript": "..."}
 type sseEvent struct {
-	Type       string          `json:"type"`
-	Content    string          `json:"content"`
-	Name       string          `json:"name"`
-	Profile    json.RawMessage `json:"profile"`
-	Data       json.RawMessage `json:"data"`
-	ToolCallID string          `json:"tool_call_id"`
+	Type           string          `json:"type"`
+	Content        string          `json:"content"`
+	Name           string          `json:"name"`
+	Profile        json.RawMessage `json:"profile"`
+	Data           json.RawMessage `json:"data"`
+	ToolCallID     string          `json:"tool_call_id"`
+	SessionID      string          `json:"session_id"`
+	ConversationID string          `json:"conversation_id"`
 }
 
 func newAgentHandler(kind AgentKind) AgentHandler {
@@ -126,6 +128,8 @@ func (*intakeHandler) HandleEvent(ev sseEvent) chunkMsg {
 		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: true}}
 	case "tool_end":
 		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: false}}
+	case "session_started":
+		return chunkMsg{sessionID: ev.SessionID, conversationID: ev.ConversationID}
 	}
 	return chunkMsg{}
 }
