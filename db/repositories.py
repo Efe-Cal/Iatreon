@@ -577,8 +577,6 @@ class SessionRepo:
             session.intake_session_id = session_to_link.id
         elif isinstance(session_to_link, ResearchSession):
             session.research_session_id = session_to_link.id
-        elif isinstance(session_to_link, DoctorSession):
-            session.doctor_session_id = session_to_link.id
         else:
             raise ValueError("Invalid session type to link")
         

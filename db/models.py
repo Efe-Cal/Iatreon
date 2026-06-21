@@ -35,12 +35,12 @@ class ChatSession(Base):
     research_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("research_sessions.id"), default=None
     )
-    doctor_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("doctor_sessions.id"), default=None
-    )
     intake_session: Mapped[Optional["IntakeSession"]] = relationship(foreign_keys=[intake_session_id], default=None)
     research_session: Mapped[Optional["ResearchSession"]] = relationship(foreign_keys=[research_session_id], default=None)
-    doctor_session: Mapped[Optional["DoctorSession"]] = relationship(foreign_keys=[doctor_session_id], default=None)
+    doctor_session: Mapped[Optional["DoctorSession"]] = relationship(
+        "DoctorSession", back_populates="chat_session", foreign_keys="[DoctorSession.chat_session_id]",
+        primaryjoin="ChatSession.id == DoctorSession.chat_session_id", default=None, uselist=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
 
 class IntakeSession(Base):
@@ -75,6 +75,7 @@ class DoctorSession(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
     chat_session_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("chat_sessions.id"), default=None)
     thread_id: Mapped[str] = mapped_column(String, default=None)
+    chat_session: Mapped[Optional["ChatSession"]] = relationship(back_populates="doctor_session", foreign_keys=[chat_session_id], default=None)
 
 class WebSearchResult(Base):
     __tablename__ = "web_search_results"
