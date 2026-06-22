@@ -466,6 +466,11 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			m.invokeAgentWithEnter = true
 			m.UpdateFooter("Enter Start Diagnosis agent", 0)
 			return *m, nil
+		case AgentDiagnosis:
+			m.agent = newAgentHandler(AgentDoctor)
+			m.invokeAgentWithEnter = true
+			m.UpdateFooter("Enter Start Doctor agent", 0)
+			return *m, nil
 		}
 
 	case tea.KeyMsg:

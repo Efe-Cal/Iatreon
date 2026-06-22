@@ -75,6 +75,8 @@ func newAgentHandler(kind AgentKind) AgentHandler {
 		return &diagnosisHandler{}
 	case AgentResearch:
 		return &researchHandler{}
+	case AgentDoctor:
+		return &doctorHandler{}
 	default:
 		return &intakeHandler{}
 	}
@@ -267,6 +269,61 @@ func (*diagnosisHandler) HandleEvent(ev sseEvent) chunkMsg {
 			content: fmt.Sprintf("\n\n✅ **Diagnosis complete.** See the report below.\n\n**Report:**\n%s", data.Report),
 			done:    true,
 		}
+	case "message":
+		return chunkMsg{content: ev.Content}
+	case "tool_start":
+		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: true}}
+	case "tool_end":
+		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: false}}
+	}
+
+	if len(ev.Type) == 0 && len(ev.Content) > 0 {
+		return chunkMsg{content: ev.Content}
+	}
+	return chunkMsg{}
+}
+
+type doctorHandler struct{}
+
+func (*doctorHandler) Kind() AgentKind { return AgentDoctor }
+func (*doctorHandler) Header() string  { return "Iatreon - Doctor" }
+func (*doctorHandler) Footer() []string {
+	return []string{"Enter Send", "Esc Logout", "Ctrl+C Quit"}
+}
+func (*doctorHandler) Welcome() string {
+	return "You are now connected to a doctor. Please describe your symptoms."
+}
+func (*doctorHandler) AgentLabel() string { return "Doctor:" }
+
+func (*doctorHandler) BuildRequest(conversationID, userid, message, sessionID string) (*http.Request, error) {
+	payload := struct {
+		ConversationID string `json:"conversation_id"`
+		Message        string `json:"message"`
+		SessionID      string `json:"session_id"`
+	}{
+		ConversationID: conversationID,
+		Message:        message,
+		SessionID:      sessionID,
+	}
+
+	reqBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, apiBaseURL+"/chat/doctor", bytes.NewReader(reqBytes))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-ID", userid)
+	return req, nil
+}
+
+func (*doctorHandler) HandleEvent(ev sseEvent) chunkMsg {
+	switch ev.Type {
+	case "session_started":
+		return chunkMsg{sessionID: ev.SessionID, conversationID: ev.ConversationID}
 	case "message":
 		return chunkMsg{content: ev.Content}
 	case "tool_start":
