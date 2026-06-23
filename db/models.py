@@ -11,11 +11,13 @@ class User(Base):
     email: Mapped[Optional[str]] = mapped_column(String, unique=True, default="")
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
     ssh_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True, default="")
+    encrypted_data_key: Mapped[Optional[str]] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
 
 class UserProfile(Base):
     __tablename__ = "user_profile"
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id"), primary_key=True)
+    encrypted_payload: Mapped[Optional[str]] = mapped_column(Text, default=None)
     demographics: Mapped[Optional[dict]] = mapped_column(JSON, default=None)
     pmh: Mapped[Optional[list]] = mapped_column(JSON, default_factory=list)
     medications: Mapped[Optional[list]] = mapped_column(JSON, default_factory=list)
@@ -47,6 +49,7 @@ class IntakeSession(Base):
     __tablename__ = "intake_sessions"
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id"))
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
+    encrypted_payload: Mapped[Optional[str]] = mapped_column(Text, default=None)
     chief_complaint: Mapped[Optional[str]] = mapped_column(Text, default=None)
     symptoms: Mapped[Optional[list]] = mapped_column(JSON, default_factory=list)
     red_flags: Mapped[Optional[list]] = mapped_column(JSON, default_factory=list)
@@ -61,6 +64,7 @@ class ResearchSession(Base):
     __tablename__ = "research_sessions"
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id"))
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
+    encrypted_payload: Mapped[Optional[str]] = mapped_column(Text, default=None)
     intake_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid(as_uuid=True), ForeignKey("intake_sessions.id"), default=None)
     articles: Mapped[list["SessionArticle"]] = relationship(back_populates="session", default_factory=list, cascade="all, delete-orphan")
     books: Mapped[list["SessionBookSection"]] = relationship(back_populates="session", default_factory=list, cascade="all, delete-orphan")

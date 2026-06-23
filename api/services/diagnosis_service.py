@@ -14,7 +14,7 @@ async def stream_diagnosis(intake_id: str, user_id: str) -> AsyncIterable:
         if not intake_session:
             raise HTTPException(status_code=404, detail="Intake session not found.")
 
-        if intake_session.user_id != user_id:
+        if str(intake_session.user_id) != str(user_id):
             raise HTTPException(status_code=403, detail="Forbidden: You do not have access to this intake session.")
 
         research_session = await ResearchRepo(user_id).get_research_session_by_intake_id(db, intake_session.id)

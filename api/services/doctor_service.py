@@ -9,7 +9,7 @@ from db.models import DoctorSession
 from db.repositories import DoctorRepo
 from db.db import unit_of_work
 
-async def stream_doctor_chat(chat_request: ChatRequest, user_id: str) -> AsyncIterable[dict]:
+async def stream_doctor_chat_service(chat_request: ChatRequest, user_id: str) -> AsyncIterable[dict]:
     
     doctor_repo = DoctorRepo(user_id)
 

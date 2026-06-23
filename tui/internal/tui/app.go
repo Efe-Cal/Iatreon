@@ -21,21 +21,26 @@ type screenChrome interface {
 }
 
 type model struct {
-	active    screen
-	dashboard dashboardModel
-	setup     setupModel
-	chat      chatModel
-	width     int
-	height    int
-	userid    string
+	active     screen
+	dashboard  dashboardModel
+	setup      setupModel
+	chat       chatModel
+	width      int
+	height     int
+	userid     string
+	sessionKey *SessionKey
 }
 
 const headerFooterHeight = 3
 
-func NewModel(userid string, hasProfile bool) model {
+func NewModel(userid string, hasProfile bool, sessionKey ...*SessionKey) model {
+	var key *SessionKey
+	if len(sessionKey) > 0 {
+		key = sessionKey[0]
+	}
 	dash := newDashboardModel(userid)
-	setup := newSetupModel(userid)
-	chat := newChatModel(userid)
+	setup := newSetupModel(userid, key)
+	chat := newChatModel(userid, key)
 
 	var active screen
 	if hasProfile {
@@ -45,11 +50,12 @@ func NewModel(userid string, hasProfile bool) model {
 	}
 
 	m := model{
-		active:    active,
-		dashboard: dash,
-		setup:     setup,
-		chat:      chat,
-		userid:    userid,
+		active:     active,
+		dashboard:  dash,
+		setup:      setup,
+		chat:       chat,
+		userid:     userid,
+		sessionKey: key,
 	}
 
 	m.dashboard.SetHeader("Iatreon - Dashboard")
@@ -65,6 +71,10 @@ func (m model) Init() tea.Cmd {
 	return m.setup.Init()
 }
 
+func (m *model) wipeSessionKey() {
+	m.sessionKey.Wipe()
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
 		chromeH := headerFooterHeight
@@ -77,6 +87,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "ctrl+c" {
+		m.wipeSessionKey()
 		return m, tea.Quit
 	}
 
@@ -126,21 +137,21 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.dashboard = updated
 
 	if m.dashboard.startIntake {
-		m.chat = m.initChat(newChatModelForAgent(AgentIntake, m.userid, ""))
+		m.chat = m.initChat(newChatModelForAgent(AgentIntake, m.userid, "", m.sessionKey))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = chatScreen
 		return m, m.chat.Init()
 	}
 
 	if m.dashboard.startDoctor {
-		m.chat = m.initChat(newChatModelForAgent(AgentDoctor, m.userid, ""))
+		m.chat = m.initChat(newChatModelForAgent(AgentDoctor, m.userid, "", m.sessionKey))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = chatScreen
 		return m, m.chat.Init()
 	}
 
 	if m.dashboard.goToSetup {
-		m.setup = m.initSetup(newSetupModel(m.userid))
+		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = setupScreen
 		return m, m.setup.Init()
@@ -155,7 +166,7 @@ func (m model) updateSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if m.setup.submitted {
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
-		m.setup = m.initSetup(newSetupModel(m.userid))
+		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey))
 		m.active = dashboardScreen
 		return m, nil
 	}
@@ -173,7 +184,7 @@ func (m model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if h := m.chat.Agent(); h != nil {
 			kind = h.Kind()
 		}
-		m.chat = m.initChat(newChatModelForAgent(kind, m.userid, ""))
+		m.chat = m.initChat(newChatModelForAgent(kind, m.userid, "", m.sessionKey))
 		m.active = dashboardScreen
 		return m, nil
 	}

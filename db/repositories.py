@@ -1,5 +1,6 @@
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 from datetime import datetime, timedelta
 import uuid
 from .models import (
@@ -17,6 +18,39 @@ from .models import (
     SessionWebSearchResult,
 )
 from .schemas import BookSectionData, IntakeProfile, ArticleData, UserProfileData
+from .crypto import decrypt_json, encrypt_json, new_data_key, unwrap_data_key, wrap_data_key, zero_bytes
+
+
+async def _get_user_data_key(db: AsyncSession, user_id: uuid.UUID) -> bytearray:
+    if isinstance(user_id, str):
+        user_id = uuid.UUID(user_id)
+    user = await db.get(User, user_id)
+    if user is None:
+        raise ValueError('user not found')
+    if not user.encrypted_data_key:
+        data_key = new_data_key()
+        try:
+            user.encrypted_data_key = wrap_data_key(data_key, user.id)
+        finally:
+            zero_bytes(data_key)
+        await db.flush()
+    return unwrap_data_key(user.encrypted_data_key, user.id)
+
+
+async def _encrypt_record_payload(db: AsyncSession, user_id: uuid.UUID, purpose: str, payload: dict) -> str:
+    data_key = await _get_user_data_key(db, user_id)
+    try:
+        return encrypt_json(data_key, user_id, purpose, payload)
+    finally:
+        zero_bytes(data_key)
+
+
+async def _decrypt_record_payload(db: AsyncSession, user_id: uuid.UUID, purpose: str, encrypted_payload: str) -> dict:
+    data_key = await _get_user_data_key(db, user_id)
+    try:
+        return decrypt_json(data_key, user_id, purpose, encrypted_payload)
+    finally:
+        zero_bytes(data_key)
 
 
 def _normalize_unique_identifier(value: str | None) -> str | None:
@@ -33,6 +67,15 @@ class IntakeRepo:
     def __init__(self, user_id: str):
         self.user_id = uuid.UUID(user_id)
 
+    async def _hydrate_session(self, db: AsyncSession, session: IntakeSession | None) -> IntakeSession | None:
+        if session is None or not session.encrypted_payload:
+            return session
+        payload = await _decrypt_record_payload(db, self.user_id, f'intake-session:{session.id}', session.encrypted_payload)
+        for field in ('chief_complaint', 'symptoms', 'red_flags', 'medical_summary', 'thread_id', 'status', 'completed_at'):
+            if field in payload:
+                set_committed_value(session, field, payload[field])
+        return session
+
     @staticmethod
     def _serialize_transcript(transcript: list) -> list[dict]:
         serialized_transcript = []
@@ -46,7 +89,7 @@ class IntakeRepo:
         return serialized_transcript
 
     async def create_session(self, db: AsyncSession) -> IntakeSession:
-        session = IntakeSession(user_id=self.user_id, status="in_progress", raw_transcript=[])
+        session = IntakeSession(user_id=self.user_id, status="in_progress")
         db.add(session)
         await db.flush()
         return session
@@ -58,7 +101,7 @@ class IntakeRepo:
                 raise ValueError("Unauthorized: User ID mismatch")
             return session
         
-        session = IntakeSession(id=session_id, user_id=self.user_id, status="in_progress", raw_transcript=[])
+        session = IntakeSession(id=session_id, user_id=self.user_id, status="in_progress")
         db.add(session)
         await db.flush()
         return session
@@ -67,11 +110,25 @@ class IntakeRepo:
         session = await db.get(IntakeSession, session_id)
         if session.user_id != self.user_id:
             return "Error: Unauthorized"
-        session.chief_complaint = profile.chief_complaint
-        session.symptoms = [s.model_dump() for s in profile.symptoms]
-        session.red_flags = profile.red_flags
-        session.medical_summary = profile.medical_summary
-        session.thread_id = conversation_thread_id
+        session.encrypted_payload = await _encrypt_record_payload(
+            db,
+            self.user_id,
+            f'intake-session:{session.id}',
+            {
+                'chief_complaint': profile.chief_complaint,
+                'symptoms': [s.model_dump() for s in profile.symptoms],
+                'red_flags': profile.red_flags,
+                'medical_summary': profile.medical_summary,
+                'thread_id': conversation_thread_id,
+                'status': session.status,
+                'completed_at': session.completed_at,
+            },
+        )
+        session.chief_complaint = None
+        session.symptoms = []
+        session.red_flags = []
+        session.medical_summary = None
+        session.thread_id = None
         await db.flush()
         return "OK"
 
@@ -81,6 +138,11 @@ class IntakeRepo:
             return "Error: Unauthorized"
         session.status = "complete"
         session.completed_at = datetime.utcnow()
+        if session.encrypted_payload:
+            payload = await _decrypt_record_payload(db, self.user_id, f'intake-session:{session.id}', session.encrypted_payload)
+            payload['status'] = session.status
+            payload['completed_at'] = session.completed_at
+            session.encrypted_payload = await _encrypt_record_payload(db, self.user_id, f'intake-session:{session.id}', payload)
         await db.flush()
         return "OK"
 
@@ -90,12 +152,21 @@ class IntakeRepo:
 
         session = await db.get(IntakeSession, session_id)
         if session and session.user_id == self.user_id:
-            return session
+            return await self._hydrate_session(db, session)
         return None
 
 class ResearchRepo:
     def __init__(self, user_id: str):
         self.user_id = uuid.UUID(user_id)
+
+    async def _hydrate_session(self, db: AsyncSession, session: ResearchSession | None) -> ResearchSession | None:
+        if session is None or not session.encrypted_payload:
+            return session
+        payload = await _decrypt_record_payload(db, self.user_id, f'research-session:{session.id}', session.encrypted_payload)
+        for field in ('research_report', 'citations'):
+            if field in payload:
+                set_committed_value(session, field, payload[field])
+        return session
 
     async def create_research_session(self, db: AsyncSession, intake_session_id: uuid.UUID) -> ResearchSession:
         session = ResearchSession(user_id=self.user_id, intake_session_id=intake_session_id)
@@ -115,9 +186,21 @@ class ResearchRepo:
             return None
 
         if research_report is not None:
-            session.research_report = research_report
+            set_committed_value(session, 'research_report', research_report)
         if citations is not None:
-            session.citations = citations
+            set_committed_value(session, 'citations', citations)
+
+        session.encrypted_payload = await _encrypt_record_payload(
+            db,
+            self.user_id,
+            f'research-session:{session.id}',
+            {
+                'research_report': session.research_report,
+                'citations': session.citations,
+            },
+        )
+        session.research_report = None
+        session.citations = {}
 
         await db.flush()
         return session
@@ -128,7 +211,7 @@ class ResearchRepo:
         
         session = await db.get(ResearchSession, session_id)
         if session and session.user_id == self.user_id:
-            return session
+            return await self._hydrate_session(db, session)
         return None
 
     async def get_research_session_by_intake_id(self, db: AsyncSession, intake_session_id: uuid.UUID) -> ResearchSession | None:
@@ -139,7 +222,7 @@ class ResearchRepo:
             ResearchSession.intake_session_id == intake_session_id,
             ResearchSession.user_id == self.user_id,
         )
-        return (await db.execute(stmt)).scalar_one_or_none()
+        return await self._hydrate_session(db, (await db.execute(stmt)).scalar_one_or_none())
 
     async def link_article(self, db: AsyncSession, session_id: uuid.UUID, article_id: uuid.UUID, query: str, quality_score: float | None = None) -> SessionArticle:
         existing_stmt = select(SessionArticle).where(
@@ -526,28 +609,68 @@ class UserRepo:
     async def get_user_id_by_ssh_key(self, db: AsyncSession, ssh_key: str) -> uuid.UUID | None:
         stmt = select(User.id).where(User.ssh_key == ssh_key)
         return (await db.execute(stmt)).scalar_one_or_none()
+
+    async def has_user_profile(self, db: AsyncSession, user_id: uuid.UUID) -> bool:
+        stmt = select(UserProfile.user_id).where(UserProfile.user_id == user_id)
+        return (await db.execute(stmt)).scalar_one_or_none() is not None
+
+    async def initialize_user_encryption(self, db: AsyncSession, user_id: uuid.UUID) -> None:
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+        user = await db.get(User, user_id)
+        if user is None:
+            raise ValueError('user not found')
+        if user.encrypted_data_key:
+            unwrap_data_key(user.encrypted_data_key, user.id)
+            return
+        data_key = new_data_key()
+        try:
+            user.encrypted_data_key = wrap_data_key(data_key, user.id)
+        finally:
+            zero_bytes(data_key)
+        await db.flush()
+
+    async def _get_user_data_key(self, db: AsyncSession, user_id: uuid.UUID) -> bytearray:
+        return await _get_user_data_key(db, user_id)
     
     async def get_user_profile(self, db: AsyncSession, user_id: uuid.UUID) -> dict:
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
         stmt = select(UserProfile).where(UserProfile.user_id == user_id)
         user_profile = (await db.execute(stmt)).scalar_one_or_none()
         if user_profile is None:
             return {}
+        if user_profile.encrypted_payload:
+            data_key = await self._get_user_data_key(db, user_id)
+            try:
+                return decrypt_json(data_key, user_id, 'user-profile', user_profile.encrypted_payload)
+            finally:
+                zero_bytes(data_key)
         return UserProfileData.model_validate(user_profile).model_dump()
 
     async def update_user_profile(self, db: AsyncSession, profile_data: UserProfileData) -> UserProfile:
         stmt = select(UserProfile).where(UserProfile.user_id == profile_data.user_id)
         user_profile = (await db.execute(stmt)).scalar_one_or_none()
+        profile_dict = profile_data.model_dump()
+        data_key = await self._get_user_data_key(db, profile_data.user_id)
+        try:
+            encrypted_payload = encrypt_json(data_key, profile_data.user_id, 'user-profile', profile_dict)
+        finally:
+            zero_bytes(data_key)
         if user_profile is None:
-            profile_dict = profile_data.model_dump()
-            profile_dict.pop("user_id", None)
-            user_profile = UserProfile(user_id=profile_data.user_id, **profile_dict)
+            user_profile = UserProfile(user_id=profile_data.user_id, encrypted_payload=encrypted_payload)
             db.add(user_profile)
         else:
-            for field, value in profile_data.model_dump().items():
-                setattr(user_profile, field, value)
+            user_profile.encrypted_payload = encrypted_payload
+            user_profile.demographics = None
+            user_profile.pmh = []
+            user_profile.medications = []
+            user_profile.allergies = []
+            user_profile.family_history = []
+            user_profile.social = None
+            user_profile.medical_summary = None
         await db.flush()
         return user_profile
-
 
 class SessionRepo:
     async def create_session(self, db: AsyncSession, user_id: uuid.UUID) -> ChatSession:

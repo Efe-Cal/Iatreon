@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,7 +48,7 @@ type AgentHandler interface {
 
 	AgentLabel() string
 
-	BuildRequest(conversationID, userid, message, sessionID string) (*http.Request, error)
+	BuildRequest(conversationID, userid, message, sessionID string, sessionKey []byte) (*http.Request, error)
 
 	HandleEvent(ev sseEvent) chunkMsg
 }
@@ -94,7 +95,7 @@ func (*intakeHandler) Footer() []string   { return []string{"Enter Send", "Esc L
 func (*intakeHandler) Welcome() string    { return "Welcome to Iatreon. Let's start by taking an intake." }
 func (*intakeHandler) AgentLabel() string { return "Iatreon:" }
 
-func (*intakeHandler) BuildRequest(conversationID, userid, message, sessionID string) (*http.Request, error) {
+func (*intakeHandler) BuildRequest(conversationID, userid, message, sessionID string, sessionKey []byte) (*http.Request, error) {
 	payload := struct {
 		ConversationID string `json:"conversation_id"`
 		Message        string `json:"message"`
@@ -114,6 +115,7 @@ func (*intakeHandler) BuildRequest(conversationID, userid, message, sessionID st
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-ID", userid)
+	addSessionKeyHeader(req, sessionKey)
 	return req, nil
 }
 
@@ -150,7 +152,7 @@ func (*researchHandler) Welcome() string {
 }
 func (*researchHandler) AgentLabel() string { return "Researcher:" }
 
-func (*researchHandler) BuildRequest(conversationID, userid, message, sessionID string) (*http.Request, error) {
+func (*researchHandler) BuildRequest(conversationID, userid, message, sessionID string, sessionKey []byte) (*http.Request, error) {
 	payload := struct {
 		IntakeID  string `json:"intake_id"`
 		SessionID string `json:"session_id"`
@@ -170,6 +172,7 @@ func (*researchHandler) BuildRequest(conversationID, userid, message, sessionID 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-ID", userid)
+	addSessionKeyHeader(req, sessionKey)
 	return req, nil
 }
 
@@ -229,7 +232,7 @@ func (*diagnosisHandler) Welcome() string {
 }
 func (*diagnosisHandler) AgentLabel() string { return "Diagnostician:" }
 
-func (*diagnosisHandler) BuildRequest(conversationID, userid, message, sessionID string) (*http.Request, error) {
+func (*diagnosisHandler) BuildRequest(conversationID, userid, message, sessionID string, sessionKey []byte) (*http.Request, error) {
 
 	payload := struct {
 		IntakeID  string `json:"intake_id"`
@@ -250,6 +253,7 @@ func (*diagnosisHandler) BuildRequest(conversationID, userid, message, sessionID
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-ID", userid)
+	addSessionKeyHeader(req, sessionKey)
 	return req, nil
 }
 
@@ -295,7 +299,7 @@ func (*doctorHandler) Welcome() string {
 }
 func (*doctorHandler) AgentLabel() string { return "Doctor:" }
 
-func (*doctorHandler) BuildRequest(conversationID, userid, message, sessionID string) (*http.Request, error) {
+func (*doctorHandler) BuildRequest(conversationID, userid, message, sessionID string, sessionKey []byte) (*http.Request, error) {
 	payload := struct {
 		ConversationID string `json:"conversation_id"`
 		Message        string `json:"message"`
@@ -317,6 +321,7 @@ func (*doctorHandler) BuildRequest(conversationID, userid, message, sessionID st
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-ID", userid)
+	addSessionKeyHeader(req, sessionKey)
 	return req, nil
 }
 
@@ -336,6 +341,13 @@ func (*doctorHandler) HandleEvent(ev sseEvent) chunkMsg {
 		return chunkMsg{content: ev.Content}
 	}
 	return chunkMsg{}
+}
+
+func addSessionKeyHeader(req *http.Request, sessionKey []byte) {
+	if len(sessionKey) == 0 {
+		return
+	}
+	req.Header.Set("X-Session-Key", base64.StdEncoding.EncodeToString(sessionKey))
 }
 
 func sharedHTTPDo(req *http.Request) (*http.Response, error) {

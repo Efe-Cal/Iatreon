@@ -30,10 +30,11 @@ const (
 )
 
 type setupModel struct {
-	step   setupStep
-	userid string
-	width  int
-	height int
+	step       setupStep
+	userid     string
+	sessionKey *SessionKey
+	width      int
+	height     int
 
 	// Form fields
 	age         textinput.Model
@@ -65,7 +66,7 @@ func (m *setupModel) SetFooter(a []string) { m.footerActions = a }
 func (m setupModel) GetHeader() string     { return m.headerText }
 func (m setupModel) GetFooter() []string   { return m.footerActions }
 
-func newSetupModel(userid string) setupModel {
+func newSetupModel(userid string, sessionKey *SessionKey) setupModel {
 	// Age input
 	age := textinput.New()
 	age.Placeholder = "e.g. 35"
@@ -119,6 +120,7 @@ func newSetupModel(userid string) setupModel {
 	return setupModel{
 		step:             stepLanding,
 		userid:           userid,
+		sessionKey:       sessionKey,
 		age:              age,
 		gender:           gender,
 		pmh:              pmh,
@@ -188,8 +190,14 @@ func submitProfile(userid string, m setupModel) tea.Cmd {
 			return profileSubmittedMsg{err: err}
 		}
 
-		url := "http://localhost:8000/user-profile"
-		resp, err := http.Post(url, "application/json", bytes.NewReader(jsonData))
+		req, err := http.NewRequest(http.MethodPost, "http://localhost:8000/user-profile", bytes.NewReader(jsonData))
+		if err != nil {
+			return profileSubmittedMsg{err: err}
+		}
+		req.Header.Set("Content-Type", "application/json")
+		addSessionKeyHeader(req, m.sessionKey.Get())
+
+		resp, err := sharedHTTPDo(req)
 		if err != nil {
 			return profileSubmittedMsg{err: err}
 		}

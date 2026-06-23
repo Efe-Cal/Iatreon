@@ -31,6 +31,7 @@ type chatModel struct {
 	userid         string
 	conversationID string
 	sessionID      string
+	sessionKey     *SessionKey
 
 	input    textinput.Model
 	viewport viewport.Model
@@ -76,11 +77,11 @@ func generateUUID() string {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-func newChatModel(userid string) chatModel {
-	return newChatModelForAgent(AgentIntake, userid, "")
+func newChatModel(userid string, sessionKey *SessionKey) chatModel {
+	return newChatModelForAgent(AgentIntake, userid, "", sessionKey)
 }
 
-func newChatModelForAgent(kind AgentKind, userid string, session_id string) chatModel {
+func newChatModelForAgent(kind AgentKind, userid string, session_id string, sessionKey *SessionKey) chatModel {
 	aiRenderer, _ := glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
 		glamour.WithWordWrap(100),
@@ -104,19 +105,25 @@ func newChatModelForAgent(kind AgentKind, userid string, session_id string) chat
 	handler := newAgentHandler(kind)
 
 	if session_id == "" {
-		resp, err := http.Get(apiBaseURL + "/create-session?user_id=" + userid)
+		req, err := http.NewRequest(http.MethodGet, apiBaseURL+"/create-session?user_id="+userid, nil)
 		if err != nil {
-			log.Printf("Error creating session: %v", err)
+			log.Printf("Error building session request: %v", err)
 		} else {
-			defer resp.Body.Close()
-			type payload struct {
-				SessionID string `json:"session_id"`
+			addSessionKeyHeader(req, sessionKey.Get())
+			resp, err := sharedHTTPDo(req)
+			if err != nil {
+				log.Printf("Error creating session: %v", err)
+			} else {
+				defer resp.Body.Close()
+				type payload struct {
+					SessionID string `json:"session_id"`
+				}
+				var p payload
+				if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+					log.Printf("Error decoding session response: %v", err)
+				}
+				session_id = p.SessionID
 			}
-			var p payload
-			if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
-				log.Printf("Error decoding session response: %v", err)
-			}
-			session_id = p.SessionID
 		}
 	}
 
@@ -134,6 +141,7 @@ func newChatModelForAgent(kind AgentKind, userid string, session_id string) chat
 		userRenderer: userRenderer,
 		toolSpinner:  spinner.New(spinner.WithSpinner(spinner.Points)),
 		sessionID:    session_id,
+		sessionKey:   sessionKey,
 	}
 }
 
@@ -316,7 +324,7 @@ func (m *chatModel) streamMessage(agent AgentHandler, conversationID, userid, ms
 		go func() {
 			defer close(ch)
 
-			req, err := agent.BuildRequest(conversationID, userid, msg, m.sessionID)
+			req, err := agent.BuildRequest(conversationID, userid, msg, m.sessionID, m.sessionKey.Get())
 			if err != nil {
 				ch <- chunkMsg{err: err}
 				return

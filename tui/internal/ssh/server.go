@@ -3,8 +3,12 @@ package ssh
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,13 +23,20 @@ import (
 	"github.com/charmbracelet/wish/activeterm"
 	"github.com/charmbracelet/wish/bubbletea"
 	"github.com/charmbracelet/wish/logging"
+	"golang.org/x/crypto/hkdf"
 	gossh "golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 
 	"tui/internal/tui"
 )
 
 type User struct {
 	ID         string `json:"user_id"`
+	HasProfile bool   `json:"has_profile"`
+}
+
+type unlockResponse struct {
+	Status     string `json:"status"`
 	HasProfile bool   `json:"has_profile"`
 }
 
@@ -57,6 +68,93 @@ func getUserWithPubKey(ctx ssh.Context, key ssh.PublicKey) bool {
 	return true
 }
 
+func deriveSessionKEK(s ssh.Session, userID string) ([]byte, error) {
+	if !ssh.AgentRequested(s) {
+		return nil, fmt.Errorf("SSH agent forwarding is required; reconnect with ssh -A")
+	}
+
+	l, err := ssh.NewAgentListener()
+	if err != nil {
+		return nil, err
+	}
+	defer l.Close()
+	go ssh.ForwardAgentConnections(l, s)
+
+	conn, err := net.Dial("unix", l.Addr().String())
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	client := agent.NewClient(conn)
+	pub := s.PublicKey()
+	keys, err := client.List()
+	if err != nil {
+		return nil, err
+	}
+
+	var agentKey *agent.Key
+	for _, key := range keys {
+		if bytes.Equal(key.Marshal(), pub.Marshal()) {
+			agentKey = key
+			break
+		}
+	}
+	if agentKey == nil {
+		return nil, fmt.Errorf("authenticated SSH key is not available in the forwarded agent")
+	}
+
+	pubHash := sha256.Sum256(pub.Marshal())
+	challenge := []byte("iatreon:ssh-agent-kek:v1:" + userID + ":" + base64.RawURLEncoding.EncodeToString(pubHash[:]))
+
+	sig1, err := client.Sign(agentKey, challenge)
+	if err != nil {
+		return nil, err
+	}
+	sig2, err := client.Sign(agentKey, challenge)
+	if err != nil {
+		return nil, err
+	}
+	sigBytes1 := gossh.Marshal(sig1)
+	sigBytes2 := gossh.Marshal(sig2)
+	if !bytes.Equal(sigBytes1, sigBytes2) {
+		return nil, fmt.Errorf("SSH key produced non-deterministic signatures; use an Ed25519 or deterministic RSA agent key for database unlock")
+	}
+	if err := pub.Verify(challenge, sig1); err != nil {
+		return nil, fmt.Errorf("agent signature verification failed: %w", err)
+	}
+
+	reader := hkdf.New(sha256.New, sigBytes1, pubHash[:], []byte("iatreon-db-kek-v1:"+userID))
+	kek := make([]byte, 32)
+	if _, err := io.ReadFull(reader, kek); err != nil {
+		return nil, err
+	}
+	return kek, nil
+}
+
+func unlockUserSession(userID string, sessionKEK []byte) (bool, error) {
+	req, err := http.NewRequest(http.MethodPost, "http://localhost:8000/user/session?user_id="+userID, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("X-Session-Key", base64.StdEncoding.EncodeToString(sessionKEK))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("unlock failed: %s", resp.Status)
+	}
+
+	var payload unlockResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return false, err
+	}
+	return payload.HasProfile, nil
+}
+
 func teaHandler(s ssh.Session) (tea.Model, []tea.ProgramOption) {
 	_, _, active := s.Pty()
 
@@ -70,10 +168,27 @@ func teaHandler(s ssh.Session) (tea.Model, []tea.ProgramOption) {
 		wish.Fatalln(s, "Error: No user ID in session context.")
 		return nil, nil
 	}
-	hasProfileStr, _ := s.Permissions().Extensions["has_profile"]
-	hasProfile := hasProfileStr == "true"
 
-	model := tui.NewModel(userID, hasProfile)
+	sessionKEK, err := deriveSessionKEK(s, userID)
+	if err != nil {
+		wish.Fatalln(s, "Error: "+err.Error())
+		return nil, nil
+	}
+	hasProfile, err := unlockUserSession(userID, sessionKEK)
+	if err != nil {
+		for i := range sessionKEK {
+			sessionKEK[i] = 0
+		}
+		wish.Fatalln(s, "Error: "+err.Error())
+		return nil, nil
+	}
+	sessionKeyObj := tui.NewSessionKey(sessionKEK)
+	go func() {
+		<-s.Context().Done()
+		sessionKeyObj.Wipe()
+	}()
+
+	model := tui.NewModel(userID, hasProfile, sessionKeyObj)
 	return model, []tea.ProgramOption{tea.WithAltScreen()}
 }
 
