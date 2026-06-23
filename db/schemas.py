@@ -1,4 +1,5 @@
 from uuid import UUID
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal, Optional
@@ -26,6 +27,24 @@ class IntakeProfile(BaseModel):
     family_history: str = Field(..., description="The family history of the patient")
     red_flags: list[str] = Field(..., description="The red flags of the patient (e.g., shortness of breath, chest pain, etc.)")
     medical_summary: str = Field(..., description="An extensive and detailed summary of the patient's medical information. It MUST BE in Markdown format, structured with headings and bullet points for clarity.")
+
+class IntakeSessionData(BaseModel):
+    id: UUID
+    user_id: UUID
+    chief_complaint: Optional[str] = None
+    symptoms: list[dict] = Field(default_factory=list)
+    red_flags: list[str] = Field(default_factory=list)
+    medical_summary: Optional[str] = None
+    thread_id: Optional[str] = None
+    status: str = "in_progress"
+    completed_at: Optional[datetime] = None
+
+class ResearchSessionData(BaseModel):
+    id: UUID
+    user_id: UUID
+    intake_session_id: Optional[UUID] = None
+    research_report: Optional[str] = None
+    citations: dict[int, dict] = Field(default_factory=dict)
 
 class DifferentialItem(BaseModel):
     condition: str

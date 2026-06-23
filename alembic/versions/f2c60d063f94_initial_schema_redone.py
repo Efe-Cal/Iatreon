@@ -1,8 +1,8 @@
-"""initial postgres schema
+"""initial schema; redone
 
-Revision ID: 2cb3fba87cc2
+Revision ID: f2c60d063f94
 Revises: 
-Create Date: 2026-06-14 15:22:22.232894
+Create Date: 2026-06-23 19:43:03.582439
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '2cb3fba87cc2'
+revision: str = 'f2c60d063f94'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -63,6 +63,7 @@ def upgrade() -> None:
     sa.Column('email', sa.String(), nullable=True),
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('ssh_key', sa.Text(), nullable=False),
+    sa.Column('encrypted_data_key', sa.Text(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('email'),
@@ -81,11 +82,7 @@ def upgrade() -> None:
     op.create_table('intake_sessions',
     sa.Column('user_id', sa.Uuid(), nullable=False),
     sa.Column('id', sa.Uuid(), nullable=False),
-    sa.Column('chief_complaint', sa.Text(), nullable=True),
-    sa.Column('symptoms', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-    sa.Column('red_flags', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-    sa.Column('medical_summary', sa.Text(), nullable=True),
-    sa.Column('raw_transcript', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('encrypted_payload', sa.Text(), nullable=True),
     sa.Column('status', sa.String(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
@@ -94,13 +91,7 @@ def upgrade() -> None:
     )
     op.create_table('user_profile',
     sa.Column('user_id', sa.Uuid(), nullable=False),
-    sa.Column('demographics', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-    sa.Column('pmh', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-    sa.Column('medications', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-    sa.Column('allergies', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-    sa.Column('family_history', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-    sa.Column('social', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-    sa.Column('medical_summary', sa.Text(), nullable=True),
+    sa.Column('encrypted_payload', sa.Text(), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
     sa.PrimaryKeyConstraint('user_id')
@@ -108,42 +99,31 @@ def upgrade() -> None:
     op.create_table('research_sessions',
     sa.Column('user_id', sa.Uuid(), nullable=False),
     sa.Column('id', sa.Uuid(), nullable=False),
-    sa.Column('intake_session_id', sa.Uuid(), nullable=False),
-    sa.Column('research_report', sa.Text(), nullable=True),
-    sa.Column('citations', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('encrypted_payload', sa.Text(), nullable=True),
+    sa.Column('intake_session_id', sa.Uuid(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.ForeignKeyConstraint(['intake_session_id'], ['intake_sessions.id'], ),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_table('session_articles',
-    sa.Column('query', sa.Text(), nullable=False),
-    sa.Column('session_id', sa.Uuid(), nullable=False),
-    sa.Column('article_id', sa.Uuid(), nullable=False),
+    op.create_table('chat_sessions',
+    sa.Column('user_id', sa.Uuid(), nullable=False),
     sa.Column('id', sa.Uuid(), nullable=False),
-    sa.Column('quality_score', sa.Float(), nullable=True),
-    sa.Column('citation_num', sa.Integer(), nullable=True),
-    sa.ForeignKeyConstraint(['article_id'], ['articles.id'], ),
-    sa.ForeignKeyConstraint(['session_id'], ['research_sessions.id'], ),
+    sa.Column('intake_session_id', sa.Uuid(), nullable=True),
+    sa.Column('research_session_id', sa.Uuid(), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+    sa.ForeignKeyConstraint(['intake_session_id'], ['intake_sessions.id'], ),
+    sa.ForeignKeyConstraint(['research_session_id'], ['research_sessions.id'], ),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_table('session_book_sections',
-    sa.Column('query', sa.Text(), nullable=False),
-    sa.Column('session_id', sa.Uuid(), nullable=False),
-    sa.Column('book_section_id', sa.Uuid(), nullable=False),
+    op.create_table('doctor_sessions',
+    sa.Column('user_id', sa.Uuid(), nullable=False),
     sa.Column('id', sa.Uuid(), nullable=False),
-    sa.Column('citation_num', sa.Integer(), nullable=True),
-    sa.ForeignKeyConstraint(['book_section_id'], ['book_sections.id'], ),
-    sa.ForeignKeyConstraint(['session_id'], ['research_sessions.id'], ),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_table('session_web_search_results',
-    sa.Column('session_id', sa.Uuid(), nullable=False),
-    sa.Column('web_search_result_id', sa.Uuid(), nullable=False),
-    sa.Column('id', sa.Uuid(), nullable=False),
-    sa.Column('citation_num', sa.Integer(), nullable=True),
-    sa.ForeignKeyConstraint(['session_id'], ['research_sessions.id'], ),
-    sa.ForeignKeyConstraint(['web_search_result_id'], ['web_search_results.id'], ),
+    sa.Column('chat_session_id', sa.Uuid(), nullable=False),
+    sa.Column('thread_id', sa.String(), nullable=False),
+    sa.ForeignKeyConstraint(['chat_session_id'], ['chat_sessions.id'], ),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     # ### end Alembic commands ###
@@ -152,9 +132,8 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Downgrade schema."""
     # ### commands auto generated by Alembic - please adjust! ###
-    op.drop_table('session_web_search_results')
-    op.drop_table('session_book_sections')
-    op.drop_table('session_articles')
+    op.drop_table('doctor_sessions')
+    op.drop_table('chat_sessions')
     op.drop_table('research_sessions')
     op.drop_table('user_profile')
     op.drop_table('intake_sessions')

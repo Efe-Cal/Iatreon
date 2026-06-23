@@ -1,13 +1,13 @@
 import logging
 from dotenv import load_dotenv
+from uuid import UUID
 
 from langchain_core.tools import StructuredTool
 
-from db.models import IntakeSession, ResearchSession
 from db.db import read_only_session
 from db.repositories import ArticleRepo, BookSectionRepo, IntakeRepo, ResearchRepo, WebSearchResultRepo
 from agents.shared import create_agent_by_type, get_user_info, web_search_tool
-from db.schemas import DiagnosisReport
+from db.schemas import DiagnosisReport, IntakeSessionData, ResearchSessionData
 
 load_dotenv()
 
@@ -15,7 +15,7 @@ load_dotenv()
 
 #TODO: (importance: HIGH-) proper system prompt
 class DiagnosisAgent():
-    def __init__(self, intake_session: IntakeSession, research_session: ResearchSession | None):
+    def __init__(self, intake_session: IntakeSessionData, research_session: ResearchSessionData | None):
         
         self.get_full_source_tool = StructuredTool.from_function(
             func=self._get_full_source,
@@ -46,13 +46,13 @@ class DiagnosisAgent():
 
     async def _get_full_source(self, citation_id: int):
         async with read_only_session() as db:
-            source_info = self.research_session.citations.get(citation_id)
+            source_info = self.research_session.citations.get(citation_id) or self.research_session.citations.get(str(citation_id))
             
             if not source_info:
                 return f"No source found for citation ID {citation_id}"
             
             source_type = source_info.get("type")
-            source_id = source_info.get("id")
+            source_id = UUID(str(source_info.get("id")))
             
             #TODO: use the markdown util for sources 
             if source_type == "article":
@@ -77,13 +77,18 @@ class DiagnosisAgent():
         
         patient_info = await get_user_info(user_id=self.user_id)
         
+        symptoms = ', '.join(
+            symptom.get("name", str(symptom)) if isinstance(symptom, dict) else str(symptom)
+            for symptom in self.intake_session.symptoms
+        ) if self.intake_session.symptoms else "N/A"
+
         user_message = f"""Given the following patient profile and any relevant research findings, provide a detailed diagnosis and potential conditions that may explain the patient's symptoms. Include a rationale for your diagnosis and any recommended next steps for further evaluation or treatment.
 
 {patient_info}
         
 # Patient Case
 Chief complaint: {self.intake_session.chief_complaint or "N/A"}
-Symptoms: {', '.join(self.intake_session.symptoms) if self.intake_session.symptoms else "N/A"}
+Symptoms: {symptoms}
 Medical Summary: {self.intake_session.medical_summary}"""
         if self.research_session and self.research_session.research_report:
             user_message += f"\n\n# Research Findings\n{self.research_session.research_report}"

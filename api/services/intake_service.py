@@ -28,8 +28,7 @@ async def stream_intake_chat(chat_request: ChatRequest, user_id: str) -> AsyncIt
     async for chunk in run_intake_cli(chat_request.message, str(intake_session_id), user_id):
         if isinstance(chunk, tuple) and len(chunk) == 2 and isinstance(chunk[0], IntakeProfile):
             async with unit_of_work() as db:
-                await intake_repo.update_session(db, intake_session_id, profile=chunk[0], conversation_thread_id=chunk[1])
-                await intake_repo.complete_session(db, intake_session_id)
+                await intake_repo.complete_session(db, intake_session_id, profile=chunk[0], conversation_thread_id=chunk[1])
             yield {"type": "intake_complete", "profile": chunk[0].model_dump() if hasattr(chunk[0], "model_dump") else chunk[0], "transcript": chunk[1]}
         elif isinstance(chunk, dict):
             yield chunk

@@ -1,8 +1,8 @@
 from typing import AsyncIterable
 
 from db.db import read_only_session
-from db.models import IntakeSession
 from db.repositories import IntakeRepo, ResearchRepo
+from db.schemas import IntakeSessionData
 from agents.diagnosis import DiagnosisAgent
 
 from fastapi import HTTPException
@@ -10,7 +10,7 @@ from fastapi import HTTPException
 async def stream_diagnosis(intake_id: str, user_id: str) -> AsyncIterable:
 
     async with read_only_session() as db:
-        intake_session: IntakeSession = await IntakeRepo(user_id).get_session(db,intake_id)
+        intake_session: IntakeSessionData = await IntakeRepo(user_id).get_session(db,intake_id)
         if not intake_session:
             raise HTTPException(status_code=404, detail="Intake session not found.")
 

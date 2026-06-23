@@ -13,7 +13,6 @@ router = APIRouter()
 
 class DiagnosisRequest(BaseModel):
     intake_id: UUID
-    session_id: UUID
 
 
 @router.post('/diagnose', response_class=EventSourceResponse)

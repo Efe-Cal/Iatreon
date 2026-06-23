@@ -11,10 +11,10 @@ from langchain_core.messages import AIMessageChunk
 
 from agents.shared import create_agent_by_type, get_user_info
 from context.sources.openalex import OpenAlexClient
-from db.models import Article, BookSection, IntakeSession, ResearchSession, WebSearchResult
+from db.models import Article, BookSection, WebSearchResult
 from db.repositories import ArticleRepo, BookSectionRepo, ResearchRepo, WebSearchResultRepo
-from db.schemas import ArticleData, BookSectionData
-from db.db import unit_of_work, read_only_session
+from db.schemas import ArticleData, BookSectionData, IntakeSessionData
+from db.db import unit_of_work
 
 from context.processing.pipeline import run_pipeline
 from context.websearch import web_search, fetch_web_content
@@ -74,6 +74,7 @@ class ResearchAgent:
 
         #TODO: DB-assigned sequence: make citation_num an auto-increment per research_session_id
         self.citation_num = 0
+        self._citation_lookup: dict[int, dict] = {}
         self._citation_lock = asyncio.Lock()
     
     async def _web_search(self, query: str) -> str:
@@ -94,12 +95,7 @@ class ResearchAgent:
                     highlights="\n".join(result.get("highlights", [])),
                     full_content=None,
                 )
-                await self.web_search_result_repo.link_to_session(
-                    db=db,
-                    session_id=self.session_id,
-                    web_search_result_id=db_result.id,
-                    citation_num=citation_num
-                )
+                await self._record_citation(citation_num, "web_search_result", db_result, query=query)
 
         formatted_results = "\n\n".join(
             [
@@ -143,13 +139,12 @@ class ResearchAgent:
             for i, article in enumerate(articles, start=start):
                 content += f"[{i}] {article['title']} ({article['journal']}, {article['year']}, Citations: {article['citation_count']})\nAuthors: {', '.join(article['authors'])}\nAbstract: {article['abstract']}\n\n"
                 db_article = await self.article_repo.upsert(db, ArticleData(**article))
-                await self.article_repo.link_to_session(
-                    db=db,
-                    session_id=self.session_id,
-                    article_id=db_article.id,
+                await self._record_citation(
+                    i,
+                    "article",
+                    db_article,
                     query=query,
                     quality_score=article.get("quality_score", 0.0) or 0.0,
-                    citation_num=i
                 )
 
             if books:
@@ -157,13 +152,7 @@ class ResearchAgent:
                 for i, book in enumerate(books, start + len(articles)):
                     content += f"[{i}] {book['title']}\nContent: {book['text']}\n\n"
                     db_section = await self.book_section_repo.upsert(db, BookSectionData(**book))
-                    await self.book_section_repo.link_to_session(
-                        db=db,
-                        session_id=self.session_id,
-                        book_section_id=db_section.id,
-                        query=query,
-                        citation_num=i
-                    )
+                    await self._record_citation(i, "book_section", db_section, query=query)
 
         return "<source>\n" + content + "\n</source>"
     
@@ -187,13 +176,7 @@ class ResearchAgent:
         async with unit_of_work() as db:
             for i, book in enumerate(books, start=start):
                 db_section = await self.book_section_repo.upsert(db, BookSectionData(**book))
-                await self.book_section_repo.link_to_session(
-                    db=db,
-                    session_id=self.session_id,
-                    book_section_id=db_section.id,
-                    query=query,
-                    citation_num=i
-                )
+                await self._record_citation(i, "book_section", db_section, query=query)
         formatted_books = "\n\n".join(
             [
                 f"- {b['title']} ({b['url']})\nContent: {b['text']}..." for b in books
@@ -214,20 +197,19 @@ class ResearchAgent:
         open_alex_client = OpenAlexClient()
         articles = await open_alex_client.search_directly(query=query, semantic=True)
 
-        with self._citation_lock:
+        async with self._citation_lock:
             start = self.citation_num + 1
             self.citation_num += len(articles)
         
         async with unit_of_work() as db:
             for i, article in enumerate(articles, start=start):
                 db_article = await self.article_repo.upsert(db, article)
-                await self.article_repo.link_to_session(
-                    db=db,
-                    session_id=self.session_id,
-                    article_id=db_article.id,
+                await self._record_citation(
+                    i,
+                    "article",
+                    db_article,
                     query=query,
                     quality_score=article.quality_score or 0.0,
-                    citation_num=i
                 )
 
         formatted_articles = "\n\n".join(
@@ -238,7 +220,7 @@ class ResearchAgent:
 
         return f"<source>\nOpenAlex search results for query '{query}':\n{formatted_articles}\n</source>"
             
-    async def run(self, profile: IntakeSession) -> AsyncGenerator[dict | tuple[str, dict[int, dict]], None]:
+    async def run(self, profile: IntakeSessionData) -> AsyncGenerator[dict | tuple[str, dict[int, dict]], None]:
         symptoms = ', '.join(s["name"] for s in profile.symptoms) if profile.symptoms else "None provided"
         red_flags = ', '.join(profile.red_flags) if profile.red_flags else "None provided"
         medical_summary = profile.medical_summary if profile.medical_summary else "None provided"
@@ -295,45 +277,29 @@ Medical Summary: {medical_summary}
         yield (research_report, citations)
     
     
-    async def _get_citation_lookup(self) -> dict[int, tuple[str, Article | BookSection | WebSearchResult]]:
-        async with read_only_session() as db:
-            sources = await self.research_repo.get_all_session_sources(db=db, session_id=self.session_id)
-            lookup: dict[int, tuple[str, Article | BookSection | WebSearchResult]] = {}
-
-            for source_type, source_rows in sources.items():
-                for source, citation_num in source_rows:
-                    if citation_num is None:
-                        continue
-                    lookup[int(citation_num)] = (source_type, source)
-
-            return lookup
-
-    def _serialize_citation(self, citation_num: int, source_type: str, source: Article | BookSection | WebSearchResult) -> dict:
-        if source_type == "articles":
-            return {
-                "citation_num": citation_num,
-                "source_type": source_type,
-                "source_id": str(source.id),
-                "title": source.title,
-                "doi": source.doi,
-            }
-
-        if source_type == "book_sections":
-            return {
-                "citation_num": citation_num,
-                "source_type": source_type,
-                "source_id": str(source.id),
-                "title": source.title,
-                "url": source.url,
-            }
-
-        return {
+    async def _record_citation(
+        self,
+        citation_num: int,
+        source_type: str,
+        source: Article | BookSection | WebSearchResult,
+        query: str,
+        quality_score: float | None = None,
+    ) -> None:
+        citation = {
             "citation_num": citation_num,
-            "source_type": source_type,
-            "source_id": str(source.id),
+            "type": source_type,
+            "id": str(source.id),
             "title": source.title,
-            "url": source.url,
+            "query": query,
         }
+        if isinstance(source, Article):
+            citation["doi"] = source.doi
+            citation["quality_score"] = quality_score
+        else:
+            citation["url"] = source.url
+
+        async with self._citation_lock:
+            self._citation_lookup[citation_num] = citation
 
     async def build_citation_manifest(self, content: str) -> dict[int, dict]:
         citation_pattern = r"\[(\d+)\]"
@@ -341,7 +307,6 @@ Medical Summary: {medical_summary}
         if not matches:
             return {}
 
-        citation_lookup = await self._get_citation_lookup()
         citation_manifest = {}
         seen_citations: set[int] = set()
 
@@ -350,12 +315,11 @@ Medical Summary: {medical_summary}
             if citation_num in seen_citations:
                 continue
 
-            lookup_entry = citation_lookup.get(citation_num)
-            if lookup_entry is None:
+            citation = self._citation_lookup.get(citation_num)
+            if citation is None:
                 continue
 
-            source_type, source = lookup_entry
-            citation_manifest[citation_num] = self._serialize_citation(citation_num, source_type, source)
+            citation_manifest[citation_num] = citation
             seen_citations.add(citation_num)
 
         return citation_manifest

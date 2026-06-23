@@ -12,7 +12,6 @@ router = APIRouter()
 
 class ResearchRequest(BaseModel):
     intake_id: UUID
-    session_id: UUID
 
 
 @router.post('/research', response_class=EventSourceResponse)

@@ -11,7 +11,7 @@ from db.db import unit_of_work
 
 async def stream_doctor_chat_service(chat_request: ChatRequest, user_id: str) -> AsyncIterable[dict]:
     
-    doctor_repo = DoctorRepo(user_id)
+    doctor_repo = DoctorRepo()
 
     if not chat_request.conversation_id:
         chat_request.conversation_id = uuid.uuid4()

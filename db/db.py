@@ -7,8 +7,6 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://app:app@localhost:5432/app")
 
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,

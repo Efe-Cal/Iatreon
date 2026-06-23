@@ -1,7 +1,8 @@
 from typing import AsyncIterable
 from db.db import unit_of_work
-from db.models import IntakeSession, ResearchSession
+from db.models import ResearchSession
 from db.repositories import IntakeRepo, ResearchRepo
+from db.schemas import IntakeSessionData
 from agents.research import ResearchAgent
 from fastapi import HTTPException
 from uuid import UUID
@@ -9,7 +10,7 @@ from uuid import UUID
 async def stream_research(intake_id: UUID, user_id) -> AsyncIterable:
     async with unit_of_work() as db:
         research_repo = ResearchRepo(user_id)
-        intake_session: IntakeSession = await IntakeRepo(user_id).get_session(db, intake_id)
+        intake_session: IntakeSessionData = await IntakeRepo(user_id).get_session(db, intake_id)
 
         if not intake_session:
             raise HTTPException(status_code=404, detail="Intake session not found.")

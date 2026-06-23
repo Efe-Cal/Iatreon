@@ -1,6 +1,5 @@
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.attributes import set_committed_value
 from datetime import datetime, timedelta
 import uuid
 from .models import (
@@ -8,16 +7,13 @@ from .models import (
     IntakeSession,
     Article,
     ResearchSession,
-    SessionArticle,
     BookSection,
-    SessionBookSection,
     User,
     UserProfile,
     ChatSession,
     WebSearchResult,
-    SessionWebSearchResult,
 )
-from .schemas import BookSectionData, IntakeProfile, ArticleData, UserProfileData
+from .schemas import BookSectionData, IntakeProfile, IntakeSessionData, ArticleData, ResearchSessionData, UserProfileData
 from .crypto import decrypt_json, encrypt_json, new_data_key, unwrap_data_key, wrap_data_key, zero_bytes
 
 
@@ -67,14 +63,23 @@ class IntakeRepo:
     def __init__(self, user_id: str):
         self.user_id = uuid.UUID(user_id)
 
-    async def _hydrate_session(self, db: AsyncSession, session: IntakeSession | None) -> IntakeSession | None:
-        if session is None or not session.encrypted_payload:
-            return session
-        payload = await _decrypt_record_payload(db, self.user_id, f'intake-session:{session.id}', session.encrypted_payload)
-        for field in ('chief_complaint', 'symptoms', 'red_flags', 'medical_summary', 'thread_id', 'status', 'completed_at'):
-            if field in payload:
-                set_committed_value(session, field, payload[field])
-        return session
+    async def _read_session(self, db: AsyncSession, session: IntakeSession | None) -> IntakeSessionData | None:
+        if session is None:
+            return None
+        payload = {}
+        if session.encrypted_payload:
+            payload = await _decrypt_record_payload(db, self.user_id, f'intake-session:{session.id}', session.encrypted_payload)
+        return IntakeSessionData(
+            id=session.id,
+            user_id=session.user_id,
+            chief_complaint=payload.get('chief_complaint'),
+            symptoms=payload.get('symptoms', []),
+            red_flags=payload.get('red_flags', []),
+            medical_summary=payload.get('medical_summary'),
+            thread_id=payload.get('thread_id'),
+            status=payload.get('status', session.status),
+            completed_at=payload.get('completed_at', session.completed_at),
+        )
 
     @staticmethod
     def _serialize_transcript(transcript: list) -> list[dict]:
@@ -106,10 +111,13 @@ class IntakeRepo:
         await db.flush()
         return session
 
-    async def update_session(self, db: AsyncSession, session_id: uuid.UUID, profile: IntakeProfile, conversation_thread_id: str):
+    async def complete_session(self, db: AsyncSession, session_id: uuid.UUID, profile: IntakeProfile, conversation_thread_id: str):
         session = await db.get(IntakeSession, session_id)
-        if session.user_id != self.user_id:
+        if session is None or session.user_id != self.user_id:
             return "Error: Unauthorized"
+        completed_at = datetime.utcnow()
+        session.status = "complete"
+        session.completed_at = completed_at
         session.encrypted_payload = await _encrypt_record_payload(
             db,
             self.user_id,
@@ -121,52 +129,38 @@ class IntakeRepo:
                 'medical_summary': profile.medical_summary,
                 'thread_id': conversation_thread_id,
                 'status': session.status,
-                'completed_at': session.completed_at,
+                'completed_at': completed_at,
             },
         )
-        session.chief_complaint = None
-        session.symptoms = []
-        session.red_flags = []
-        session.medical_summary = None
-        session.thread_id = None
         await db.flush()
         return "OK"
 
-    async def complete_session(self, db: AsyncSession, session_id: uuid.UUID):
-        session = await db.get(IntakeSession, session_id)
-        if session.user_id != self.user_id:
-            return "Error: Unauthorized"
-        session.status = "complete"
-        session.completed_at = datetime.utcnow()
-        if session.encrypted_payload:
-            payload = await _decrypt_record_payload(db, self.user_id, f'intake-session:{session.id}', session.encrypted_payload)
-            payload['status'] = session.status
-            payload['completed_at'] = session.completed_at
-            session.encrypted_payload = await _encrypt_record_payload(db, self.user_id, f'intake-session:{session.id}', payload)
-        await db.flush()
-        return "OK"
-
-    async def get_session(self, db: AsyncSession, session_id: uuid.UUID) -> IntakeSession | None:
+    async def get_session(self, db: AsyncSession, session_id: uuid.UUID) -> IntakeSessionData | None:
         if isinstance(session_id, str):
             session_id = uuid.UUID(session_id)
 
         session = await db.get(IntakeSession, session_id)
         if session and session.user_id == self.user_id:
-            return await self._hydrate_session(db, session)
+            return await self._read_session(db, session)
         return None
 
 class ResearchRepo:
     def __init__(self, user_id: str):
         self.user_id = uuid.UUID(user_id)
 
-    async def _hydrate_session(self, db: AsyncSession, session: ResearchSession | None) -> ResearchSession | None:
-        if session is None or not session.encrypted_payload:
-            return session
-        payload = await _decrypt_record_payload(db, self.user_id, f'research-session:{session.id}', session.encrypted_payload)
-        for field in ('research_report', 'citations'):
-            if field in payload:
-                set_committed_value(session, field, payload[field])
-        return session
+    async def _read_session(self, db: AsyncSession, session: ResearchSession | None) -> ResearchSessionData | None:
+        if session is None:
+            return None
+        payload = {}
+        if session.encrypted_payload:
+            payload = await _decrypt_record_payload(db, self.user_id, f'research-session:{session.id}', session.encrypted_payload)
+        return ResearchSessionData(
+            id=session.id,
+            user_id=session.user_id,
+            intake_session_id=session.intake_session_id,
+            research_report=payload.get('research_report'),
+            citations=payload.get('citations', {}),
+        )
 
     async def create_research_session(self, db: AsyncSession, intake_session_id: uuid.UUID) -> ResearchSession:
         session = ResearchSession(user_id=self.user_id, intake_session_id=intake_session_id)
@@ -180,41 +174,42 @@ class ResearchRepo:
         session_id: uuid.UUID,
         research_report: str | None = None,
         citations: dict[int, dict] | None = None,
-    ) -> ResearchSession | None:
+    ) -> ResearchSessionData | None:
         session = await db.get(ResearchSession, session_id)
         if session is None or session.user_id != self.user_id:
             return None
 
+        payload = {}
+        if session.encrypted_payload:
+            payload = await _decrypt_record_payload(db, self.user_id, f'research-session:{session.id}', session.encrypted_payload)
         if research_report is not None:
-            set_committed_value(session, 'research_report', research_report)
+            payload['research_report'] = research_report
         if citations is not None:
-            set_committed_value(session, 'citations', citations)
+            payload['citations'] = citations
 
         session.encrypted_payload = await _encrypt_record_payload(
             db,
             self.user_id,
             f'research-session:{session.id}',
             {
-                'research_report': session.research_report,
-                'citations': session.citations,
+                'research_report': payload.get('research_report'),
+                'citations': payload.get('citations', {}),
             },
         )
-        session.research_report = None
-        session.citations = {}
 
         await db.flush()
-        return session
+        return await self._read_session(db, session)
 
-    async def get_research_session(self, db: AsyncSession, session_id: uuid.UUID) -> ResearchSession | None:
+    async def get_research_session(self, db: AsyncSession, session_id: uuid.UUID) -> ResearchSessionData | None:
         if isinstance(session_id, str):
             session_id = uuid.UUID(session_id)
         
         session = await db.get(ResearchSession, session_id)
         if session and session.user_id == self.user_id:
-            return await self._hydrate_session(db, session)
+            return await self._read_session(db, session)
         return None
 
-    async def get_research_session_by_intake_id(self, db: AsyncSession, intake_session_id: uuid.UUID) -> ResearchSession | None:
+    async def get_research_session_by_intake_id(self, db: AsyncSession, intake_session_id: uuid.UUID) -> ResearchSessionData | None:
         if isinstance(intake_session_id, str):
             intake_session_id = uuid.UUID(intake_session_id)
 
@@ -222,127 +217,7 @@ class ResearchRepo:
             ResearchSession.intake_session_id == intake_session_id,
             ResearchSession.user_id == self.user_id,
         )
-        return await self._hydrate_session(db, (await db.execute(stmt)).scalar_one_or_none())
-
-    async def link_article(self, db: AsyncSession, session_id: uuid.UUID, article_id: uuid.UUID, query: str, quality_score: float | None = None) -> SessionArticle:
-        existing_stmt = select(SessionArticle).where(
-            SessionArticle.session_id == session_id,
-            SessionArticle.article_id == article_id,
-        )
-        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
-
-        if existing is not None:
-            existing.query = query
-            existing.quality_score = quality_score
-            await db.flush()
-            return existing
-
-        link = SessionArticle(
-            session_id=session_id,
-            article_id=article_id,
-            query=query,
-            quality_score=quality_score,
-        )
-        db.add(link)
-        await db.flush()
-        return link
-
-    async def link_book_section(self, db: AsyncSession, session_id: uuid.UUID, book_section_id: uuid.UUID, query: str) -> SessionBookSection:
-        existing_stmt = select(SessionBookSection).where(
-            SessionBookSection.session_id == session_id,
-            SessionBookSection.book_section_id == book_section_id,
-        )
-        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
-
-        if existing is not None:
-            existing.query = query
-            await db.flush()
-            return existing
-
-        link = SessionBookSection(
-            session_id=session_id,
-            book_section_id=book_section_id,
-            query=query,
-        )
-        db.add(link)
-        await db.flush()
-        return link
-
-    async def link_web_search_result(self, db: AsyncSession, session_id: uuid.UUID, web_search_result_id: uuid.UUID) -> SessionWebSearchResult:
-        existing_stmt = select(SessionWebSearchResult).where(
-            SessionWebSearchResult.session_id == session_id,
-            SessionWebSearchResult.web_search_result_id == web_search_result_id,
-        )
-        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
-
-        if existing is not None:
-            return existing
-
-        link = SessionWebSearchResult(
-            session_id=session_id,
-            web_search_result_id=web_search_result_id,
-        )
-        db.add(link)
-        await db.flush()
-        return link
-
-    async def get_session_articles(self, db: AsyncSession, session_id: uuid.UUID, limit: int = 8) -> list[Article]:
-        stmt = (
-            select(Article)
-            .join(SessionArticle, SessionArticle.article_id == Article.id)
-            .where(SessionArticle.session_id == session_id)
-            .order_by(SessionArticle.quality_score.desc().nullslast())
-            .limit(limit)
-        )
-        return list((await db.execute(stmt)).scalars())
-
-    async def get_session_book_sections(self, db: AsyncSession, session_id: uuid.UUID, limit: int = 8) -> list[BookSection]:
-        stmt = (
-            select(BookSection)
-            .join(SessionBookSection, SessionBookSection.book_section_id == BookSection.id)
-            .where(SessionBookSection.session_id == session_id)
-            .limit(limit)
-        )
-        return list((await db.execute(stmt)).scalars())
-
-    async def get_session_web_search_results(self, db: AsyncSession, session_id: uuid.UUID, limit: int = 8) -> list[WebSearchResult]:
-        stmt = (
-            select(WebSearchResult)
-            .join(SessionWebSearchResult, SessionWebSearchResult.web_search_result_id == WebSearchResult.id)
-            .where(SessionWebSearchResult.session_id == session_id)
-            .order_by(WebSearchResult.fetched_at.desc())
-            .limit(limit)
-        )
-        return list((await db.execute(stmt)).scalars())
-    
-    async def get_all_session_sources(self, db: AsyncSession, session_id: uuid.UUID) -> dict[str, list[tuple[Article | BookSection | WebSearchResult, int | None]]]:
-        stmt = (
-            select(Article, SessionArticle)
-            .join(SessionArticle, SessionArticle.article_id == Article.id)
-            .where(SessionArticle.session_id == session_id)
-        )
-        articles = (await db.execute(stmt)).all()
-        
-        stmt = (
-            select(BookSection, SessionBookSection)
-            .join(SessionBookSection, SessionBookSection.book_section_id == BookSection.id)
-            .where(SessionBookSection.session_id == session_id)
-        )
-        book_sections = (await db.execute(stmt)).all()
-        
-        stmt = (
-            select(WebSearchResult, SessionWebSearchResult)
-            .join(SessionWebSearchResult, SessionWebSearchResult.web_search_result_id == WebSearchResult.id)
-            .where(SessionWebSearchResult.session_id == session_id)
-        )
-        web_search_results = (await db.execute(stmt)).all()
-        
-        sources = {
-            "articles": [(article, session_article.citation_num )for article, session_article in articles],
-            "book_sections": [(book_section, session_book.citation_num) for book_section, session_book in book_sections],
-            "web_search_results": [(web_search_result, session_web_search.citation_num) for web_search_result, session_web_search in web_search_results],
-        }
-        return sources
+        return await self._read_session(db, (await db.execute(stmt)).scalar_one_or_none())
 
 class ArticleRepo:
     def __init__(self):
@@ -428,41 +303,6 @@ class ArticleRepo:
         stmt = select(Article).where(or_(*identity_filters), Article.fetched_at > cutoff)
         return (await db.execute(stmt)).scalar_one_or_none()
     
-    async def link_to_session(self, db: AsyncSession, session_id: uuid.UUID, article_id: uuid.UUID, query: str, quality_score: float, citation_num: int = 0) -> SessionArticle:
-        existing_stmt = select(SessionArticle).where(
-            SessionArticle.session_id == session_id,
-            SessionArticle.article_id == article_id,
-        )
-        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
-
-        if existing is not None:
-            existing.query = query
-            existing.quality_score = quality_score
-            existing.citation_num = citation_num
-            await db.flush()
-            return existing
-
-        link = SessionArticle(
-            session_id=session_id,
-            article_id=article_id,
-            query=query,
-            quality_score=quality_score,
-            citation_num=citation_num,
-        )
-        db.add(link)
-        await db.flush()
-        return link
-
-    async def get_session_articles(self, db: AsyncSession, session_id: uuid.UUID, limit: int = 8) -> list[Article]:
-        stmt = (
-            select(Article)
-            .join(SessionArticle, SessionArticle.article_id == Article.id)
-            .where(SessionArticle.session_id == session_id)
-            .order_by(SessionArticle.quality_score.desc().nullslast())
-            .limit(limit)
-        )
-        return list((await db.execute(stmt)).scalars())
-    
     async def get_article_by_id(self, db: AsyncSession, article_id: uuid.UUID) -> Article | None:
         return await db.get(Article, article_id)
 
@@ -499,38 +339,6 @@ class BookSectionRepo:
         stmt = select(BookSection).where(BookSection.accession_id == accession_id)
         return (await db.execute(stmt)).scalar_one_or_none()
     
-    async def link_to_session(self, db: AsyncSession, session_id: uuid.UUID, book_section_id: uuid.UUID, query: str, citation_num: int = 0) -> SessionBookSection:
-        existing_stmt = select(SessionBookSection).where(
-            SessionBookSection.session_id == session_id,
-            SessionBookSection.book_section_id == book_section_id,
-        )
-        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
-
-        if existing is not None:
-            existing.query = query
-            existing.citation_num = citation_num
-            await db.flush()
-            return existing
-
-        link = SessionBookSection(
-            session_id=session_id,
-            book_section_id=book_section_id,
-            query=query,
-            citation_num=citation_num
-        )
-        db.add(link)
-        await db.flush()
-        return link
-        
-    async def get_session_book_sections(self, db: AsyncSession, session_id: uuid.UUID, limit: int = 8) -> list[BookSection]:
-        stmt = (
-            select(BookSection)
-            .join(SessionBookSection, SessionBookSection.book_section_id == BookSection.id)
-            .where(SessionBookSection.session_id == session_id)
-            .limit(limit)
-        )
-        return list((await db.execute(stmt)).scalars())
-    
     async def get_book_section_by_id(self, db: AsyncSession, book_section_id: uuid.UUID) -> BookSection | None:
         return await db.get(BookSection, book_section_id)
 
@@ -560,37 +368,6 @@ class WebSearchResultRepo:
         db.add(result)
         await db.flush()
         return result
-
-    async def link_to_session(self, db: AsyncSession, session_id: uuid.UUID, web_search_result_id: uuid.UUID, citation_num: int = 0) -> SessionWebSearchResult:
-        existing_stmt = select(SessionWebSearchResult).where(
-            SessionWebSearchResult.session_id == session_id,
-            SessionWebSearchResult.web_search_result_id == web_search_result_id,
-        )
-        existing = (await db.execute(existing_stmt)).scalar_one_or_none()
-
-        if existing is not None:
-            existing.citation_num = citation_num
-            await db.flush()
-            return existing
-
-        link = SessionWebSearchResult(
-            session_id=session_id,
-            web_search_result_id=web_search_result_id,
-            citation_num=citation_num,
-        )
-        db.add(link)
-        await db.flush()
-        return link
-
-    async def get_session_web_search_results(self, db: AsyncSession, session_id: uuid.UUID, limit: int = 8) -> list[WebSearchResult]:
-        stmt = (
-            select(WebSearchResult)
-            .join(SessionWebSearchResult, SessionWebSearchResult.web_search_result_id == WebSearchResult.id)
-            .where(SessionWebSearchResult.session_id == session_id)
-            .order_by(WebSearchResult.fetched_at.desc())
-            .limit(limit)
-        )
-        return list((await db.execute(stmt)).scalars())
 
     async def get_web_search_result_by_id(self, db: AsyncSession, web_search_result_id: uuid.UUID) -> WebSearchResult | None:
         return await db.get(WebSearchResult, web_search_result_id)
@@ -646,7 +423,7 @@ class UserRepo:
                 return decrypt_json(data_key, user_id, 'user-profile', user_profile.encrypted_payload)
             finally:
                 zero_bytes(data_key)
-        return UserProfileData.model_validate(user_profile).model_dump()
+        return {}
 
     async def update_user_profile(self, db: AsyncSession, profile_data: UserProfileData) -> UserProfile:
         stmt = select(UserProfile).where(UserProfile.user_id == profile_data.user_id)
@@ -662,13 +439,6 @@ class UserRepo:
             db.add(user_profile)
         else:
             user_profile.encrypted_payload = encrypted_payload
-            user_profile.demographics = None
-            user_profile.pmh = []
-            user_profile.medications = []
-            user_profile.allergies = []
-            user_profile.family_history = []
-            user_profile.social = None
-            user_profile.medical_summary = None
         await db.flush()
         return user_profile
 
