@@ -12,20 +12,18 @@ type dashboardModel struct {
 	width          int
 	height         int
 	cursor         int
-	startIntake    bool
-	startDoctor    bool
-	goToSetup      bool
-	showProfile    bool
-	showSettings   bool
+	action         dashboardAction
 	placeholderMsg string
-	headerText     string
-	footerActions  []string
 }
 
-func (m *dashboardModel) SetHeader(h string)   { m.headerText = h }
-func (m *dashboardModel) SetFooter(a []string) { m.footerActions = a }
-func (m dashboardModel) GetHeader() string     { return m.headerText }
-func (m dashboardModel) GetFooter() []string   { return m.footerActions }
+type dashboardAction int
+
+const (
+	dashboardActionNone dashboardAction = iota
+	dashboardActionStartIntake
+	dashboardActionStartDoctor
+	dashboardActionSetup
+)
 
 type dashboardCard struct {
 	title       string
@@ -52,12 +50,13 @@ func (m *dashboardModel) SetSize(w, h int) {
 	m.height = h
 }
 
-func (m dashboardModel) Init() tea.Cmd {
-	return nil
-}
+func (m dashboardModel) Init() tea.Cmd { return nil }
 
-type dashboardActionMsg struct {
-	action string // "intake", "doctor", "profile", "settings", "setup"
+func (m dashboardModel) footer() []string {
+	if m.placeholderMsg != "" {
+		return []string{"Enter Dismiss", "Ctrl+C Quit"}
+	}
+	return dashboardFooter
 }
 
 func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
@@ -70,36 +69,27 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
-		case "esc":
-			m.goToSetup = true
-			return m, nil
 		case "tab", "right", "down":
 			m.cursor = (m.cursor + 1) % len(dashboardCards)
 			m.placeholderMsg = ""
-			m.SetFooter([]string{"↑/↓/←/→ Navigate", "Enter Select", "Esc Setup", "Ctrl+C Quit"})
 			return m, nil
 		case "shift+tab", "left", "up":
 			m.cursor = (m.cursor - 1 + len(dashboardCards)) % len(dashboardCards)
 			m.placeholderMsg = ""
-			m.SetFooter([]string{"↑/↓/←/→ Navigate", "Enter Select", "Esc Setup", "Ctrl+C Quit"})
 			return m, nil
 		case "enter":
 			switch m.cursor {
 			case 0:
-				m.startIntake = true
+				m.action = dashboardActionStartIntake
 				return m, nil
 			case 1:
-				m.startDoctor = true
+				m.action = dashboardActionStartDoctor
 				return m, nil
 			case 2:
-				m.showProfile = true
 				m.placeholderMsg = "🚧 Your profile page is coming soon.\n\nYou'll be able to view and manage your medical history,\nmedications, allergies, and family history here."
-				m.SetFooter([]string{"Enter Dismiss", "Esc Setup", "Ctrl+C Quit"})
 				return m, nil
 			case 3:
-				m.showSettings = true
 				m.placeholderMsg = "🚧 Settings are not yet available.\n\nFuture settings will include notification preferences,\ntheme options, and API configuration."
-				m.SetFooter([]string{"Enter Dismiss", "Esc Setup", "Ctrl+C Quit"})
 				return m, nil
 			}
 		}

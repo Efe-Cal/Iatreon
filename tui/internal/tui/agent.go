@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 )
 
@@ -22,19 +21,6 @@ type toolMessage struct {
 	toolID   string
 	toolName string
 	running  bool
-}
-
-func (k AgentKind) String() string {
-	switch k {
-	case AgentDiagnosis:
-		return "diagnosis"
-	case AgentResearch:
-		return "research"
-	case AgentDoctor:
-		return "doctor"
-	default:
-		return "doctor"
-	}
 }
 
 type AgentHandler interface {
@@ -83,6 +69,38 @@ func newAgentHandler(kind AgentKind) AgentHandler {
 	}
 }
 
+func buildAgentRequest(endpoint, userid string, sessionKey []byte, payload any) (*http.Request, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodPost, apiBaseURL+endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-ID", userid)
+	addSessionKeyHeader(req, sessionKey)
+	return req, nil
+}
+
+func handleCommonAgentEvent(ev sseEvent) (chunkMsg, bool) {
+	switch ev.Type {
+	case "session_started":
+		return chunkMsg{sessionID: ev.SessionID, conversationID: ev.ConversationID}, true
+	case "message":
+		return chunkMsg{content: ev.Content}, true
+	case "tool_start":
+		return chunkMsg{content: ev.Content, toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: true}}, true
+	case "tool_end":
+		return chunkMsg{content: ev.Content, toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: false}}, true
+	}
+	if ev.Type == "" && ev.Content != "" {
+		return chunkMsg{content: ev.Content}, true
+	}
+	return chunkMsg{}, false
+}
+
 // ---------------
 // Intake
 // ---------------
@@ -105,18 +123,7 @@ func (*intakeHandler) BuildRequest(conversationID, userid, message, sessionID st
 		Message:        message,
 		SessionID:      sessionID,
 	}
-	reqBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(http.MethodPost, apiBaseURL+"/chat/intake", bytes.NewReader(reqBytes))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-User-ID", userid)
-	addSessionKeyHeader(req, sessionKey)
-	return req, nil
+	return buildAgentRequest("/chat/intake", userid, sessionKey, payload)
 }
 
 func (*intakeHandler) HandleEvent(ev sseEvent) chunkMsg {
@@ -126,14 +133,9 @@ func (*intakeHandler) HandleEvent(ev sseEvent) chunkMsg {
 			content: "\n\n✅ **Intake completed.** Your profile has been saved.",
 			done:    true,
 		}
-	case "message":
-		return chunkMsg{content: ev.Content}
-	case "tool_start":
-		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: true}}
-	case "tool_end":
-		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: false}}
-	case "session_started":
-		return chunkMsg{sessionID: ev.SessionID, conversationID: ev.ConversationID}
+	}
+	if msg, ok := handleCommonAgentEvent(ev); ok {
+		return msg
 	}
 	return chunkMsg{}
 }
@@ -161,19 +163,7 @@ func (*researchHandler) BuildRequest(conversationID, userid, message, sessionID 
 		SessionID: sessionID,
 	}
 
-	reqBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, apiBaseURL+"/research", bytes.NewReader(reqBytes))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-User-ID", userid)
-	addSessionKeyHeader(req, sessionKey)
-	return req, nil
+	return buildAgentRequest("/research", userid, sessionKey, payload)
 }
 
 func (*researchHandler) HandleEvent(ev sseEvent) chunkMsg {
@@ -204,14 +194,11 @@ func (*researchHandler) HandleEvent(ev sseEvent) chunkMsg {
 		// }
 		return chunkMsg{content: content, done: true}
 
-	case "message":
-		return chunkMsg{content: ev.Content}
-	case "tool_start":
-		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: true}}
-	case "tool_end":
-		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: false}}
 	}
 
+	if msg, ok := handleCommonAgentEvent(ev); ok {
+		return msg
+	}
 	return chunkMsg{}
 }
 
@@ -242,19 +229,7 @@ func (*diagnosisHandler) BuildRequest(conversationID, userid, message, sessionID
 		SessionID: sessionID,
 	}
 
-	reqBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, apiBaseURL+"/diagnose", bytes.NewReader(reqBytes))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-User-ID", userid)
-	addSessionKeyHeader(req, sessionKey)
-	return req, nil
+	return buildAgentRequest("/diagnose", userid, sessionKey, payload)
 }
 
 func (*diagnosisHandler) HandleEvent(ev sseEvent) chunkMsg {
@@ -273,19 +248,17 @@ func (*diagnosisHandler) HandleEvent(ev sseEvent) chunkMsg {
 			content: fmt.Sprintf("\n\n✅ **Diagnosis complete.** See the report below.\n\n**Report:**\n%s", data.Report),
 			done:    true,
 		}
-	case "message":
-		return chunkMsg{content: ev.Content}
-	case "tool_start":
-		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: true}}
-	case "tool_end":
-		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: false}}
 	}
 
-	if len(ev.Type) == 0 && len(ev.Content) > 0 {
-		return chunkMsg{content: ev.Content}
+	if msg, ok := handleCommonAgentEvent(ev); ok {
+		return msg
 	}
 	return chunkMsg{}
 }
+
+// ---------------
+// Doctor
+// ---------------
 
 type doctorHandler struct{}
 
@@ -310,35 +283,12 @@ func (*doctorHandler) BuildRequest(conversationID, userid, message, sessionID st
 		SessionID:      sessionID,
 	}
 
-	reqBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, apiBaseURL+"/chat/doctor", bytes.NewReader(reqBytes))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-User-ID", userid)
-	addSessionKeyHeader(req, sessionKey)
-	return req, nil
+	return buildAgentRequest("/chat/doctor", userid, sessionKey, payload)
 }
 
 func (*doctorHandler) HandleEvent(ev sseEvent) chunkMsg {
-	switch ev.Type {
-	case "session_started":
-		return chunkMsg{sessionID: ev.SessionID, conversationID: ev.ConversationID}
-	case "message":
-		return chunkMsg{content: ev.Content}
-	case "tool_start":
-		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: true}}
-	case "tool_end":
-		return chunkMsg{content: string(ev.Content), toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: false}}
-	}
-
-	if len(ev.Type) == 0 && len(ev.Content) > 0 {
-		return chunkMsg{content: ev.Content}
+	if msg, ok := handleCommonAgentEvent(ev); ok {
+		return msg
 	}
 	return chunkMsg{}
 }
@@ -353,12 +303,4 @@ func addSessionKeyHeader(req *http.Request, sessionKey []byte) {
 func sharedHTTPDo(req *http.Request) (*http.Response, error) {
 	client := &http.Client{}
 	return client.Do(req)
-}
-
-func drainAndClose(body io.ReadCloser) {
-	if body == nil {
-		return
-	}
-	_, _ = io.Copy(io.Discard, body)
-	_ = body.Close()
 }

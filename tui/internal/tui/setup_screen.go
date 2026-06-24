@@ -29,6 +29,23 @@ const (
 	stepConfirm
 )
 
+type setupFieldKind int
+
+const (
+	setupSingleLine setupFieldKind = iota
+	setupMultiLine
+	setupConfirm
+)
+
+type setupField struct {
+	step   setupStep
+	label  string
+	prompt string
+	input  *textinput.Model
+	lines  *[]string
+	kind   setupFieldKind
+}
+
 type setupModel struct {
 	step       setupStep
 	userid     string
@@ -56,15 +73,7 @@ type setupModel struct {
 	err        error
 	submitted  bool
 	submitting bool
-
-	headerText    string
-	footerActions []string
 }
-
-func (m *setupModel) SetHeader(h string)   { m.headerText = h }
-func (m *setupModel) SetFooter(a []string) { m.footerActions = a }
-func (m setupModel) GetHeader() string     { return m.headerText }
-func (m setupModel) GetFooter() []string   { return m.footerActions }
 
 func newSetupModel(userid string, sessionKey *SessionKey) setupModel {
 	// Age input
@@ -147,19 +156,61 @@ func (m *setupModel) SetSize(w, h int) {
 	if fieldWidth > 60 {
 		fieldWidth = 60
 	}
-	m.age.Width = min(10, fieldWidth)
-	m.gender.Width = fieldWidth
-	m.pmh.Width = fieldWidth
-	m.medications.Width = fieldWidth
-	m.allergies.Width = fieldWidth
-	m.familyHist.Width = fieldWidth
-	m.smoking.Width = fieldWidth
-	m.alcohol.Width = fieldWidth
-	m.exercise.Width = fieldWidth
+	for _, field := range m.setupFields() {
+		if field.input == nil {
+			continue
+		}
+		if field.step == stepAge {
+			field.input.Width = min(10, fieldWidth)
+			continue
+		}
+		field.input.Width = fieldWidth
+	}
 }
 
 func (m setupModel) Init() tea.Cmd {
 	return textinput.Blink
+}
+
+func (m setupModel) footer() []string {
+	field, ok := m.currentField()
+	if ok && field.kind == setupConfirm {
+		return []string{"Enter Confirm", "Esc Back", "Ctrl+C Quit"}
+	}
+	if ok && field.kind == setupMultiLine {
+		return []string{"Enter Add Item", "Enter(empty) Next", "Esc Back", "Ctrl+C Quit"}
+	}
+	return setupFooter
+}
+
+func (m *setupModel) setupFields() []setupField {
+	return []setupField{
+		{step: stepAge, label: "Age", prompt: "Enter your age", input: &m.age, kind: setupSingleLine},
+		{step: stepGender, label: "Gender", prompt: "Enter your gender identity", input: &m.gender, kind: setupSingleLine},
+		{step: stepPMH, label: "Past Medical History", prompt: "Enter past conditions one at a time · Empty Enter to finish", input: &m.pmh, lines: &m.pmhLines, kind: setupMultiLine},
+		{step: stepMedications, label: "Current Medications", prompt: "Enter current medications one at a time · Empty Enter to finish", input: &m.medications, lines: &m.medicationsLines, kind: setupMultiLine},
+		{step: stepAllergies, label: "Allergies", prompt: "Enter allergies one at a time · Empty Enter to finish", input: &m.allergies, lines: &m.allergiesLines, kind: setupMultiLine},
+		{step: stepFamilyHistory, label: "Family History", prompt: "Enter family conditions one at a time · Empty Enter to finish", input: &m.familyHist, lines: &m.familyHistLines, kind: setupMultiLine},
+		{step: stepSmoking, label: "Smoking Status", prompt: "Describe your smoking history", input: &m.smoking, kind: setupSingleLine},
+		{step: stepAlcohol, label: "Alcohol Use", prompt: "Describe your alcohol consumption", input: &m.alcohol, kind: setupSingleLine},
+		{step: stepExercise, label: "Exercise / Physical Activity", prompt: "Describe your physical activity level", input: &m.exercise, kind: setupSingleLine},
+		{step: stepConfirm, label: "Review & Submit", prompt: "Press Enter to submit your profile", kind: setupConfirm},
+	}
+}
+
+func (m *setupModel) currentField() (setupField, bool) {
+	for _, field := range m.setupFields() {
+		if field.step == m.step {
+			return field, true
+		}
+	}
+	return setupField{}, false
+}
+
+func (m *setupModel) focusCurrentField() {
+	if field, ok := m.currentField(); ok && field.input != nil {
+		field.input.Focus()
+	}
 }
 
 type profileSubmittedMsg struct {
@@ -237,7 +288,7 @@ func (m setupModel) Update(msg tea.Msg) (setupModel, tea.Cmd) {
 				return m, tea.Quit
 			}
 			m.step = stepAge
-			m.age.Focus()
+			m.focusCurrentField()
 			return m, textinput.Blink
 		}
 
@@ -262,81 +313,46 @@ func (m setupModel) Update(msg tea.Msg) (setupModel, tea.Cmd) {
 
 	// Forward update to the active textinput
 	var cmd tea.Cmd
-	switch m.step {
-	case stepAge:
-		m.age, cmd = m.age.Update(msg)
-	case stepGender:
-		m.gender, cmd = m.gender.Update(msg)
-	case stepSmoking:
-		m.smoking, cmd = m.smoking.Update(msg)
-	case stepAlcohol:
-		m.alcohol, cmd = m.alcohol.Update(msg)
-	case stepExercise:
-		m.exercise, cmd = m.exercise.Update(msg)
+	if field, ok := m.currentField(); ok && field.kind == setupSingleLine {
+		*field.input, cmd = field.input.Update(msg)
 	}
 	return m, cmd
 }
 
 func (m *setupModel) isMultiLineStep() bool {
-	return m.step == stepPMH || m.step == stepMedications ||
-		m.step == stepAllergies || m.step == stepFamilyHistory
-}
-
-func (m *setupModel) currentLines() *[]string {
-	switch m.step {
-	case stepPMH:
-		return &m.pmhLines
-	case stepMedications:
-		return &m.medicationsLines
-	case stepAllergies:
-		return &m.allergiesLines
-	case stepFamilyHistory:
-		return &m.familyHistLines
-	}
-	return nil
-}
-
-func (m *setupModel) currentInput() *textinput.Model {
-	switch m.step {
-	case stepPMH:
-		return &m.pmh
-	case stepMedications:
-		return &m.medications
-	case stepAllergies:
-		return &m.allergies
-	case stepFamilyHistory:
-		return &m.familyHist
-	}
-	return nil
+	field, ok := m.currentField()
+	return ok && field.kind == setupMultiLine
 }
 
 func (m *setupModel) updateMultiLineStep(msg tea.KeyMsg) (setupModel, tea.Cmd) {
 	key := msg.String()
+	field, ok := m.currentField()
+	if !ok || field.input == nil || field.lines == nil {
+		return *m, nil
+	}
 
 	if key == "esc" {
 		// Clear current input and go back.
-		m.currentInput().SetValue("")
+		field.input.SetValue("")
 		return m.goBack()
 	}
 
 	if key == "enter" {
-		value := strings.TrimSpace(m.currentInput().Value())
+		value := strings.TrimSpace(field.input.Value())
 		if value == "" {
 			// Empty input = finish this step, advance.
-			m.currentInput().SetValue("")
+			field.input.SetValue("")
 			return m.advanceStep()
 		}
 		// Append to list and clear input.
-		lines := m.currentLines()
-		*lines = append(*lines, value)
-		m.currentInput().SetValue("")
+		*field.lines = append(*field.lines, value)
+		field.input.SetValue("")
 		return *m, nil
 	}
 
 	// Forward typing to textinput.
 	var cmd tea.Cmd
-	input := m.currentInput()
-	*input, cmd = input.Update(msg)
+	*field.input, cmd = field.input.Update(msg)
 	return *m, cmd
 }
 
@@ -347,40 +363,14 @@ func (m setupModel) advanceStep() (setupModel, tea.Cmd) {
 	}
 	m.step = next
 
-	// Set footer actions based on step type
 	if m.step == stepConfirm {
-		m.SetFooter([]string{"Enter Confirm", "Esc Back", "Ctrl+C Quit"})
-	} else if m.isMultiLineStep() {
-		m.SetFooter([]string{"Enter Add Item", "Enter(empty) Next", "Esc Back", "Ctrl+C Quit"})
-	} else {
-		m.SetFooter([]string{"Enter Continue", "Esc Back", "Ctrl+C Quit"})
-	}
-
-	// Focus the appropriate input for the new step.
-	switch m.step {
-	case stepAge:
-		m.age.Focus()
-	case stepGender:
-		m.gender.Focus()
-	case stepPMH:
-		m.pmh.Focus()
-	case stepMedications:
-		m.medications.Focus()
-	case stepAllergies:
-		m.allergies.Focus()
-	case stepFamilyHistory:
-		m.familyHist.Focus()
-	case stepSmoking:
-		m.smoking.Focus()
-	case stepAlcohol:
-		m.alcohol.Focus()
-	case stepExercise:
-		m.exercise.Focus()
-	case stepConfirm:
 		// Submit on confirm step.
 		m.submitting = true
 		return m, submitProfile(m.userid, m)
 	}
+
+	// Focus the appropriate input for the new step.
+	m.focusCurrentField()
 	return m, textinput.Blink
 }
 
@@ -394,28 +384,8 @@ func (m setupModel) goBack() (setupModel, tea.Cmd) {
 	}
 	m.step = prev
 
-	// Clear the current input when going back from a multi-line step
-	switch m.step {
-	case stepLanding:
-		// nothing to focus
-	case stepAge:
-		m.age.Focus()
-	case stepGender:
-		m.gender.Focus()
-	case stepPMH:
-		m.pmh.Focus()
-	case stepMedications:
-		m.medications.Focus()
-	case stepAllergies:
-		m.allergies.Focus()
-	case stepFamilyHistory:
-		m.familyHist.Focus()
-	case stepSmoking:
-		m.smoking.Focus()
-	case stepAlcohol:
-		m.alcohol.Focus()
-	case stepExercise:
-		m.exercise.Focus()
+	if m.step != stepLanding {
+		m.focusCurrentField()
 	}
 	return m, textinput.Blink
 }
@@ -500,46 +470,21 @@ func (m setupModel) renderForm() string {
 
 func (m setupModel) renderField() string {
 	labelStyle := lipgloss.NewStyle().Bold(true).Foreground(colorPrimary)
-
-	switch m.step {
-	case stepAge:
-		return lipgloss.JoinVertical(lipgloss.Left,
-			labelStyle.Render("Age"),
-			m.age.View(),
-		)
-	case stepGender:
-		return lipgloss.JoinVertical(lipgloss.Left,
-			labelStyle.Render("Gender"),
-			m.gender.View(),
-		)
-	case stepPMH:
-		return m.renderMultiLineField("Past Medical History", m.pmhLines, m.pmh.View())
-	case stepMedications:
-		return m.renderMultiLineField("Current Medications", m.medicationsLines, m.medications.View())
-	case stepAllergies:
-		return m.renderMultiLineField("Allergies", m.allergiesLines, m.allergies.View())
-	case stepFamilyHistory:
-		return m.renderMultiLineField("Family History", m.familyHistLines, m.familyHist.View())
-	case stepSmoking:
-		return lipgloss.JoinVertical(lipgloss.Left,
-			labelStyle.Render("Smoking Status"),
-			m.smoking.View(),
-		)
-	case stepAlcohol:
-		return lipgloss.JoinVertical(lipgloss.Left,
-			labelStyle.Render("Alcohol Use"),
-			m.alcohol.View(),
-		)
-	case stepExercise:
-		return lipgloss.JoinVertical(lipgloss.Left,
-			labelStyle.Render("Exercise / Physical Activity"),
-			m.exercise.View(),
-		)
-	case stepConfirm:
-		return m.renderSummary()
-	default:
+	field, ok := m.currentField()
+	if !ok {
 		return ""
 	}
+
+	if field.kind == setupConfirm {
+		return m.renderSummary()
+	}
+	if field.kind == setupMultiLine {
+		return m.renderMultiLineField(field.label, *field.lines, field.input.View())
+	}
+	return lipgloss.JoinVertical(lipgloss.Left,
+		labelStyle.Render(field.label),
+		field.input.View(),
+	)
 }
 
 func (m setupModel) renderMultiLineField(title string, lines []string, inputView string) string {
@@ -579,45 +524,37 @@ func (m setupModel) renderSummary() string {
 	sb.WriteString("\n")
 	sb.WriteString("\n")
 
-	sb.WriteString(systemStyle.Render("Past Medical History"))
-	sb.WriteString("\n")
-	for _, s := range m.pmhLines {
-		sb.WriteString(itemStyle.Render("• " + s))
+	sections := []struct {
+		title string
+		lines []string
+	}{
+		{title: "Past Medical History", lines: m.pmhLines},
+		{title: "Medications", lines: m.medicationsLines},
+		{title: "Allergies", lines: m.allergiesLines},
+		{title: "Family History", lines: m.familyHistLines},
+	}
+	for _, section := range sections {
+		sb.WriteString(systemStyle.Render(section.title))
+		sb.WriteString("\n")
+		for _, s := range section.lines {
+			sb.WriteString(itemStyle.Render("• " + s))
+			sb.WriteString("\n")
+		}
 		sb.WriteString("\n")
 	}
-	sb.WriteString("\n")
-
-	sb.WriteString(systemStyle.Render("Medications"))
-	sb.WriteString("\n")
-	for _, s := range m.medicationsLines {
-		sb.WriteString(itemStyle.Render("• " + s))
-		sb.WriteString("\n")
-	}
-	sb.WriteString("\n")
-
-	sb.WriteString(systemStyle.Render("Allergies"))
-	sb.WriteString("\n")
-	for _, s := range m.allergiesLines {
-		sb.WriteString(itemStyle.Render("• " + s))
-		sb.WriteString("\n")
-	}
-	sb.WriteString("\n")
-
-	sb.WriteString(systemStyle.Render("Family History"))
-	sb.WriteString("\n")
-	for _, s := range m.familyHistLines {
-		sb.WriteString(itemStyle.Render("• " + s))
-		sb.WriteString("\n")
-	}
-	sb.WriteString("\n")
 
 	sb.WriteString(systemStyle.Render("Social History"))
 	sb.WriteString("\n")
-	sb.WriteString(itemStyle.Render(fmt.Sprintf("Smoking: %s", m.smoking.Value())))
-	sb.WriteString("\n")
-	sb.WriteString(itemStyle.Render(fmt.Sprintf("Alcohol: %s", m.alcohol.Value())))
-	sb.WriteString("\n")
-	sb.WriteString(itemStyle.Render(fmt.Sprintf("Exercise: %s", m.exercise.Value())))
+	for i, item := range []string{
+		fmt.Sprintf("Smoking: %s", m.smoking.Value()),
+		fmt.Sprintf("Alcohol: %s", m.alcohol.Value()),
+		fmt.Sprintf("Exercise: %s", m.exercise.Value()),
+	} {
+		sb.WriteString(itemStyle.Render(item))
+		if i < 2 {
+			sb.WriteString("\n")
+		}
+	}
 
 	return sb.String()
 }
@@ -649,19 +586,16 @@ func (m setupModel) renderDone() string {
 }
 
 func (m setupModel) stepLabel() string {
-	labels := map[setupStep]string{
-		stepAge:           "Age",
-		stepGender:        "Gender",
-		stepPMH:           "Past Medical History",
-		stepMedications:   "Current Medications",
-		stepAllergies:     "Allergies",
-		stepFamilyHistory: "Family History",
-		stepSmoking:       "Smoking History",
-		stepAlcohol:       "Alcohol Use",
-		stepExercise:      "Physical Activity",
-		stepConfirm:       "Review & Submit",
+	if field, ok := m.currentField(); ok {
+		if field.step == stepSmoking {
+			return "Smoking History"
+		}
+		if field.step == stepExercise {
+			return "Physical Activity"
+		}
+		return field.label
 	}
-	return labels[m.step]
+	return ""
 }
 
 func (m setupModel) stepNumber() int {
@@ -669,18 +603,8 @@ func (m setupModel) stepNumber() int {
 }
 
 func (m setupModel) stepPrompt() string {
-	messages := map[setupStep]string{
-		stepAge:           "Enter your age",
-		stepGender:        "Enter your gender identity",
-		stepPMH:           "Enter past conditions one at a time · Empty Enter to finish",
-		stepMedications:   "Enter current medications one at a time · Empty Enter to finish",
-		stepAllergies:     "Enter allergies one at a time · Empty Enter to finish",
-		stepFamilyHistory: "Enter family conditions one at a time · Empty Enter to finish",
-		stepSmoking:       "Describe your smoking history",
-		stepAlcohol:       "Describe your alcohol consumption",
-		stepExercise:      "Describe your physical activity level",
-		stepConfirm:       "Press Enter to submit your profile",
+	if field, ok := m.currentField(); ok {
+		return field.prompt
 	}
-	return messages[m.step]
-
+	return ""
 }

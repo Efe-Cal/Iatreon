@@ -15,11 +15,6 @@ const (
 	chatScreen
 )
 
-type screenChrome interface {
-	GetHeader() string
-	GetFooter() []string
-}
-
 type model struct {
 	active     screen
 	dashboard  dashboardModel
@@ -32,6 +27,11 @@ type model struct {
 }
 
 const headerFooterHeight = 3
+
+var (
+	dashboardFooter = []string{"↑/↓/←/→ Navigate", "Enter Select", "Esc Setup", "Ctrl+C Quit"}
+	setupFooter     = []string{"Enter Continue", "Esc Back", "Ctrl+C Quit"}
+)
 
 func NewModel(userid string, hasProfile bool, sessionKey ...*SessionKey) model {
 	var key *SessionKey
@@ -57,12 +57,6 @@ func NewModel(userid string, hasProfile bool, sessionKey ...*SessionKey) model {
 		userid:     userid,
 		sessionKey: key,
 	}
-
-	m.dashboard.SetHeader("Iatreon - Dashboard")
-	m.dashboard.SetFooter([]string{"↑/↓/←/→ Navigate", "Enter Select", "Esc Setup", "Ctrl+C Quit"})
-	m.setup.SetHeader("Iatreon - Profile Setup")
-	m.setup.SetFooter([]string{"Enter Continue", "Esc Back", "Ctrl+C Quit"})
-	m.applyChatChrome()
 
 	return m
 }
@@ -104,30 +98,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) initChat(cm chatModel) chatModel {
-	cm.SetHeader(cm.Agent().Header())
-	cm.SetFooter(cm.Agent().Footer())
 	cm.SetSize(m.width, m.height-headerFooterHeight)
 	return cm
 }
 
-func (m *model) applyChatChrome() {
-	if m.chat.Agent() == nil {
-		return
-	}
-	m.chat.SetHeader(m.chat.Agent().Header())
-	m.chat.SetFooter(m.chat.Agent().Footer())
-}
-
 func (m *model) initDashboard(dm dashboardModel) dashboardModel {
-	dm.SetHeader("Iatreon - Dashboard")
-	dm.SetFooter([]string{"↑/↓/←/→ Navigate", "Enter Select", "Esc Setup", "Ctrl+C Quit"})
 	dm.SetSize(m.width, m.height-headerFooterHeight)
 	return dm
 }
 
 func (m *model) initSetup(sm setupModel) setupModel {
-	sm.SetHeader("Iatreon - Profile Setup")
-	sm.SetFooter([]string{"Enter Continue", "Esc Back", "Ctrl+C Quit"})
 	sm.SetSize(m.width, m.height-headerFooterHeight)
 	return sm
 }
@@ -136,21 +116,18 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 	updated, cmd := m.dashboard.Update(msg)
 	m.dashboard = updated
 
-	if m.dashboard.startIntake {
+	switch m.dashboard.action {
+	case dashboardActionStartIntake:
 		m.chat = m.initChat(newChatModelForAgent(AgentIntake, m.userid, "", m.sessionKey))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = chatScreen
 		return m, m.chat.Init()
-	}
-
-	if m.dashboard.startDoctor {
+	case dashboardActionStartDoctor:
 		m.chat = m.initChat(newChatModelForAgent(AgentDoctor, m.userid, "", m.sessionKey))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = chatScreen
 		return m, m.chat.Init()
-	}
-
-	if m.dashboard.goToSetup {
+	case dashboardActionSetup:
 		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = setupScreen
@@ -181,8 +158,8 @@ func (m model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.chat.logout {
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		kind := AgentIntake
-		if h := m.chat.Agent(); h != nil {
-			kind = h.Kind()
+		if m.chat.agent != nil {
+			kind = m.chat.agent.Kind()
 		}
 		m.chat = m.initChat(newChatModelForAgent(kind, m.userid, "", m.sessionKey))
 		m.active = dashboardScreen
@@ -193,20 +170,9 @@ func (m model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	var chrome screenChrome
-	switch m.active {
-	case dashboardScreen:
-		chrome = m.dashboard
-	case setupScreen:
-		chrome = m.setup
-	case chatScreen:
-		chrome = m.chat
-	default:
-		chrome = m.dashboard
-	}
-
-	header := renderHeader(chrome.GetHeader(), m.width)
-	footer := renderFooter(chrome.GetFooter(), m.width)
+	headerText, footerActions := m.chrome()
+	header := renderHeader(headerText, m.width)
+	footer := renderFooter(footerActions, m.width)
 
 	var body string
 	switch m.active {
@@ -225,6 +191,20 @@ func (m model) View() string {
 		body,
 		footer,
 	)
+}
+
+func (m model) chrome() (string, []string) {
+	switch m.active {
+	case setupScreen:
+		return "Iatreon - Profile Setup", m.setup.footer()
+	case chatScreen:
+		if m.chat.agent == nil {
+			return "", nil
+		}
+		return m.chat.agent.Header(), m.chat.footerActions
+	default:
+		return "Iatreon - Dashboard", m.dashboard.footer()
+	}
 }
 
 // renderHeader renders a styled header bar across the full width.

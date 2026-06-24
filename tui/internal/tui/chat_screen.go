@@ -51,21 +51,14 @@ type chatModel struct {
 	aiRenderer   *glamour.TermRenderer
 	userRenderer *glamour.TermRenderer
 
-	headerText    string
 	footerActions []string
 
 	invokeAgentWithEnter bool
 }
 
-func (m *chatModel) SetHeader(h string)   { m.headerText = h }
-func (m *chatModel) SetFooter(a []string) { m.footerActions = a }
-func (m chatModel) GetHeader() string     { return m.headerText }
-func (m chatModel) GetFooter() []string   { return m.footerActions }
 func (m chatModel) UpdateFooter(a string, idx int) {
 	m.footerActions = slices.Replace(m.footerActions, idx, idx+1, a)
 }
-
-func (m chatModel) Agent() AgentHandler { return m.agent }
 
 func generateUUID() string {
 	b := make([]byte, 16)
@@ -142,6 +135,7 @@ func newChatModelForAgent(kind AgentKind, userid string, session_id string, sess
 		toolSpinner:  spinner.New(spinner.WithSpinner(spinner.Points)),
 		sessionID:    session_id,
 		sessionKey:   sessionKey,
+		footerActions: handler.Footer(),
 	}
 }
 

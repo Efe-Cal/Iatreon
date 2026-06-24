@@ -23,11 +23,6 @@ var (
 			Padding(0, 1).
 			Align(lipgloss.Center)
 
-	statusStyle = lipgloss.NewStyle().
-			Foreground(colorMuted).
-			Italic(true).
-			Padding(0, 1)
-
 	hintStyle = lipgloss.NewStyle().
 			Foreground(colorBorder).
 			Padding(0, 1)
@@ -48,10 +43,4 @@ var (
 			Foreground(colorError).
 			Bold(true)
 
-	toolRunningStyle = lipgloss.NewStyle().
-				Foreground(colorAccent).
-				Italic(true)
-
-	toolDoneStyle = lipgloss.NewStyle().
-			Foreground(colorAccent)
 )
