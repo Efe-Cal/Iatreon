@@ -1,13 +1,13 @@
 from typing import AsyncIterable
 from db.db import unit_of_work
 from db.models import ResearchSession
-from db.repositories import IntakeRepo, ResearchRepo
+from db.repositories import IntakeRepo, ResearchRepo, SessionRepo
 from db.schemas import IntakeSessionData
 from agents.research import ResearchAgent
 from fastapi import HTTPException
 from uuid import UUID
 
-async def stream_research(intake_id: UUID, user_id) -> AsyncIterable:
+async def stream_research(intake_id: UUID, user_id, session_id: UUID | None = None) -> AsyncIterable:
     async with unit_of_work() as db:
         research_repo = ResearchRepo(user_id)
         intake_session: IntakeSessionData = await IntakeRepo(user_id).get_session(db, intake_id)
@@ -16,6 +16,8 @@ async def stream_research(intake_id: UUID, user_id) -> AsyncIterable:
             raise HTTPException(status_code=404, detail="Intake session not found.")
         
         research_session: ResearchSession = await research_repo.create_research_session(db, intake_session.id)
+        if session_id is not None:
+            await SessionRepo().link_session(db, user_id, session_id, research_session)
         research_agent = ResearchAgent(research_repo, research_session.id)
         async for research_chunk in research_agent.run(intake_session):
             if isinstance(research_chunk, dict):

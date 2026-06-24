@@ -477,6 +477,21 @@ class SessionRepo:
         return session
     
 class DoctorRepo:
+    async def get_or_create_doctor_session(self, db: AsyncSession, user_id: uuid.UUID, chat_session_id: uuid.UUID, thread_id: str) -> DoctorSession:
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+        if isinstance(chat_session_id, str):
+            chat_session_id = uuid.UUID(chat_session_id)
+        stmt = select(DoctorSession).where(
+            DoctorSession.user_id == user_id,
+            DoctorSession.chat_session_id == chat_session_id,
+        )
+        session = (await db.execute(stmt)).scalar_one_or_none()
+        if session is not None:
+            return session
+
+        return await self.create_doctor_session(db, user_id, chat_session_id, thread_id)
+
     async def create_doctor_session(self, db: AsyncSession, user_id: uuid.UUID, chat_session_id: uuid.UUID, thread_id: str) -> DoctorSession:
         if isinstance(user_id, str):
             user_id = uuid.UUID(user_id)

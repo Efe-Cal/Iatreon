@@ -12,6 +12,7 @@ router = APIRouter()
 
 class ResearchRequest(BaseModel):
     intake_id: UUID
+    session_id: UUID | None = None
 
 
 @router.post('/research', response_class=EventSourceResponse)
@@ -19,7 +20,7 @@ async def stream_research(research_request: ResearchRequest, request: Request) -
     user_id = get_user_id_or_400(request)
     token = require_encryption_context(request)
     try:
-        async for event in stream_research_service(research_request.intake_id, user_id):
+        async for event in stream_research_service(research_request.intake_id, user_id, research_request.session_id):
             yield event
     finally:
         clear_encryption_context(token)

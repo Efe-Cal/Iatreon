@@ -19,9 +19,14 @@ async def stream_doctor_chat_service(chat_request: ChatRequest, user_id: str) ->
     doctor_agent = DoctorAgent()
     
     async with unit_of_work() as db:
-        doctor_session: DoctorSession = await doctor_repo.create_doctor_session(db, user_id, chat_request.session_id, chat_request.conversation_id)
+        doctor_session: DoctorSession = await doctor_repo.get_or_create_doctor_session(
+            db,
+            user_id,
+            chat_request.session_id,
+            chat_request.conversation_id,
+        )
     
-    yield {"type": "session_started", "session_id": doctor_session.id, "conversation_id": chat_request.conversation_id}
+    yield {"type": "session_started", "session_id": chat_request.session_id, "conversation_id": chat_request.conversation_id}
 
     async for event in doctor_agent.run_doctor(chat_request.message, doctor_session.id, user_id):
         yield event
