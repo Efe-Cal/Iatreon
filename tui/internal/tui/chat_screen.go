@@ -127,14 +127,14 @@ func newChatModelForAgent(kind AgentKind, userid string, session_id string, sess
 		history: []messageItem{
 			{role: "system", text: handler.Welcome()},
 		},
-		input:        ti,
-		viewport:     vp,
-		spinner:      sp,
-		aiRenderer:   aiRenderer,
-		userRenderer: userRenderer,
-		toolSpinner:  spinner.New(spinner.WithSpinner(spinner.Points)),
-		sessionID:    session_id,
-		sessionKey:   sessionKey,
+		input:         ti,
+		viewport:      vp,
+		spinner:       sp,
+		aiRenderer:    aiRenderer,
+		userRenderer:  userRenderer,
+		toolSpinner:   spinner.New(spinner.WithSpinner(spinner.Points)),
+		sessionID:     session_id,
+		sessionKey:    sessionKey,
 		footerActions: handler.Footer(),
 	}
 }
@@ -453,7 +453,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 				m.history = append(m.history, messageItem{role: "tool", text: msg.content, toolMessage: msg.toolMessage})
 			}
 		}
-		m.refreshViewport()
+		m.refreshViewport(true)
 		return *m, waitForChunk(msg.ch)
 
 	case continueAgent:

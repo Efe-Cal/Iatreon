@@ -11,12 +11,13 @@ from db.db import checkpointer_manager
 
 load_dotenv()
 
-checkpointer = checkpointer_manager.get_checkpointer()
-
-
 class DoctorAgent:
     def __init__(self):
-        self.agent = create_agent_by_type("doctor", tools=[], checkpointer=checkpointer)
+        self.agent = create_agent_by_type(
+            "doctor",
+            tools=[],
+            checkpointer=checkpointer_manager.get_checkpointer(),
+        )
 
     async def run_doctor(self, message: str, conversation_id: str, user_id: str) -> AsyncGenerator[str | dict | tuple[IntakeProfile, list[dict[str, str]]], None]:
         config: RunnableConfig = {"configurable": {"thread_id": conversation_id}}
@@ -25,7 +26,7 @@ class DoctorAgent:
             {"role": "assistant", "content": "What brings you in today?"}
         ]
 
-        self.agent.update_state(config=config, values={"messages": messages})
+        await self.agent.aupdate_state(config=config, values={"messages": messages})
         
         async for event in self.agent.astream_events(
             {"messages": [{"role": "user", "content": message}]},

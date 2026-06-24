@@ -62,3 +62,4 @@ To start the TUI application:
 ```bash
 python -m cli.cli
 ```
+

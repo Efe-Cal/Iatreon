@@ -1,9 +1,22 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import diagnosis, intake, research, user, session, doctor
+from db.db import checkpointer_manager
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await checkpointer_manager.init_pool()
+    try:
+        yield
+    finally:
+        await checkpointer_manager.close_pool()
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

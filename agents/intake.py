@@ -30,25 +30,36 @@ async def infer_condition(summary: str) -> str:
     
     return await run_inference(summary)
 
-checkpointer = checkpointer_manager.get_checkpointer()
+agent = None
 
-agent = create_agent_by_type("intake", tools=[end_of_intake, infer_condition], checkpointer=checkpointer)
+
+def get_intake_agent():
+    global agent
+    if agent is None:
+        agent = create_agent_by_type(
+            "intake",
+            tools=[end_of_intake, infer_condition],
+            checkpointer=checkpointer_manager.get_checkpointer(),
+        )
+    return agent
 
 #TODO: Have the model NOT produce an output normally in conversation. all we need will be produced at structured call
 
 async def run_intake_cli(message: str, conversation_id: str, user_id: str) -> AsyncGenerator[str | dict | tuple[IntakeProfile, list[dict[str, str]]], None]:
+    agent = get_intake_agent()
     config: RunnableConfig = {"configurable": {"thread_id": conversation_id}}
     messages = [
         {"role": "system", "content": await get_user_info(user_id=user_id)},
         {"role": "assistant", "content": "What brings you in today?"}
     ]
 
-    agent.update_state(config=config, values={"messages": messages})
+    await agent.aupdate_state(config=config, values={"messages": messages})
     
     end_intake_called = False
     infer_condition_active = False
     if message.strip() == ".":
-        message = await mock_patient_response(agent.get_state(config=config).values["messages"].copy())
+        state = await agent.aget_state(config=config)
+        message = await mock_patient_response(state.values["messages"].copy())
         yield f"**Patient:** {message}   \n\n\n\n\n"
 
     async for event in agent.astream_events(
@@ -63,13 +74,13 @@ async def run_intake_cli(message: str, conversation_id: str, user_id: str) -> As
             elif event.get("name") == "infer_condition":
                 infer_condition_active = True
                 # tool_input = event["data"]["input"]["summary"]
-                yield {"type": "tool_start", "name": "infer_condition", "tool_call_id": event["data"]["tool_call_id"]}
+                yield {"type": "tool_start", "name": "infer_condition", "tool_call_id": event["run_id"]}
             continue
 
         elif event["event"] == "on_tool_end":
             if event.get("name") == "infer_condition":
                 infer_condition_active = False
-                yield {"type": "tool_end", "name": "infer_condition", "tool_call_id": event["data"]["tool_call_id"]}
+                yield {"type": "tool_end", "name": "infer_condition", "tool_call_id": event["run_id"]}
             continue
 
         if event["event"] == "on_chat_model_stream":
@@ -85,7 +96,7 @@ async def run_intake_cli(message: str, conversation_id: str, user_id: str) -> As
         structured_model = model.with_structured_output(IntakeProfile)
 
         try:
-            conversation_state = agent.get_state(config=config)
+            conversation_state = await agent.aget_state(config=config)
             final_patient_data = await structured_model.ainvoke(conversation_state.values["messages"])
 
             yield f"I have compiled the final patient data."

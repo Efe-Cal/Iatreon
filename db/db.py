@@ -7,6 +7,14 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://app:app@localhost:5432/app")
 
+
+def psycopg_conninfo(database_url: str) -> str:
+    return (
+        database_url
+        .replace("postgresql+asyncpg://", "postgresql://")
+        .replace("postgresql+psycopg://", "postgresql://")
+    )
+
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
@@ -43,9 +51,13 @@ class Base(MappedAsDataclass, DeclarativeBase):
 class CheckpointerManager:
     def __init__(self):
         self._saver: AsyncPostgresSaver | None = None
+        self._context = None
 
     async def init_pool(self):
-        langgraph_url = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql+psycopg://")
+        if self._saver is not None:
+            return
+
+        langgraph_url = psycopg_conninfo(DATABASE_URL)
         
         self._context = AsyncPostgresSaver.from_conn_string(langgraph_url)
         self._saver = await self._context.__aenter__()
@@ -54,6 +66,8 @@ class CheckpointerManager:
     async def close_pool(self):
         if self._context:
             await self._context.__aexit__(None, None, None)
+            self._context = None
+            self._saver = None
 
     def get_checkpointer(self) -> AsyncPostgresSaver:
         if self._saver is None:

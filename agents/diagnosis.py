@@ -95,26 +95,8 @@ Medical Summary: {self.intake_session.medical_summary}"""
         
         logging.debug(f"Diagnosis agent input message: {user_message}")
         
-        response = await self.agent.ainvoke(user_message)
+        response = await self.agent.ainvoke({"messages": [{"role": "user", "content": user_message}]}, version="v2")
         print(response["structured_response"])
-        return response["messages"][-1].content
+        yield response["messages"][-1].content
     
 
-if __name__ == "__main__":
-    import asyncio
-    from uuid import UUID
-    
-    async def main():
-        # Example usage
-        intake_session_id = UUID("your-intake-session-uuid-here")
-        research_session_id = UUID("your-research-session-uuid-here")  # Optional, can be None
-        
-        async with read_only_session() as db:
-            intake_session = await IntakeRepo().get_session(db, intake_session_id)
-            research_session = await ResearchRepo().get_research_session(db, research_session_id) if research_session_id else None
-            
-            diagnosis_agent = DiagnosisAgent(intake_session, research_session)
-            diagnosis_report = await diagnosis_agent.diagnose()
-            print(diagnosis_report)
-    
-    asyncio.run(main())

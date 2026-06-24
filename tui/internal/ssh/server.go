@@ -40,6 +40,8 @@ type unlockResponse struct {
 	HasProfile bool   `json:"has_profile"`
 }
 
+const agentForwardingWait = 2 * time.Second
+
 func getUserWithPubKey(ctx ssh.Context, key ssh.PublicKey) bool {
 	authKeyBytes := gossh.MarshalAuthorizedKey(key)
 
@@ -69,8 +71,8 @@ func getUserWithPubKey(ctx ssh.Context, key ssh.PublicKey) bool {
 }
 
 func deriveSessionKEK(s ssh.Session, userID string) ([]byte, error) {
-	if !ssh.AgentRequested(s) {
-		return nil, fmt.Errorf("SSH agent forwarding is required; reconnect with ssh -A")
+	if err := waitForAgentForwarding(s); err != nil {
+		return nil, err
 	}
 
 	l, err := ssh.NewAgentListener()
@@ -130,6 +132,30 @@ func deriveSessionKEK(s ssh.Session, userID string) ([]byte, error) {
 		return nil, err
 	}
 	return kek, nil
+}
+
+func waitForAgentForwarding(s ssh.Session) error {
+	if ssh.AgentRequested(s) {
+		return nil
+	}
+
+	timer := time.NewTimer(agentForwardingWait)
+	defer timer.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.Context().Done():
+			return s.Context().Err()
+		case <-timer.C:
+			return fmt.Errorf("SSH agent forwarding is required; reconnect with ssh -A and make sure your local ssh-agent is running with the login key loaded")
+		case <-ticker.C:
+			if ssh.AgentRequested(s) {
+				return nil
+			}
+		}
+	}
 }
 
 func unlockUserSession(userID string, sessionKEK []byte) (bool, error) {
