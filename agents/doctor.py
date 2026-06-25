@@ -21,12 +21,12 @@ class DoctorAgent:
 
     async def run_doctor(self, message: str, conversation_id: str, user_id: str) -> AsyncGenerator[str | dict | tuple[IntakeProfile, list[dict[str, str]]], None]:
         config: RunnableConfig = {"configurable": {"thread_id": conversation_id}}
-        messages = [
-            {"role": "system", "content": await get_user_info(user_id=user_id)},
-            {"role": "assistant", "content": "What brings you in today?"}
-        ]
-
-        await self.agent.aupdate_state(config=config, values={"messages": messages})
+        state = await self.agent.aget_state(config=config)
+        if not state.values.get("messages"):
+            messages = [
+                {"role": "system", "content": await get_user_info(user_id=user_id)}
+            ]
+            await self.agent.aupdate_state(config=config, values={"messages": messages})
         
         async for event in self.agent.astream_events(
             {"messages": [{"role": "user", "content": message}]},

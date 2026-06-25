@@ -195,8 +195,10 @@ func (m *chatModel) renderHistory() string {
 	}
 	if m.streamingMessage != "" {
 		// Show the partial response as it streams in.
-		sb.WriteString(m.agentLabel())
-		sb.WriteString("\n")
+		if !m.hasAgentLabelInCurrent() {
+			sb.WriteString(m.agentLabel())
+			sb.WriteString("\n")
+		}
 		sb.WriteString(m.renderMarkdown(m.streamingMessage, false))
 		sb.WriteString("\n")
 	}
@@ -264,8 +266,13 @@ func (m *chatModel) renderMessage(msg messageItem) string {
 		return lipgloss.JoinVertical(lipgloss.Left, label, body)
 	case "ai":
 		label := m.agentLabel()
+		if msg.text == "" {
+			return label
+		}
 		body := m.renderMarkdown(msg.text, false)
 		return lipgloss.JoinVertical(lipgloss.Left, label, body)
+	case "ai_body":
+		return m.renderMarkdown(msg.text, false)
 	case "system":
 		return systemStyle.Render(msg.text)
 	case "seperator":
@@ -275,6 +282,27 @@ func (m *chatModel) renderMessage(msg messageItem) string {
 	default:
 		return msg.text
 	}
+}
+
+func (m *chatModel) hasAgentLabelInCurrent() bool {
+	for i := len(m.history) - 1; i >= 0; i-- {
+		if m.history[i].role == "ai" {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *chatModel) addStreamingMsgToHistory() {
+	if m.streamingMessage == "" {
+		return
+	}
+	role := "ai"
+	if m.hasAgentLabelInCurrent() {
+		role = "ai_body"
+	}
+	m.history = append(m.history, messageItem{role: role, text: m.streamingMessage})
+	m.streamingMessage = ""
 }
 
 func (m *chatModel) refreshViewport(scrollToBottom ...bool) {
@@ -420,10 +448,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			return *m, nil
 		}
 		if msg.done {
-			if m.streamingMessage != "" {
-				m.history = append(m.history, messageItem{role: "ai", text: m.streamingMessage})
-				m.streamingMessage = ""
-			}
+			m.addStreamingMsgToHistory()
 			if msg.content != "" {
 				m.history = append(m.history, messageItem{role: "system", text: msg.content})
 				m.isStreaming = false
@@ -439,11 +464,17 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		if msg.toolMessage.toolID == "" {
 			m.streamingMessage += msg.content
 		} else {
+			m.addStreamingMsgToHistory()
+			if !m.hasAgentLabelInCurrent() {
+				m.history = append(m.history, messageItem{role: "ai"})
+			}
+
 			found := false
 			log.Printf("Rendering tool message: %+v\n", msg.toolMessage)
 			for i := range m.history {
 				if m.history[i].toolMessage.toolID == msg.toolMessage.toolID {
 					m.history[i].toolMessage = msg.toolMessage
+					m.history[i].text = msg.content
 					found = true
 					break // Stop searching once found
 				}
@@ -487,7 +518,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			if m.invokeAgentWithEnter {
 				m.invokeAgentWithEnter = false
 				m.history = append(m.history, messageItem{role: "system", text: "Starting " + m.agent.AgentLabel() + "..."})
-				m.refreshViewport()
+				m.refreshViewport(true)
 				return *m, m.streamMessage(m.agent, m.conversationID, m.userid, "")
 			}
 			text := strings.TrimSpace(m.input.Value())
@@ -497,7 +528,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			m.history = append(m.history, messageItem{role: "user", text: text})
 			m.input.SetValue("")
 			m.isStreaming = true
-			m.refreshViewport()
+			m.refreshViewport(true)
 			cmds = append(cmds, m.streamMessage(m.agent, m.conversationID, m.userid, text))
 			cmds = append(cmds, m.spinner.Tick)
 			return *m, tea.Batch(cmds...)

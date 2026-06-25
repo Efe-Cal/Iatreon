@@ -48,12 +48,12 @@ def get_intake_agent():
 async def run_intake_cli(message: str, conversation_id: str, user_id: str) -> AsyncGenerator[str | dict | tuple[IntakeProfile, list[dict[str, str]]], None]:
     agent = get_intake_agent()
     config: RunnableConfig = {"configurable": {"thread_id": conversation_id}}
-    messages = [
-        {"role": "system", "content": await get_user_info(user_id=user_id)},
-        {"role": "assistant", "content": "What brings you in today?"}
-    ]
-
-    await agent.aupdate_state(config=config, values={"messages": messages})
+    state = await agent.aget_state(config=config)
+    if not state.values.get("messages"):
+        messages = [
+            {"role": "system", "content": await get_user_info(user_id=user_id)}
+        ]
+        await agent.aupdate_state(config=config, values={"messages": messages})
     
     end_intake_called = False
     infer_condition_active = False
