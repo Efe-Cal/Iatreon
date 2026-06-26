@@ -60,7 +60,7 @@ class DoctorSession(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id"))
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
     chat_session_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("chat_sessions.id"), default=None)
-    thread_id: Mapped[str] = mapped_column(String, default=None)
+    thread_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), default=None)
     chat_session: Mapped[Optional["ChatSession"]] = relationship(back_populates="doctor_session", foreign_keys=[chat_session_id], default=None)
 
 class WebSearchResult(Base):
