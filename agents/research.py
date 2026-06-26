@@ -9,7 +9,7 @@ from langgraph.config import RunnableConfig
 from langchain_core.tools import StructuredTool
 from langchain_core.messages import AIMessageChunk
 
-from agents.shared import create_agent_by_type, get_user_info
+from agents.shared import create_agent_by_type, get_user_info, _iter_stream_text
 from context.sources.openalex import OpenAlexClient
 from db.models import Article, BookSection, WebSearchResult
 from db.repositories import ArticleRepo, BookSectionRepo, ResearchRepo, WebSearchResultRepo
@@ -183,7 +183,7 @@ class ResearchAgent:
             ]
         )
         return f"<source>\nBook search results for query '{query}':\n{formatted_books}\n</source>"
-            
+
     async def openalex_search(self, query: str) -> str:
         """
         Perform a semantic search using the OpenAlex API for the given query.
@@ -220,6 +220,42 @@ class ResearchAgent:
 
         return f"<source>\nOpenAlex search results for query '{query}':\n{formatted_articles}\n</source>"
             
+    def _extract_event_text(self, value) -> str:
+        if value is None:
+            return ""
+
+        if isinstance(value, str):
+            return value
+
+        if isinstance(value, list):
+            block_text = "".join(_iter_stream_text(value))
+            if block_text:
+                return block_text
+
+            for item in reversed(value):
+                text = self._extract_event_text(item)
+                if text:
+                    return text
+            return ""
+
+        if hasattr(value, "content"):
+            return "".join(_iter_stream_text(value.content))
+
+        if isinstance(value, dict):
+            if "messages" in value and isinstance(value["messages"], list):
+                for message in reversed(value["messages"]):
+                    text = self._extract_event_text(message)
+                    if text:
+                        return text
+                return ""
+
+            for key in ("output", "content"):
+                text = self._extract_event_text(value.get(key))
+                if text:
+                    return text
+
+        return ""
+
     async def run(self, profile: IntakeSessionData) -> AsyncGenerator[dict | tuple[str, dict[int, dict]], None]:
         symptoms = ', '.join(s["name"] for s in profile.symptoms) if profile.symptoms else "None provided"
         red_flags = ', '.join(profile.red_flags) if profile.red_flags else "None provided"
@@ -243,24 +279,21 @@ Medical Summary: {medical_summary}
 """
         messages = [{"role": "user", "content": user_message}]
         parts = []
+        fallback_report = ""
         async for event in self.agent.astream_events({"messages": messages}, config=self.config, version="v2"):
             print(f"Received event: {event['event']}")
             if event["event"] == "on_chat_model_stream":
                 chunk: AIMessageChunk = event["data"]["chunk"]
-                # print(f"Received chunk: {chunk.content}")
-                if chunk.content:
-                    if isinstance(chunk.content, str):
-                        print(chunk.content, end="", flush=True)
-                        parts.append(chunk.content)
-                    elif isinstance(chunk.content, list):
-                        for block in chunk.content:
-                            print(f"Processing block: {block}")
-                            if block["type"] == "text":
-                                text = block["text"]
-                                print(text, end="", flush=True)
-                                parts.append(text)
-                                yield {"type": "message", "content": text}
-                    
+                for text in _iter_stream_text(chunk.content):
+                    print(text, end="", flush=True)
+                    parts.append(text)
+                    yield {"type": "message", "content": text}
+
+            if event["event"] in ["on_chat_model_end", "on_chain_end"]:
+                fallback_text = self._extract_event_text(event.get("data", {}))
+                if fallback_text:
+                    fallback_report = fallback_text
+
             if event["event"] in ["on_tool_start", "on_tool_end"]:
                 print(event["run_id"])
                 # content = event["data"]["input"]["query"] if "query" in event["data"]["input"] else event["data"]["input"]["url"] if "url" in event["data"]["input"] else str(event["data"]["input"])
@@ -268,10 +301,13 @@ Medical Summary: {medical_summary}
                 content = inp.get("query") or inp.get("url") or str(inp)
                 yield {"type": event["event"].replace("on_", ""), "name": event["name"], "content": content, "tool_call_id": event["run_id"]}
 
-        final_message = "".join(parts)
-        
+        final_message = "".join(parts) or fallback_report
+        if not parts and final_message:
+            print(final_message, end="", flush=True)
+            # yield {"type": "message", "content": final_message}
+
         research_report = final_message if isinstance(final_message, str) else str(final_message)
-        
+
         citations = await self.build_citation_manifest(research_report)
 
         yield (research_report, citations)
@@ -323,4 +359,3 @@ Medical Summary: {medical_summary}
             seen_citations.add(citation_num)
 
         return citation_manifest
-

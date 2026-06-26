@@ -96,7 +96,7 @@ Medical Summary: {self.intake_session.medical_summary}"""
         logging.debug(f"Diagnosis agent input message: {user_message}")
         
         response = await self.agent.ainvoke({"messages": [{"role": "user", "content": user_message}]}, version="v2")
-        print(response["structured_response"])
-        yield response["messages"][-1].content
+        report = response.get("structured_response")
+        yield report.model_dump() if hasattr(report, "model_dump") else report or response["messages"][-1].content
     
 

@@ -54,6 +54,10 @@ type chatModel struct {
 	footerActions []string
 
 	invokeAgentWithEnter bool
+	reportReady          bool
+	report               string
+	citations            []citation
+	researchSessionID    string
 }
 
 func (m chatModel) UpdateFooter(a string, idx int) {
@@ -163,6 +167,7 @@ func (m *chatModel) SetSize(w, h int) {
 
 // renderMarkdown renders markdown text, falling back to plain text on error.
 func (m *chatModel) renderMarkdown(text string, isUser bool) string {
+	text = formatReferences(text)
 	r := m.aiRenderer
 	if isUser && m.userRenderer != nil {
 		r = m.userRenderer
@@ -286,8 +291,11 @@ func (m *chatModel) renderMessage(msg messageItem) string {
 
 func (m *chatModel) hasAgentLabelInCurrent() bool {
 	for i := len(m.history) - 1; i >= 0; i-- {
-		if m.history[i].role == "ai" {
+		switch m.history[i].role {
+		case "ai":
 			return true
+		case "user", "system", "seperator":
+			return false
 		}
 	}
 	return false
@@ -313,12 +321,16 @@ func (m *chatModel) refreshViewport(scrollToBottom ...bool) {
 }
 
 type chunkMsg struct {
-	content        string
-	err            error
-	done           bool
-	sessionID      string
-	conversationID string
-	ch             chan chunkMsg
+	content           string
+	err               error
+	done              bool
+	role              string
+	report            string
+	citations         []citation
+	researchSessionID string
+	sessionID         string
+	conversationID    string
+	ch                chan chunkMsg
 	toolMessage
 }
 
@@ -449,8 +461,21 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		}
 		if msg.done {
 			m.addStreamingMsgToHistory()
+			if msg.report != "" {
+				m.report = msg.report
+				m.citations = msg.citations
+				m.researchSessionID = msg.researchSessionID
+				m.reportReady = true
+				m.isStreaming = false
+				m.refreshViewport(true)
+				return *m, nil
+			}
 			if msg.content != "" {
-				m.history = append(m.history, messageItem{role: "system", text: msg.content})
+				role := msg.role
+				if role == "" {
+					role = "system"
+				}
+				m.history = append(m.history, messageItem{role: role, text: msg.content})
 				m.isStreaming = false
 				m.history = append(m.history, messageItem{role: "seperator", text: m.agent.AgentLabel()})
 				m.history = append(m.history, messageItem{role: "system", text: "Press Enter to continue to the next step."})

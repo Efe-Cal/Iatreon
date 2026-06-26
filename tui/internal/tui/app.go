@@ -13,6 +13,7 @@ const (
 	dashboardScreen screen = iota
 	setupScreen
 	chatScreen
+	reportScreen
 )
 
 type model struct {
@@ -20,6 +21,7 @@ type model struct {
 	dashboard  dashboardModel
 	setup      setupModel
 	chat       chatModel
+	report     reportModel
 	width      int
 	height     int
 	userid     string
@@ -77,6 +79,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dashboard.SetSize(wsm.Width, wsm.Height-chromeH)
 		m.setup.SetSize(wsm.Width, wsm.Height-chromeH)
 		m.chat.SetSize(wsm.Width, wsm.Height-chromeH)
+		m.report.SetSize(wsm.Width, wsm.Height-chromeH)
 		return m, nil
 	}
 
@@ -92,6 +95,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateSetup(msg)
 	case chatScreen:
 		return m.updateChat(msg)
+	case reportScreen:
+		return m.updateReport(msg)
 	default:
 		return m, nil
 	}
@@ -110,6 +115,11 @@ func (m *model) initDashboard(dm dashboardModel) dashboardModel {
 func (m *model) initSetup(sm setupModel) setupModel {
 	sm.SetSize(m.width, m.height-headerFooterHeight)
 	return sm
+}
+
+func (m *model) initReport(rm reportModel) reportModel {
+	rm.SetSize(m.width, m.height-headerFooterHeight)
+	return rm
 }
 
 func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -166,6 +176,31 @@ func (m model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.chat.reportReady {
+		m.report = m.initReport(newReportModel(m.chat.report, m.chat.citations, m.chat.researchSessionID, m.userid, m.sessionKey))
+		m.chat.reportReady = false
+		m.active = reportScreen
+		return m, m.report.Init()
+	}
+
+	return m, cmd
+}
+
+func (m model) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.report.Update(msg)
+	if report, ok := updated.(reportModel); ok {
+		m.report = report
+	}
+
+	if m.report.close {
+		m.chat.agent = newAgentHandler(AgentDiagnosis)
+		m.chat.invokeAgentWithEnter = true
+		m.chat.UpdateFooter("Enter Start Diagnosis agent", 0)
+		m.report = m.initReport(newReportModel("", nil, "", m.userid, m.sessionKey))
+		m.active = chatScreen
+		return m, nil
+	}
+
 	return m, cmd
 }
 
@@ -182,6 +217,8 @@ func (m model) View() string {
 		body = m.setup.View()
 	case chatScreen:
 		body = m.chat.View()
+	case reportScreen:
+		body = m.report.View()
 	default:
 		body = "Unknown screen"
 	}
@@ -202,6 +239,8 @@ func (m model) chrome() (string, []string) {
 			return "", nil
 		}
 		return m.chat.agent.Header(), m.chat.footerActions
+	case reportScreen:
+		return "Iatreon - Research Report", []string{"↑/↓ Scroll", "c Citations", "Tab Focus", "j/k Citation", "Esc Continue", "Ctrl+C Quit"}
 	default:
 		return "Iatreon - Dashboard", m.dashboard.footer()
 	}

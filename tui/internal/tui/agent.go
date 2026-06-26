@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 )
 
 type AgentKind int
@@ -21,6 +22,22 @@ type toolMessage struct {
 	toolID   string
 	toolName string
 	running  bool
+}
+
+type diagnosisReport struct {
+	PrimaryDiagnosis    string                      `json:"primary_diagnosis"`
+	Confidence          string                      `json:"confidence"`
+	Differential        []diagnosisDifferentialItem `json:"differential"`
+	ReasoningSummary    string                      `json:"reasoning_summary"`
+	RecommendedNextSteps []string                    `json:"recommended_next_steps"`
+	RedFlagsToMonitor   []string                    `json:"red_flags_to_monitor"`
+}
+
+type diagnosisDifferentialItem struct {
+	Condition          string   `json:"condition"`
+	Likelihood         string   `json:"likelihood"`
+	SupportingEvidence []string `json:"supporting_evidence"`
+	AgainstEvidence    []string `json:"against_evidence"`
 }
 
 type AgentHandler interface {
@@ -154,6 +171,43 @@ func (*researchHandler) Welcome() string {
 }
 func (*researchHandler) AgentLabel() string { return "Researcher:" }
 
+type citation struct {
+	Title          string `json:"title"`
+	Type           string `json:"type"`
+	ID             string `json:"id"`
+	CitationNumber int    `json:"citation_num"`
+	Query          string `json:"query"`
+	URL            string `json:"url"`
+	DOI            string `json:"doi"`
+}
+
+func parseCitations(raw json.RawMessage) []citation {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+
+	var byNumber map[string]citation
+	if err := json.Unmarshal(raw, &byNumber); err == nil {
+		citations := make([]citation, 0, len(byNumber))
+		for key, c := range byNumber {
+			if c.CitationNumber == 0 {
+				if n, err := strconv.Atoi(key); err == nil {
+					c.CitationNumber = n
+				}
+			}
+			citations = append(citations, c)
+		}
+		return citations
+	}
+
+	var list []citation
+	if err := json.Unmarshal(raw, &list); err == nil {
+		return list
+	}
+
+	return nil
+}
+
 func (*researchHandler) BuildRequest(conversationID, userid, message, sessionID string, sessionKey []byte) (*http.Request, error) {
 	payload := struct {
 		IntakeID  string `json:"intake_id"`
@@ -170,8 +224,9 @@ func (*researchHandler) HandleEvent(ev sseEvent) chunkMsg {
 	switch ev.Type {
 	case "research_complete":
 		var data struct {
-			Report    string          `json:"report"`
-			Citations json.RawMessage `json:"citations"`
+			Report            string          `json:"report"`
+			Citations         json.RawMessage `json:"citations"`
+			ResearchSessionID string          `json:"research_session_id"`
 		}
 		if err := json.Unmarshal(ev.Data, &data); err != nil {
 			return chunkMsg{
@@ -179,20 +234,17 @@ func (*researchHandler) HandleEvent(ev sseEvent) chunkMsg {
 				done:    true,
 			}
 		}
-		content := "\n\n✅ **Research complete.** See the report below.\n\n**Report:**\n"
-		if data.Report != "" {
-			content += data.Report
-		} else {
-			content += "_(no report content)_"
+		report := data.Report
+		if report == "" {
+			report = "_(no report content)_"
 		}
-		// TODO: add citations
-		// if len(data.Citations) > 0 {
-		// 	content += "\n\n**Citations:**\n"
-		// 	for _, c := range data.Citations {
-		// 		content += fmt.Sprintf("- %s\n", string(c))
-		// 	}
-		// }
-		return chunkMsg{content: content, done: true}
+		return chunkMsg{
+			content:           "\n\n✅ **Research complete.** Opening report.",
+			report:            report,
+			citations:         parseCitations(data.Citations),
+			researchSessionID: data.ResearchSessionID,
+			done:              true,
+		}
 
 	}
 
@@ -232,11 +284,80 @@ func (*diagnosisHandler) BuildRequest(conversationID, userid, message, sessionID
 	return buildAgentRequest("/diagnose", userid, sessionKey, payload)
 }
 
+func formatDiagnosisList(title string, items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	var out string
+	out += "\n## " + title + "\n"
+	for _, item := range items {
+		out += "- " + item + "\n"
+	}
+	return out
+}
+
+func formatDiagnosisInlineList(title string, items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	out := "   - " + title + ":\n"
+	for _, item := range items {
+		out += "     - " + item + "\n"
+	}
+	return out
+}
+
+func formatDiagnosisReport(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "_(no diagnosis content)_"
+	}
+
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		var nested json.RawMessage
+		if err := json.Unmarshal([]byte(text), &nested); err == nil {
+			return formatDiagnosisReport(nested)
+		}
+		return text
+	}
+
+	var report diagnosisReport
+	if err := json.Unmarshal(raw, &report); err != nil {
+		return string(raw)
+	}
+
+	out := "## Diagnosis\n\n"
+	if report.PrimaryDiagnosis != "" {
+		out += "**Primary diagnosis:** " + report.PrimaryDiagnosis + "\n\n"
+	}
+	if report.Confidence != "" {
+		out += "**Confidence:** " + report.Confidence + "\n\n"
+	}
+	if report.ReasoningSummary != "" {
+		out += "## Reasoning\n" + report.ReasoningSummary + "\n"
+	}
+	if len(report.Differential) > 0 {
+		out += "\n## Differential Diagnoses\n"
+		for i, item := range report.Differential {
+			out += fmt.Sprintf("%d. **%s**", i+1, item.Condition)
+			if item.Likelihood != "" {
+				out += " (" + item.Likelihood + ")"
+			}
+			out += "\n"
+			out += formatDiagnosisInlineList("Supporting evidence", item.SupportingEvidence)
+			out += formatDiagnosisInlineList("Against evidence", item.AgainstEvidence)
+		}
+	}
+	out += formatDiagnosisList("Recommended Next Steps", report.RecommendedNextSteps)
+	out += formatDiagnosisList("Red Flags To Monitor", report.RedFlagsToMonitor)
+	return out
+}
+
 func (*diagnosisHandler) HandleEvent(ev sseEvent) chunkMsg {
 	switch ev.Type {
 	case "diagnosis_complete":
 		var data struct {
-			Report string `json:"report"`
+			Report json.RawMessage `json:"report"`
 		}
 		if err := json.Unmarshal(ev.Data, &data); err != nil {
 			return chunkMsg{
@@ -245,7 +366,8 @@ func (*diagnosisHandler) HandleEvent(ev sseEvent) chunkMsg {
 			}
 		}
 		return chunkMsg{
-			content: fmt.Sprintf("\n\n✅ **Diagnosis complete.** See the report below.\n\n**Report:**\n%s", data.Report),
+			content: "\n\n✅ **Diagnosis complete.**\n\n" + formatDiagnosisReport(data.Report),
+			role:    "ai",
 			done:    true,
 		}
 	}
