@@ -1,5 +1,4 @@
 import os
-import random
 import asyncio
 import re
 import tempfile
@@ -7,11 +6,8 @@ import tempfile
 from urllib.parse import unquote, urlparse
 from pypdf import PdfReader
 import httpx
-import markitdown_ocr
-from context.processing.ocr import MistralOCRService
-from markitdown import MarkItDown
+from liteparse import LiteParse
 
-markitdown_ocr._ocr_service.LLMVisionOCRService = MistralOCRService
 
 DOI_PATTERN = re.compile(r"10\.\d{4,9}/[-._;()/:A-Z0-9]+", re.IGNORECASE)
 PDF_TEXT_MARKERS = re.compile(r"pdf|download|full\s*text", re.IGNORECASE)
@@ -19,11 +15,11 @@ NON_PDF_EXTENSIONS = {
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".tif", ".tiff"
 }
 
-mitd = MarkItDown(
-    enable_plugins=True,
+parser = LiteParse(
+    ocr_enabled=True,
+    output_format="markdown",
 )
 
-#TODO: use liteparse
 class PDFClient:
     def _is_probable_pdf_url(self, url: str) -> bool:
         parsed = urlparse(url)
@@ -109,6 +105,10 @@ class PDFClient:
                 pages.append(cleaned)
 
         return "\n\n".join(pages)
+
+    def extract_text_from_pdf_liteparse(self, pdf_path: str) -> str:
+        return parser.parse(pdf_path)
+         
     
     async def get_pdf_content(self, url: str) -> str:
         async with httpx.AsyncClient(timeout=120) as client:
@@ -121,7 +121,7 @@ class PDFClient:
                     tmp_file.write(pdf_bytes)
                     tmp_path = tmp_file.name
 
-                return self.extract_text_from_pdf(tmp_path)
+                return self.extract_text_from_pdf_liteparse(tmp_path)
             finally:
                 if 'tmp_path' in locals() and os.path.exists(tmp_path):
                     os.remove(tmp_path)
