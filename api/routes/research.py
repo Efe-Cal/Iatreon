@@ -1,4 +1,4 @@
-﻿from typing import AsyncIterable
+﻿from typing import AsyncIterable, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Request
@@ -14,6 +14,7 @@ router = APIRouter()
 class ResearchRequest(BaseModel):
     intake_id: UUID
     session_id: UUID | None = None
+    research_effort: Literal["fast", "standard", "deep"] = "standard"
 
 
 class CitationTextRequest(BaseModel):
@@ -26,7 +27,12 @@ async def stream_research(research_request: ResearchRequest, request: Request) -
     user_id = get_user_id_or_400(request)
     token = require_encryption_context(request)
     try:
-        async for event in stream_research_service(research_request.intake_id, user_id, research_request.session_id):
+        async for event in stream_research_service(
+            research_request.intake_id,
+            user_id,
+            research_request.session_id,
+            research_request.research_effort,
+        ):
             yield event
     finally:
         clear_encryption_context(token)

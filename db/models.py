@@ -53,6 +53,8 @@ class ResearchSession(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
     encrypted_payload: Mapped[Optional[str]] = mapped_column(Text, default=None)
     intake_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid(as_uuid=True), ForeignKey("intake_sessions.id"), default=None)
+    triggered_by: Mapped[str] = mapped_column(String, default="user")
+    research_effort: Mapped[str] = mapped_column(String, default="standard")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
 
 class DoctorSession(Base):

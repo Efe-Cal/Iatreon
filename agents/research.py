@@ -1,8 +1,11 @@
 import asyncio
+import logging
 import re
 from typing import AsyncGenerator
 from dotenv import load_dotenv
 from uuid import UUID
+import os
+from typing import Literal
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import RunnableConfig
@@ -10,6 +13,7 @@ from langchain_core.tools import StructuredTool
 from langchain_core.messages import AIMessageChunk
 
 from agents.shared import create_agent_by_type, get_user_info, _iter_stream_text
+from agents.inference import run_research_inference
 from context.sources.openalex import OpenAlexClient
 from db.models import Article, BookSection, WebSearchResult
 from db.repositories import ArticleRepo, BookSectionRepo, ResearchRepo, WebSearchResultRepo
@@ -23,11 +27,40 @@ from context.sources.get_ncbi_books import BookshelfClient
 load_dotenv()
 
 
-#TODO: Have another agent (inference) guess some probable diseases based on the profile then use that in research agent
-#TODO ^^ Maybe run diagnosis agent with a fast model as a middle step
-#TODO: Have "research effort" that changes the prompt (tell the model to be fast) and the model tier 
+ResearchEffort = Literal["fast", "standard", "deep"]
+
+EFFORT_SETTINGS = {
+    "fast": {
+        "temperature": 0.2,
+        "model_env": "RESEARCH_AGENT_FAST_MODEL",
+        "max_articles": 3,
+        "web_results": 3,
+        "openalex_results": 5,
+        "prompt": "Be concise. Run only the searches needed to answer the focused clinical question.",
+    },
+    "standard": {
+        "temperature": 0.7,
+        "model_env": "RESEARCH_AGENT_MODEL",
+        "max_articles": 5,
+        "web_results": 5,
+        "openalex_results": 10,
+        "prompt": "Produce a comprehensive, citation-grounded report.",
+    },
+    "deep": {
+        "temperature": 0.5,
+        "model_env": "RESEARCH_AGENT_DEEP_MODEL",
+        "max_articles": 8,
+        "web_results": 8,
+        "openalex_results": 15,
+        "prompt": "Research deeply and check major guideline, review, and urgent-differential branches before finalizing.",
+    },
+}
+
+
 class ResearchAgent:
-    def __init__(self, research_repo: ResearchRepo, research_session_id: UUID):
+    def __init__(self, research_repo: ResearchRepo, research_session_id: UUID, effort: ResearchEffort = "standard"):
+        self.effort = effort if effort in EFFORT_SETTINGS else "standard"
+        self.effort_settings = EFFORT_SETTINGS[self.effort]
         self.checkpointer = InMemorySaver()
         self.session_id = research_session_id
         self.config: RunnableConfig = {"configurable": {"thread_id": str(self.session_id)}}
@@ -60,13 +93,17 @@ class ResearchAgent:
             name="openalex_search"
         )
         
+        model_name = os.getenv(self.effort_settings["model_env"]) or os.getenv("RESEARCH_AGENT_MODEL")
+        
         self.agent = create_agent_by_type("research", tools=[
             self.web_search_tool,
             self.fetch_web_content_tool,
             self.search_medical_literature_tool,
             self.book_search_tool,
             self.openalex_search_tool],
-                                          checkpointer=self.checkpointer)
+                        checkpointer=self.checkpointer,
+                        temperature=self.effort_settings["temperature"],
+                        model_name=model_name)
 
         self.article_repo = ArticleRepo()
         self.book_section_repo = BookSectionRepo()
@@ -79,7 +116,7 @@ class ResearchAgent:
     
     async def _web_search(self, query: str) -> str:
         print(f"Performing web search for query: {query}")
-        results = await asyncio.to_thread(web_search, query)
+        results = await asyncio.to_thread(web_search, query, self.effort_settings["web_results"])
 
         async with self._citation_lock:
             start = self.citation_num + 1
@@ -126,6 +163,7 @@ class ResearchAgent:
             str: A formatted string containing the search results, including relevant articles and book sections.
         """
         # print(f"Running medical literature search for query: {query}")
+        max_articles = min(max_articles, self.effort_settings["max_articles"])
         results = await run_pipeline(query, max_articles=max_articles, include_books=include_books)
         articles = results["articles"]
         books = results["books"]
@@ -195,7 +233,11 @@ class ResearchAgent:
             str: A formatted string containing the search results from OpenAlex.
         """
         open_alex_client = OpenAlexClient()
-        articles = await open_alex_client.search_directly(query=query, semantic=True)
+        articles = await open_alex_client.search_directly(
+            query=query,
+            max_results=self.effort_settings["openalex_results"],
+            semantic=True,
+        )
 
         async with self._citation_lock:
             start = self.citation_num + 1
@@ -256,18 +298,28 @@ class ResearchAgent:
 
         return ""
 
-    async def run(self, profile: IntakeSessionData) -> AsyncGenerator[dict | tuple[str, dict[int, dict]], None]:
+    async def run(self, profile: IntakeSessionData, research_question: str | None = None) -> AsyncGenerator[dict | tuple[str, dict[int, dict]], None]:
         symptoms = ', '.join(s["name"] for s in profile.symptoms) if profile.symptoms else "None provided"
         red_flags = ', '.join(profile.red_flags) if profile.red_flags else "None provided"
         medical_summary = profile.medical_summary if profile.medical_summary else "None provided"
 
         patient_profile = await get_user_info(user_id=profile.user_id)
+        inference_guidance = ""
+        inference_input = f"""Chief Complaint: {profile.chief_complaint}
+Symptoms: {symptoms}
+Red Flags: {red_flags}
+Medical Summary: {medical_summary}
+Research Question: {research_question or "General case research"}"""
+        try:
+            inference_guidance = await run_research_inference(inference_input)
+        except Exception:
+            logging.exception("Research inference failed; continuing without guidance.")
         
         user_message = f"""Given the following patient profile, perform research to gather relevant medical information. Use the tools at your disposal to search the web and medical literature for insights related to the patient's chief complaint, symptoms, and red flags. Summarize your findings in a comprehensive report.
 
 Prioritize urgent/emergent causes first when red flags are present. Normalize lay language into standard medical terminology and search both symptom-level and diagnosis-level queries. Clearly separate likely/common causes from urgent causes, and do not assume a definitive diagnosis.
 
-Produce a comprehensive, citation-grounded report
+{self.effort_settings["prompt"]}
 
 {patient_profile}
 
@@ -277,6 +329,10 @@ Symptoms: {symptoms}
 Red Flags: {red_flags}
 Medical Summary: {medical_summary}
 """
+        if research_question:
+            user_message += f"\n# Research Request\n{research_question}\n"
+        if inference_guidance:
+            user_message += f"\n# Inference Guidance For Search Focus\n{inference_guidance}\n"
         messages = [{"role": "user", "content": user_message}]
         parts = []
         fallback_report = ""

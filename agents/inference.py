@@ -1,7 +1,7 @@
 import logging
 from dotenv import load_dotenv
 
-from agents.shared import create_agent_by_type, web_search_tool
+from agents.shared import create_agent_by_type, get_model, web_search_tool
 
 load_dotenv()
 
@@ -30,3 +30,19 @@ async def run_inference(summary: str) -> str:
     response = await inference_agent.ainvoke({"messages": messages})
     logging.debug(f"Inference agent response: {response}")
     return _content_to_text(response["messages"][-1].content)
+
+
+async def run_research_inference(summary: str) -> str:
+    model = get_model("inference", 0.1)
+    user_message = f"""Patient Summary:
+
+{summary}
+
+Return a concise clinical research focus memo with exactly:
+- Likely diagnoses to search
+- Urgent diagnoses not to miss
+- High-yield search terms
+
+Do NOT recommend treatment or tests."""
+    response = await model.ainvoke([{"role": "user", "content": user_message}])
+    return _content_to_text(response.content)

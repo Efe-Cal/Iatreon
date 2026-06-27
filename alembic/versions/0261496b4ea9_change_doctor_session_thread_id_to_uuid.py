@@ -31,7 +31,8 @@ def upgrade() -> None:
     op.alter_column('doctor_sessions', 'thread_id',
                existing_type=sa.VARCHAR(),
                type_=sa.Uuid(),
-               existing_nullable=False)
+               existing_nullable=False,
+               postgresql_using='thread_id::uuid')
     # ### end Alembic commands ###
 
 
@@ -41,7 +42,8 @@ def downgrade() -> None:
     op.alter_column('doctor_sessions', 'thread_id',
                existing_type=sa.Uuid(),
                type_=sa.VARCHAR(),
-               existing_nullable=False)
+               existing_nullable=False,
+               postgresql_using='thread_id::text')
     op.create_table('checkpoint_writes',
     sa.Column('thread_id', sa.TEXT(), autoincrement=False, nullable=False),
     sa.Column('checkpoint_ns', sa.TEXT(), server_default=sa.text("''::text"), autoincrement=False, nullable=False),

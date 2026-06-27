@@ -158,12 +158,25 @@ class ResearchRepo:
             id=session.id,
             user_id=session.user_id,
             intake_session_id=session.intake_session_id,
+            triggered_by=session.triggered_by,
+            research_effort=session.research_effort,
             research_report=payload.get('research_report'),
             citations=payload.get('citations', {}),
         )
 
-    async def create_research_session(self, db: AsyncSession, intake_session_id: uuid.UUID) -> ResearchSession:
-        session = ResearchSession(user_id=self.user_id, intake_session_id=intake_session_id)
+    async def create_research_session(
+        self,
+        db: AsyncSession,
+        intake_session_id: uuid.UUID,
+        triggered_by: str = "user",
+        research_effort: str = "standard",
+    ) -> ResearchSession:
+        session = ResearchSession(
+            user_id=self.user_id,
+            intake_session_id=intake_session_id,
+            triggered_by=triggered_by,
+            research_effort=research_effort,
+        )
         db.add(session)
         await db.flush()
         return session
@@ -209,7 +222,12 @@ class ResearchRepo:
             return await self._read_session(db, session)
         return None
 
-    async def get_research_session_by_intake_id(self, db: AsyncSession, intake_session_id: uuid.UUID) -> ResearchSessionData | None:
+    async def get_research_session_by_intake_id(
+        self,
+        db: AsyncSession,
+        intake_session_id: uuid.UUID,
+        triggered_by: str | None = None,
+    ) -> ResearchSessionData | None:
         if isinstance(intake_session_id, str):
             intake_session_id = uuid.UUID(intake_session_id)
 
@@ -217,6 +235,9 @@ class ResearchRepo:
             ResearchSession.intake_session_id == intake_session_id,
             ResearchSession.user_id == self.user_id,
         )
+        if triggered_by is not None:
+            stmt = stmt.where(ResearchSession.triggered_by == triggered_by)
+        stmt = stmt.order_by(ResearchSession.created_at.desc()).limit(1)
         return await self._read_session(db, (await db.execute(stmt)).scalar_one_or_none())
 
 class ArticleRepo:

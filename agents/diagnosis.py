@@ -4,46 +4,82 @@ from uuid import UUID
 
 from langchain_core.tools import StructuredTool
 
-from db.db import read_only_session
-from db.repositories import ArticleRepo, BookSectionRepo, WebSearchResultRepo
-from agents.shared import create_agent_by_type, get_user_info, web_search_tool
+from db.db import read_only_session, unit_of_work
+from db.repositories import ArticleRepo, BookSectionRepo, ResearchRepo, WebSearchResultRepo
+from agents.research import ResearchAgent
+from agents.shared import create_agent_by_type, get_user_info
 from db.schemas import DiagnosisReport, IntakeSessionData, ResearchSessionData
 
 load_dotenv()
 
-#TODO: (importance: HIGH) diagnosis agent should have a request_reseach tool instead of web_search, which would trigger a subset of the research agent (?), properly handling the sources and stuff
-
 class DiagnosisAgent():
     def __init__(self, intake_session: IntakeSessionData, research_session: ResearchSessionData | None):
+        self.intake_session = intake_session
+        self.research_session = research_session
+        self.user_id = intake_session.user_id
+        self.research_repo = ResearchRepo(str(self.user_id))
         
         self.get_full_source_tool = StructuredTool.from_function(
             func=self._get_full_source,
             name="get_full_source",
             description="Use this tool to retrieve the full content of a source based on its citation ID. The input should be the citation ID as an integer."
         )
+        self.request_research_tool = StructuredTool.from_function(
+            coroutine=self._request_research,
+            name="request_research",
+            description="Request focused medical research for a clinical question. Input should be a concise research question."
+        )
         
-        tools = [web_search_tool]
-        if research_session:
-            tools.append(self.get_full_source_tool)
+        tools = [self.request_research_tool, self.get_full_source_tool]
         
         system_prompt_format = {}
-        system_prompt_format["inst_research_sources"] = "Analyze any relevant research findings that may provide insights into the patient's condition.\n    - IF you are provided with research findings, you may call the `get_full_source` tool to retrieve the full content of any research findings if necessary.\n    - " if research_session else ""
-        system_prompt_format["get_full_source_tool_expl"] = """- `get_full_source`: Retrieve the full content of a research finding, if any is provided.
+        system_prompt_format["inst_research_sources"] = "Analyze any relevant research findings that may provide insights into the patient's condition.\n    - IF you need more evidence, call `request_research` with a focused clinical question.\n    - IF you are provided with research findings, you may call the `get_full_source` tool to retrieve the full content of any research findings if necessary.\n    - "
+        system_prompt_format["get_full_source_tool_expl"] = """- `request_research`: Request focused medical research for a clinical question and save the resulting citations.
+  - Input parameters: `research_question` (a concise clinical research question)
+  - Output: A citation-grounded research report
+- `get_full_source`: Retrieve the full content of a research finding, if any is provided.
   - Input parameters: `citation_id` (the citation number of the research finding, as provided in the research report's References section)
-  - Output: The full content of the research finding's source\n""" if research_session else ""
+  - Output: The full content of the research finding's source\n"""
         
         self.agent = create_agent_by_type("diagnosis", 
                                           tools=tools, 
                                           system_prompt_format=system_prompt_format,
                                           response_format=DiagnosisReport)
+        
 
-        self.intake_session = intake_session
-        self.research_session = research_session
-        
-        self.user_id = intake_session.user_id
-        
+    async def _request_research(self, research_question: str) -> str:
+        async with unit_of_work() as db:
+            research_session = await self.research_repo.create_research_session(
+                db,
+                self.intake_session.id,
+                triggered_by="diagnosis",
+                research_effort="fast",
+            )
+            research_session_id = research_session.id
+
+        research_report = ""
+        citations = {}
+        research_agent = ResearchAgent(self.research_repo, research_session_id, effort="fast")
+        async for research_chunk in research_agent.run(self.intake_session, research_question=research_question):
+            if isinstance(research_chunk, tuple) and len(research_chunk) == 2:
+                research_report, citations = research_chunk
+
+        async with unit_of_work() as db:
+            updated = await self.research_repo.update_research_session(
+                db,
+                session_id=research_session_id,
+                research_report=research_report,
+                citations=citations,
+            )
+            if updated:
+                self.research_session = updated
+
+        return research_report or "No research report was produced."
 
     async def _get_full_source(self, citation_id: int):
+        if not self.research_session:
+            return f"No source found for citation ID {citation_id}"
+
         async with read_only_session() as db:
             source_info = self.research_session.citations.get(citation_id) or self.research_session.citations.get(str(citation_id))
             
@@ -61,7 +97,8 @@ class DiagnosisAgent():
             elif source_type == "web_search_result":
                 web_search_result = await WebSearchResultRepo().get_web_search_result_by_id(db, source_id)
                 if web_search_result:
-                    return f"Title: {web_search_result.title}\nURL: {web_search_result.url}\nHighlights: {web_search_result.highlights}\n"+ (f"Full Content:\n{web_search_result.full_content}" if web_search_result.full_content.strip() else "")
+                    full_content = web_search_result.full_content or ""
+                    return f"Title: {web_search_result.title}\nURL: {web_search_result.url}\nHighlights: {web_search_result.highlights}\n"+ (f"Full Content:\n{full_content}" if full_content.strip() else "")
             
             elif source_type == "book_section":
                 book_section = await BookSectionRepo().get_book_section_by_id(db, source_id)
@@ -97,4 +134,3 @@ Medical Summary: {self.intake_session.medical_summary}"""
         report = response.get("structured_response")
         yield report.model_dump() if hasattr(report, "model_dump") else report or response["messages"][-1].content
     
-

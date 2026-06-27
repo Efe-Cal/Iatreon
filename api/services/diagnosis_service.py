@@ -17,7 +17,12 @@ async def stream_diagnosis(intake_id: str, user_id: str) -> AsyncIterable:
         if str(intake_session.user_id) != str(user_id):
             raise HTTPException(status_code=403, detail="Forbidden: You do not have access to this intake session.")
 
-        research_session = await ResearchRepo(user_id).get_research_session_by_intake_id(db, intake_session.id)
-        diagnosis_agent = DiagnosisAgent(intake_session, research_session)
-        async for diagnosis_chunk in diagnosis_agent.diagnose():
-            yield {"type": "diagnosis_complete", "data": {"report": diagnosis_chunk}}
+        research_session = await ResearchRepo(user_id).get_research_session_by_intake_id(
+            db,
+            intake_session.id,
+            triggered_by="user",
+        )
+
+    diagnosis_agent = DiagnosisAgent(intake_session, research_session)
+    async for diagnosis_chunk in diagnosis_agent.diagnose():
+        yield {"type": "diagnosis_complete", "data": {"report": diagnosis_chunk}}

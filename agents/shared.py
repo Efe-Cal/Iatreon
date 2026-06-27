@@ -16,8 +16,8 @@ load_dotenv()
 
 Agent = Literal["intake", "research", "diagnosis", "inference"]
 
-def get_model(agent_type: Agent, temperature: float = 0.7) -> ChatOpenAI:
-    model_name = os.getenv(f"{agent_type.upper()}_AGENT_MODEL")
+def get_model(agent_type: Agent, temperature: float = 0.7, model_name: str | None = None) -> ChatOpenAI:
+    model_name = model_name or os.getenv(f"{agent_type.upper()}_AGENT_MODEL")
     return ChatOpenAI(model=model_name or "google/gemini-3-flash-preview",
                       base_url=os.getenv("AI_API_BASE_URL") or "https://ai.hackclub.com/proxy/v1",
                       api_key=os.getenv("AI_API_KEY"),
@@ -32,9 +32,10 @@ def create_agent_by_type(
     tools: list,
     temperature: float = 0.7,
     system_prompt_format: dict | None = None,
+    model_name: str | None = None,
     **kwargs
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
-    model = get_model(agent_type, temperature)
+    model = get_model(agent_type, temperature, model_name=model_name)
     system_prompt = load_system_prompt(agent_type).format(**(system_prompt_format or {}))
     
     return create_agent(

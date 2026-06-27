@@ -1,7 +1,7 @@
 from typing import AsyncIterable
 from uuid import UUID
 
-from agents.research import ResearchAgent
+from agents.research import ResearchAgent, ResearchEffort
 from db.db import read_only_session, unit_of_work
 from db.models import ResearchSession
 from db.repositories import ArticleRepo, BookSectionRepo, IntakeRepo, ResearchRepo, SessionRepo, WebSearchResultRepo
@@ -9,7 +9,7 @@ from db.schemas import IntakeSessionData
 from fastapi import HTTPException
 
 
-async def stream_research(intake_id: UUID, user_id, session_id: UUID | None = None) -> AsyncIterable:
+async def stream_research(intake_id: UUID, user_id: UUID, session_id: UUID | None = None, research_effort: ResearchEffort = "standard") -> AsyncIterable:
     research_repo = ResearchRepo(user_id)
 
     async with unit_of_work() as db:
@@ -18,13 +18,18 @@ async def stream_research(intake_id: UUID, user_id, session_id: UUID | None = No
         if not intake_session:
             raise HTTPException(status_code=404, detail="Intake session not found.")
 
-        research_session: ResearchSession = await research_repo.create_research_session(db, intake_session.id)
+        research_session: ResearchSession = await research_repo.create_research_session(
+            db,
+            intake_session.id,
+            triggered_by="user",
+            research_effort=research_effort,
+        )
         research_session_id = research_session.id
 
         if session_id is not None:
             await SessionRepo().link_session(db, user_id, session_id, research_session)
 
-    research_agent = ResearchAgent(research_repo, research_session_id)
+    research_agent = ResearchAgent(research_repo, research_session_id, effort=research_effort)
     async for research_chunk in research_agent.run(intake_session):
         if isinstance(research_chunk, dict):
             yield research_chunk
@@ -43,7 +48,13 @@ async def stream_research(intake_id: UUID, user_id, session_id: UUID | None = No
             print("Research complete, yielding final result...")
             yield {
                 "type": "research_complete",
-                "data": {"report": research_report, "citations": citation_payload, "research_session_id": str(research_session_id)},
+                "data": {
+                    "report": research_report,
+                    "citations": citation_payload,
+                    "research_session_id": str(research_session_id),
+                    "triggered_by": "user",
+                    "research_effort": research_effort,
+                },
             }
 
 

@@ -12,7 +12,7 @@ You will receive:
 
 # Instructions
 1. Carefully review the patient's chief complaint and medical summary to understand the context and symptoms.
-2. {inst_research_sources}USE the `web_search` tool to gather additional information or research findings that may be relevant to the patient's condition.
+2. {inst_research_sources}USE the `request_research` tool to gather additional information or research findings that may be relevant to the patient's condition.
 3. Based on the information gathered, provide a comprehensive diagnosis that includes:
     - A list of potential diagnoses, ranked by likelihood and severity.
     - A rationale for each potential diagnosis, explaining how the symptoms and research findings support it.
@@ -27,7 +27,8 @@ You will receive:
 - BE ABSOLUTELY SURE that your diagnosis is accurate and well-supported by the information provided before sharing it with the patient.
 
 # Tools
-{get_full_source_tool_expl}- `web_search`: Gather additional information or research findings relevant to the patient's condition.
+{get_full_source_tool_expl}
+- `request_research`: Use this tool to gather additional research findings relevant to the patient's condition. Provide a clear and specific query based on the patient's symptoms and medical history.
 
 # Output Format
 You must provide your diagnosis in a structured format that includes the following sections:
