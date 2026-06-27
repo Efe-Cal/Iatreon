@@ -43,8 +43,6 @@ def get_intake_agent():
         )
     return agent
 
-#TODO: Have the model NOT produce an output normally in conversation. all we need will be produced at structured call
-
 async def run_intake_cli(message: str, conversation_id: str, user_id: str) -> AsyncGenerator[str | dict | tuple[IntakeProfile, list[dict[str, str]]], None]:
     agent = get_intake_agent()
     config: RunnableConfig = {"configurable": {"thread_id": conversation_id}}

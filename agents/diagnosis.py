@@ -5,7 +5,7 @@ from uuid import UUID
 from langchain_core.tools import StructuredTool
 
 from db.db import read_only_session
-from db.repositories import ArticleRepo, BookSectionRepo, IntakeRepo, ResearchRepo, WebSearchResultRepo
+from db.repositories import ArticleRepo, BookSectionRepo, WebSearchResultRepo
 from agents.shared import create_agent_by_type, get_user_info, web_search_tool
 from db.schemas import DiagnosisReport, IntakeSessionData, ResearchSessionData
 
@@ -13,7 +13,6 @@ load_dotenv()
 
 #TODO: (importance: HIGH) diagnosis agent should have a request_reseach tool instead of web_search, which would trigger a subset of the research agent (?), properly handling the sources and stuff
 
-#TODO: (importance: HIGH-) proper system prompt
 class DiagnosisAgent():
     def __init__(self, intake_session: IntakeSessionData, research_session: ResearchSessionData | None):
         
@@ -54,7 +53,6 @@ class DiagnosisAgent():
             source_type = source_info.get("type")
             source_id = UUID(str(source_info.get("id")))
             
-            #TODO: use the markdown util for sources 
             if source_type == "article":
                 article = await ArticleRepo().get_article_by_id(db, source_id)
                 if article:

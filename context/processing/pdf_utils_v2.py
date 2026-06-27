@@ -23,7 +23,7 @@ mitd = MarkItDown(
     enable_plugins=True,
 )
 
-#TODO: try makidown with ocr or use ocr for all
+#TODO: use liteparse
 class PDFClient:
     def _is_probable_pdf_url(self, url: str) -> bool:
         parsed = urlparse(url)
