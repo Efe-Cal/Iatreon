@@ -24,13 +24,13 @@ type reportModel struct {
 	citationViewport viewport.Model
 	citationTexts    map[int]string
 
-	width, height int
+	width, height   int
 	showCitations   bool
 	focusCitation   bool
 	current         int
 	loadingCitation int
-	citationErr      string
-	close            bool
+	citationErr     string
+	close           bool
 }
 
 type citationTextMsg struct {
@@ -287,7 +287,9 @@ func (m reportModel) View() string {
 	if !m.focusCitation {
 		reportPanel = reportFocusStyle
 	}
-	reportPanel = reportPanel.Width(m.reportViewport.Width).Height(m.reportViewport.Height)
+	reportPanelW := m.reportViewport.Width + reportPanel.GetHorizontalPadding()
+	reportPanelH := m.reportViewport.Height + reportPanel.GetVerticalPadding()
+	reportPanel = reportPanel.Width(reportPanelW).Height(reportPanelH)
 
 	if !m.showCitations || len(m.citations) == 0 {
 		return reportPanel.Render(m.reportViewport.View())
@@ -297,7 +299,9 @@ func (m reportModel) View() string {
 	if m.focusCitation {
 		citationPanel = citationFocusStyle
 	}
-	citationPanel = citationPanel.Width(m.citationViewport.Width).Height(m.citationViewport.Height)
+	citationPanelW := m.citationViewport.Width + citationPanel.GetHorizontalPadding()
+	citationPanelH := m.citationViewport.Height + citationPanel.GetVerticalPadding()
+	citationPanel = citationPanel.Width(citationPanelW).Height(citationPanelH)
 
 	report := reportPanel.Render(m.reportViewport.View())
 	citation := citationPanel.Render(m.citationViewport.View())

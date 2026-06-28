@@ -159,14 +159,24 @@ func (m dashboardModel) View() string {
 	)
 }
 
+func (m dashboardModel) infoStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Width(m.infoWidth()).
+		Padding(0, 1).
+		Foreground(colorSystem).
+		Italic(true)
+}
+
+func (m dashboardModel) infoWidth() int {
+	return max(1, min(35, m.width-6))
+}
+
 // maxInfoHeight returns the tallest possible info description in lines.
 func (m dashboardModel) maxInfoHeight() int {
 	maxH := 0
-	boxWidth := min(35, m.width-6)
+	infoBox := m.infoStyle()
 	for _, card := range dashboardCards {
-		rendered := lipgloss.NewStyle().
-			Width(boxWidth).
-			Render(card.description)
+		rendered := infoBox.Render(card.description)
 		h := lipgloss.Height(rendered)
 		if h > maxH {
 			maxH = h
@@ -178,24 +188,13 @@ func (m dashboardModel) maxInfoHeight() int {
 // renderInfoPadded renders the info description padded to a fixed height.
 func (m dashboardModel) renderInfoPadded(targetH int) string {
 	card := dashboardCards[m.cursor]
-	boxWidth := min(35, m.width-6)
-
-	infoBox := lipgloss.NewStyle().
-		Width(boxWidth).
-		Padding(0, 1).
-		Foreground(colorSystem).
-		Italic(true)
-
-	rendered := infoBox.Render(card.description)
-	h := lipgloss.Height(rendered)
-	if pad := targetH - h; pad > 0 {
-		rendered += strings.Repeat("\n", pad)
-	}
-	return rendered
+	return m.infoStyle().
+		Height(targetH).
+		Render(card.description)
 }
 
 func (m dashboardModel) renderCards() string {
-	btnWidth := min(30, m.width-6)
+	btnWidth := max(1, min(30, m.width-6))
 
 	var renderedCards []string
 	for i, card := range dashboardCards {

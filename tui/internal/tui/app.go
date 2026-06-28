@@ -29,8 +29,6 @@ type model struct {
 	sessionKey *SessionKey
 }
 
-const headerFooterHeight = 3
-
 var (
 	dashboardFooter = []string{"↑/↓/←/→ Navigate", "Enter Select", "Esc Setup", "Ctrl+C Quit"}
 	setupFooter     = []string{"Enter Continue", "Esc Back", "Ctrl+C Quit"}
@@ -76,13 +74,12 @@ func (m *model) wipeSessionKey() {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
-		chromeH := headerFooterHeight
 		m.width = wsm.Width
 		m.height = wsm.Height
-		m.dashboard.SetSize(wsm.Width, wsm.Height-chromeH)
-		m.setup.SetSize(wsm.Width, wsm.Height-chromeH)
-		m.chat.SetSize(wsm.Width, wsm.Height-chromeH)
-		m.report.SetSize(wsm.Width, wsm.Height-chromeH)
+		m.dashboard.SetSize(wsm.Width, m.bodyHeightFor(dashboardScreen))
+		m.setup.SetSize(wsm.Width, m.bodyHeightFor(setupScreen))
+		m.chat.SetSize(wsm.Width, m.bodyHeightFor(chatScreen))
+		m.report.SetSize(wsm.Width, m.bodyHeightFor(reportScreen))
 		return m, nil
 	}
 
@@ -106,22 +103,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) initChat(cm chatModel) chatModel {
-	cm.SetSize(m.width, m.height-headerFooterHeight)
+	cm.SetSize(m.width, m.bodyHeightFor(chatScreen))
 	return cm
 }
 
 func (m *model) initDashboard(dm dashboardModel) dashboardModel {
-	dm.SetSize(m.width, m.height-headerFooterHeight)
+	dm.SetSize(m.width, m.bodyHeightFor(dashboardScreen))
 	return dm
 }
 
 func (m *model) initSetup(sm setupModel) setupModel {
-	sm.SetSize(m.width, m.height-headerFooterHeight)
+	sm.SetSize(m.width, m.bodyHeightFor(setupScreen))
 	return sm
 }
 
 func (m *model) initReport(rm reportModel) reportModel {
-	rm.SetSize(m.width, m.height-headerFooterHeight)
+	rm.SetSize(m.width, m.bodyHeightFor(reportScreen))
 	return rm
 }
 
@@ -244,7 +241,11 @@ func (m model) View() string {
 }
 
 func (m model) chrome() (string, []string) {
-	switch m.active {
+	return m.chromeFor(m.active)
+}
+
+func (m model) chromeFor(active screen) (string, []string) {
+	switch active {
 	case setupScreen:
 		return "Iatreon - Profile Setup", m.setup.footer()
 	case chatScreen:
@@ -257,6 +258,19 @@ func (m model) chrome() (string, []string) {
 	default:
 		return "Iatreon - Dashboard", m.dashboard.footer()
 	}
+}
+
+func (m model) bodyHeightFor(active screen) int {
+	if m.height <= 0 {
+		return 0
+	}
+	headerText, footerActions := m.chromeFor(active)
+	chromeH := lipgloss.Height(renderHeader(headerText, m.width)) + lipgloss.Height(renderFooter(footerActions, m.width))
+	bodyH := m.height - chromeH
+	if bodyH < 0 {
+		return 0
+	}
+	return bodyH
 }
 
 // renderHeader renders a styled header bar across the full width.
