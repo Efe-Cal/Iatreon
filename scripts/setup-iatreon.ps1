@@ -1,10 +1,9 @@
+#TODO: Update hostname
 param(
     [string]$KeyPath = "$env:USERPROFILE\.ssh\id_ed25519",
     [string]$HostName = "127.0.0.1",
-    [int]$Port = 2222,
     [switch]$NoConnect
 )
-
 $ErrorActionPreference = "Stop"
 
 function Write-Step {
@@ -75,8 +74,11 @@ Write-Host ""
 
 if ($NoConnect) {
     Write-Host "Connect with:"
-    Write-Host "ssh -A -p $Port $HostName"
+    Write-Host "ssh -A $HostName"
 } else {
-    Write-Step "Connecting to Iatreon SSH server"
-    & ssh -A -p $Port $HostName
+    $answer = Read-Host "Run ssh -A $HostName now? [y/N]"
+    if ($answer -match '(?i)^y(es)?$') {
+        Write-Step "Connecting to Iatreon SSH server"
+        & ssh -A $HostName
+    }
 }

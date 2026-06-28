@@ -3,12 +3,11 @@ set -eu
 
 key_path="${HOME}/.ssh/id_ed25519"
 host_name="127.0.0.1"
-port="2222"
 no_connect=0
 
 usage() {
     cat <<EOF
-Usage: setup-ssh-agent.sh [--key PATH] [--host HOST] [--port PORT] [--no-connect]
+Usage: setup-ssh-agent.sh [--key PATH] [--host HOST] [--no-connect]
 EOF
 }
 
@@ -31,10 +30,6 @@ while [ "$#" -gt 0 ]; do
             ;;
         --host)
             host_name="$2"
-            shift 2
-            ;;
-        --port)
-            port="$2"
             shift 2
             ;;
         --no-connect)
@@ -97,8 +92,14 @@ step "ssh-agent is ready"
 printf '\nLoaded public key:\n%s\n\n' "$keys"
 
 if [ "$no_connect" -eq 1 ]; then
-    printf 'Connect with:\nssh -A -p %s %s\n' "$port" "$host_name"
+    printf 'Connect with:\nssh -A %s\n' "$host_name"
 else
-    step "Connecting to Iatreon SSH server"
-    ssh -A -p "$port" "$host_name"
+    printf 'Run ssh -A %s now? [y/N] ' "$host_name"
+    IFS= read -r answer || answer=
+    case "$answer" in
+        y|Y|yes|YES|Yes)
+            step "Connecting to Iatreon SSH server"
+            ssh -A "$host_name"
+            ;;
+    esac
 fi
