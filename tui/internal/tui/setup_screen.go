@@ -50,6 +50,7 @@ type setupModel struct {
 	step       setupStep
 	userid     string
 	sessionKey *SessionKey
+	canCancel  bool
 	width      int
 	height     int
 
@@ -71,11 +72,12 @@ type setupModel struct {
 	familyHistLines  []string
 
 	err        error
+	cancelled  bool
 	submitted  bool
 	submitting bool
 }
 
-func newSetupModel(userid string, sessionKey *SessionKey) setupModel {
+func newSetupModel(userid string, sessionKey *SessionKey, canCancel bool) setupModel {
 	// Age input
 	age := textinput.New()
 	age.Placeholder = "e.g. 35"
@@ -130,6 +132,7 @@ func newSetupModel(userid string, sessionKey *SessionKey) setupModel {
 		step:             stepLanding,
 		userid:           userid,
 		sessionKey:       sessionKey,
+		canCancel:        canCancel,
 		age:              age,
 		gender:           gender,
 		pmh:              pmh,
@@ -173,9 +176,15 @@ func (m setupModel) Init() tea.Cmd {
 }
 
 func (m setupModel) footer() []string {
+	if m.step == stepLanding {
+		if m.canCancel {
+			return []string{"Enter Start", "Esc Dashboard", "Ctrl+C Quit"}
+		}
+		return []string{"Enter Start", "Ctrl+C Quit"}
+	}
 	field, ok := m.currentField()
 	if ok && field.kind == setupConfirm {
-		return []string{"Enter Confirm", "Esc Back", "Ctrl+C Quit"}
+		return []string{"Enter Submit", "Esc Back", "Ctrl+C Quit"}
 	}
 	if ok && field.kind == setupMultiLine {
 		return []string{"Enter Add Item", "Enter(empty) Next", "Esc Back", "Ctrl+C Quit"}
@@ -282,14 +291,21 @@ func (m setupModel) Update(msg tea.Msg) (setupModel, tea.Cmd) {
 	case tea.KeyMsg:
 		key := msg.String()
 
-		// Landing page: any key advances to first field.
 		if m.step == stepLanding {
-			if key == "ctrl+c" {
+			switch key {
+			case "ctrl+c":
 				return m, tea.Quit
+			case "esc":
+				if m.canCancel {
+					m.cancelled = true
+				}
+				return m, nil
+			case "enter":
+				m.step = stepAge
+				m.focusCurrentField()
+				return m, textinput.Blink
 			}
-			m.step = stepAge
-			m.focusCurrentField()
-			return m, textinput.Blink
+			return m, nil
 		}
 
 		// Multi-line collection steps (pmh, medications, allergies, family_history)
@@ -357,17 +373,17 @@ func (m *setupModel) updateMultiLineStep(msg tea.KeyMsg) (setupModel, tea.Cmd) {
 }
 
 func (m setupModel) advanceStep() (setupModel, tea.Cmd) {
+	m.err = nil
+	if m.step == stepConfirm {
+		m.submitting = true
+		return m, submitProfile(m.userid, m)
+	}
+
 	next := m.step + 1
 	if next > stepConfirm {
 		return m, nil
 	}
 	m.step = next
-
-	if m.step == stepConfirm {
-		// Submit on confirm step.
-		m.submitting = true
-		return m, submitProfile(m.userid, m)
-	}
 
 	// Focus the appropriate input for the new step.
 	m.focusCurrentField()
@@ -376,6 +392,9 @@ func (m setupModel) advanceStep() (setupModel, tea.Cmd) {
 
 func (m setupModel) goBack() (setupModel, tea.Cmd) {
 	if m.step == stepLanding {
+		if m.canCancel {
+			m.cancelled = true
+		}
 		return m, nil
 	}
 	prev := m.step - 1
@@ -408,6 +427,32 @@ func (m setupModel) View() string {
 	}
 }
 
+func (m setupModel) renderAnchored(content string) string {
+	paneWidth := m.width - 8
+	if paneWidth < 30 {
+		paneWidth = m.width
+	}
+	if paneWidth > 72 {
+		paneWidth = 72
+	}
+
+	body := lipgloss.NewStyle().
+		Width(paneWidth).
+		Align(lipgloss.Left).
+		Render(content)
+
+	topPad := m.height / 5
+	if topPad < 1 {
+		topPad = 0
+	}
+
+	return lipgloss.Place(
+		m.width, m.height,
+		lipgloss.Center, lipgloss.Top,
+		strings.Repeat("\n", topPad)+body,
+	)
+}
+
 func (m setupModel) renderLanding() string {
 	subtitle := systemStyle.Render("Your AI-powered clinical assistant")
 
@@ -418,10 +463,10 @@ func (m setupModel) renderLanding() string {
 		Margin(1, 0)
 
 	features := []string{
-		"🩺  Intelligent patient intake",
-		"📚  Evidence-based research",
-		"🧬  Differential diagnosis support",
-		"🔒  End-to-end encrypted via SSH",
+		"[1] Intelligent patient intake",
+		"[2] Evidence-based research",
+		"[3] Differential diagnosis support",
+		"[4] End-to-end encrypted via SSH",
 	}
 
 	featureList := lipgloss.JoinVertical(lipgloss.Left, features...)
@@ -432,6 +477,8 @@ func (m setupModel) renderLanding() string {
 		subtitle,
 		"",
 		box,
+		"",
+		hintStyle.Render("Press Enter to set up your profile."),
 	)
 
 	return lipgloss.Place(
@@ -461,11 +508,7 @@ func (m setupModel) renderForm() string {
 		prompt,
 	)
 
-	return lipgloss.Place(
-		m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
-		content,
-	)
+	return m.renderAnchored(content)
 }
 
 func (m setupModel) renderField() string {
@@ -564,11 +607,7 @@ func (m setupModel) renderSubmitting() string {
 		lipgloss.Center,
 		systemStyle.Render("Please wait while we set up your account."),
 	)
-	return lipgloss.Place(
-		m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
-		content,
-	)
+	return m.renderAnchored(content)
 }
 
 func (m setupModel) renderDone() string {
@@ -578,11 +617,7 @@ func (m setupModel) renderDone() string {
 		"",
 		hintStyle.Render("Opening chat..."),
 	)
-	return lipgloss.Place(
-		m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
-		content,
-	)
+	return m.renderAnchored(content)
 }
 
 func (m setupModel) stepLabel() string {

@@ -18,6 +18,7 @@ const (
 
 type model struct {
 	active     screen
+	hasProfile bool
 	dashboard  dashboardModel
 	setup      setupModel
 	chat       chatModel
@@ -41,8 +42,7 @@ func NewModel(userid string, hasProfile bool, sessionKey ...*SessionKey) model {
 		key = sessionKey[0]
 	}
 	dash := newDashboardModel(userid)
-	setup := newSetupModel(userid, key)
-	chat := newChatModel(userid, key)
+	setup := newSetupModel(userid, key, hasProfile)
 
 	var active screen
 	if hasProfile {
@@ -53,9 +53,9 @@ func NewModel(userid string, hasProfile bool, sessionKey ...*SessionKey) model {
 
 	m := model{
 		active:     active,
+		hasProfile: hasProfile,
 		dashboard:  dash,
 		setup:      setup,
-		chat:       chat,
 		userid:     userid,
 		sessionKey: key,
 	}
@@ -64,7 +64,10 @@ func NewModel(userid string, hasProfile bool, sessionKey ...*SessionKey) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return m.setup.Init()
+	if m.active == setupScreen {
+		return m.setup.Init()
+	}
+	return nil
 }
 
 func (m *model) wipeSessionKey() {
@@ -138,7 +141,7 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.active = chatScreen
 		return m, m.chat.Init()
 	case dashboardActionSetup:
-		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey))
+		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey, true))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = setupScreen
 		return m, m.setup.Init()
@@ -151,9 +154,19 @@ func (m model) updateSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
 	updated, cmd := m.setup.Update(msg)
 	m.setup = updated
 
+	if m.setup.cancelled {
+		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey, m.hasProfile))
+		if m.hasProfile {
+			m.dashboard = m.initDashboard(newDashboardModel(m.userid))
+			m.active = dashboardScreen
+		}
+		return m, nil
+	}
+
 	if m.setup.submitted {
+		m.hasProfile = true
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
-		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey))
+		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey, true))
 		m.active = dashboardScreen
 		return m, nil
 	}

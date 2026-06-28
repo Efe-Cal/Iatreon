@@ -66,9 +66,22 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.placeholderMsg != "" {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "enter", "esc":
+				m.placeholderMsg = ""
+				return m, nil
+			}
+		}
+
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
+		case "esc":
+			m.action = dashboardActionSetup
+			return m, nil
 		case "tab", "right", "down":
 			m.cursor = (m.cursor + 1) % len(dashboardCards)
 			m.placeholderMsg = ""
