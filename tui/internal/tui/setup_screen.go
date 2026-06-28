@@ -241,7 +241,7 @@ func submitProfile(userid string, m setupModel) tea.Cmd {
 			return profileSubmittedMsg{err: err}
 		}
 
-		req, err := http.NewRequest(http.MethodPost, "http://localhost:8000/user-profile", bytes.NewReader(jsonData))
+		req, err := http.NewRequest(http.MethodPost, apiBaseURL+"/user-profile", bytes.NewReader(jsonData))
 		if err != nil {
 			return profileSubmittedMsg{err: err}
 		}

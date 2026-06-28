@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 
@@ -344,7 +345,12 @@ func continueFromAgent(agentKind AgentKind) tea.Cmd {
 	}
 }
 
-const apiBaseURL = "http://localhost:8000"
+var apiBaseURL = func() string {
+	if v := strings.TrimRight(os.Getenv("API_BASE_URL"), "/"); v != "" {
+		return v
+	}
+	return "http://localhost:8000"
+}()
 
 func waitForChunk(ch chan chunkMsg) tea.Cmd {
 	return func() tea.Msg {

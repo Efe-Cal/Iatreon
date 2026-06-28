@@ -31,13 +31,43 @@ services:
     volumes:
       - downloads:/app/downloads
       - worker-profile:/app/pdf_worker/chrome_profile
-    
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://app:app@db:5432/app
+      PDF_SCRAPER_BASE_URL: http://pdf-api:8000
+    depends_on:
+      db:
+        condition: service_healthy
+      pdf-api:
+        condition: service_started
+    ports:
+      - "8001:8000"
+
+  tui:
+    build:
+      context: ./tui
+    environment:
+      API_BASE_URL: http://api:8000
+    depends_on:
+      - api
+    ports:
+      - "2222:2222"
+
   db:
     image: postgres:16
     environment:
       POSTGRES_USER: app
       POSTGRES_PASSWORD: app
       POSTGRES_DB: app
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     ports: ["5432:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
 

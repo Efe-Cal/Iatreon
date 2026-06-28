@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -42,13 +43,20 @@ type unlockResponse struct {
 
 const agentForwardingWait = 2 * time.Second
 
+var apiBaseURL = func() string {
+	if v := strings.TrimRight(os.Getenv("API_BASE_URL"), "/"); v != "" {
+		return v
+	}
+	return "http://localhost:8000"
+}()
+
 func getUserWithPubKey(ctx ssh.Context, key ssh.PublicKey) bool {
 	authKeyBytes := gossh.MarshalAuthorizedKey(key)
 
 	publicKeyStr := string(bytes.TrimSpace(authKeyBytes))
 
 	jsonData := []byte(fmt.Sprintf(`{"ssh_key": "%s"}`, publicKeyStr))
-	resp, err := http.Post("http://localhost:8000/user", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(apiBaseURL+"/user", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Printf("Error checking public key: %v", err)
 		return false
@@ -159,7 +167,7 @@ func waitForAgentForwarding(s ssh.Session) error {
 }
 
 func unlockUserSession(userID string, sessionKEK []byte) (bool, error) {
-	req, err := http.NewRequest(http.MethodPost, "http://localhost:8000/user/session?user_id="+userID, nil)
+	req, err := http.NewRequest(http.MethodPost, apiBaseURL+"/user/session?user_id="+userID, nil)
 	if err != nil {
 		return false, err
 	}
