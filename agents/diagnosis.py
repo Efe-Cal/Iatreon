@@ -13,9 +13,10 @@ from db.schemas import DiagnosisReport, IntakeSessionData, ResearchSessionData
 load_dotenv()
 
 class DiagnosisAgent():
-    def __init__(self, intake_session: IntakeSessionData, research_session: ResearchSessionData | None):
+    def __init__(self, intake_session: IntakeSessionData, research_session: ResearchSessionData | None, chat_session_id: UUID | None = None):
         self.intake_session = intake_session
         self.research_session = research_session
+        self.chat_session_id = chat_session_id
         self.user_id = intake_session.user_id
         self.research_repo = ResearchRepo(str(self.user_id))
         
@@ -51,7 +52,7 @@ class DiagnosisAgent():
         async with unit_of_work() as db:
             research_session = await self.research_repo.create_research_session(
                 db,
-                self.intake_session.id,
+                self.chat_session_id,
                 triggered_by="diagnosis",
                 research_effort="fast",
             )

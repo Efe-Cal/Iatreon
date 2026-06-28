@@ -157,7 +157,7 @@ class ResearchRepo:
         return ResearchSessionData(
             id=session.id,
             user_id=session.user_id,
-            intake_session_id=session.intake_session_id,
+            chat_session_id=session.chat_session_id,
             triggered_by=session.triggered_by,
             research_effort=session.research_effort,
             research_report=payload.get('research_report'),
@@ -167,13 +167,15 @@ class ResearchRepo:
     async def create_research_session(
         self,
         db: AsyncSession,
-        intake_session_id: uuid.UUID,
+        chat_session_id: uuid.UUID | None = None,
         triggered_by: str = "user",
         research_effort: str = "standard",
     ) -> ResearchSession:
+        if isinstance(chat_session_id, str):
+            chat_session_id = uuid.UUID(chat_session_id)
         session = ResearchSession(
             user_id=self.user_id,
-            intake_session_id=intake_session_id,
+            chat_session_id=chat_session_id,
             triggered_by=triggered_by,
             research_effort=research_effort,
         )
@@ -222,17 +224,17 @@ class ResearchRepo:
             return await self._read_session(db, session)
         return None
 
-    async def get_research_session_by_intake_id(
+    async def get_latest_research_session_by_chat_id(
         self,
         db: AsyncSession,
-        intake_session_id: uuid.UUID,
+        chat_session_id: uuid.UUID,
         triggered_by: str | None = None,
     ) -> ResearchSessionData | None:
-        if isinstance(intake_session_id, str):
-            intake_session_id = uuid.UUID(intake_session_id)
+        if isinstance(chat_session_id, str):
+            chat_session_id = uuid.UUID(chat_session_id)
 
         stmt = select(ResearchSession).where(
-            ResearchSession.intake_session_id == intake_session_id,
+            ResearchSession.chat_session_id == chat_session_id,
             ResearchSession.user_id == self.user_id,
         )
         if triggered_by is not None:
@@ -482,15 +484,13 @@ class SessionRepo:
             return None
         return session
     
-    async def link_session(self, db: AsyncSession, user_id: uuid.UUID, session_id: uuid.UUID, session_to_link: IntakeSession | ResearchSession | DoctorSession) -> ChatSession:
+    async def link_session(self, db: AsyncSession, user_id: uuid.UUID, session_id: uuid.UUID, session_to_link: IntakeSession | DoctorSession) -> ChatSession:
         session = await self.get_session(db, user_id, session_id)
         if session is None:
             return None
         
         if isinstance(session_to_link, IntakeSession):
             session.intake_session_id = session_to_link.id
-        elif isinstance(session_to_link, ResearchSession):
-            session.research_session_id = session_to_link.id
         else:
             raise ValueError("Invalid session type to link")
         

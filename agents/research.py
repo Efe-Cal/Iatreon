@@ -27,7 +27,7 @@ from context.sources.get_ncbi_books import BookshelfClient
 load_dotenv()
 
 
-ResearchEffort = Literal["fast", "standard", "deep"]
+ResearchEffort = Literal["fast", "standard", "deep", "web"]
 
 EFFORT_SETTINGS = {
     "fast": {
@@ -53,6 +53,14 @@ EFFORT_SETTINGS = {
         "web_results": 8,
         "openalex_results": 15,
         "prompt": "Research deeply and check major guideline, review, and urgent-differential branches before finalizing.",
+    },
+    "web": {
+        "temperature": 0.2,
+        "model_env": "RESEARCH_AGENT_WEB_MODEL",
+        "max_articles": 0,
+        "web_results": 5,
+        "openalex_results": 0,
+        "prompt": "Use only web search and fetched web pages. Do not use literature, book, or OpenAlex searches.",
     },
 }
 
@@ -95,12 +103,18 @@ class ResearchAgent:
         
         model_name = os.getenv(self.effort_settings["model_env"]) or os.getenv("RESEARCH_AGENT_MODEL")
         
-        self.agent = create_agent_by_type("research", tools=[
+        tools = [
             self.web_search_tool,
             self.fetch_web_content_tool,
-            self.search_medical_literature_tool,
-            self.book_search_tool,
-            self.openalex_search_tool],
+        ]
+        if self.effort != "web":
+            tools.extend([
+                self.search_medical_literature_tool,
+                self.book_search_tool,
+                self.openalex_search_tool,
+            ])
+
+        self.agent = create_agent_by_type("research", tools=tools,
                         checkpointer=self.checkpointer,
                         temperature=self.effort_settings["temperature"],
                         model_name=model_name)
@@ -298,24 +312,43 @@ class ResearchAgent:
 
         return ""
 
-    async def run(self, profile: IntakeSessionData, research_question: str | None = None) -> AsyncGenerator[dict | tuple[str, dict[int, dict]], None]:
-        symptoms = ', '.join(s["name"] for s in profile.symptoms) if profile.symptoms else "None provided"
-        red_flags = ', '.join(profile.red_flags) if profile.red_flags else "None provided"
-        medical_summary = profile.medical_summary if profile.medical_summary else "None provided"
+    async def run(self, profile: IntakeSessionData | None = None, research_question: str | None = None, user_id: str=None) -> AsyncGenerator[dict | tuple[str, dict[int, dict]], None]:
+        if profile:
+            symptoms = ', '.join(s["name"] for s in profile.symptoms) if profile.symptoms else "None provided"
+            red_flags = ', '.join(profile.red_flags) if profile.red_flags else "None provided"
+            medical_summary = profile.medical_summary if profile.medical_summary else "None provided"
 
-        patient_profile = await get_user_info(user_id=profile.user_id)
-        inference_guidance = ""
-        inference_input = f"""Chief Complaint: {profile.chief_complaint}
+            patient_profile = await get_user_info(user_id=profile.user_id)
+            inference_guidance = ""
+            inference_input = f"""Chief Complaint: {profile.chief_complaint}
 Symptoms: {symptoms}
 Red Flags: {red_flags}
 Medical Summary: {medical_summary}
 Research Question: {research_question or "General case research"}"""
-        try:
-            inference_guidance = await run_research_inference(inference_input)
-        except Exception:
-            logging.exception("Research inference failed; continuing without guidance.")
         
-        user_message = f"""Given the following patient profile, perform research to gather relevant medical information. Use the tools at your disposal to search the web and medical literature for insights related to the patient's chief complaint, symptoms, and red flags. Summarize your findings in a comprehensive report.
+            try:
+                inference_guidance = await run_research_inference(inference_input)
+            except Exception:
+                logging.exception("Research inference failed; continuing without guidance.")
+
+            patient_case = f"""# Patient Case:
+Chief Complaint: {profile.chief_complaint}
+Symptoms: {symptoms}
+Red Flags: {red_flags}
+Medical Summary: {medical_summary}"""
+
+
+        elif user_id:
+            patient_profile = await get_user_info(user_id=user_id)
+            patient_case=""
+ 
+        source_instruction = (
+            "Use only web search and fetched web pages for insights related to the patient's chief complaint, symptoms, and red flags."
+            if self.effort == "web"
+            else "Use the tools at your disposal to search the web and medical literature for insights related to the patient's chief complaint, symptoms, and red flags."
+        )
+
+        user_message = f"""Given the following patient profile, perform research to gather relevant medical information. {source_instruction} Summarize your findings in a comprehensive report.
 
 Prioritize urgent/emergent causes first when red flags are present. Normalize lay language into standard medical terminology and search both symptom-level and diagnosis-level queries. Clearly separate likely/common causes from urgent causes, and do not assume a definitive diagnosis.
 
@@ -323,11 +356,7 @@ Prioritize urgent/emergent causes first when red flags are present. Normalize la
 
 {patient_profile}
 
-# Patient Case:
-Chief Complaint: {profile.chief_complaint}
-Symptoms: {symptoms}
-Red Flags: {red_flags}
-Medical Summary: {medical_summary}
+{patient_case}
 """
         if research_question:
             user_message += f"\n# Research Request\n{research_question}\n"

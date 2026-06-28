@@ -18,16 +18,20 @@ async def stream_research(intake_id: UUID, user_id: UUID, session_id: UUID | Non
         if not intake_session:
             raise HTTPException(status_code=404, detail="Intake session not found.")
 
+        chat_session_id = None
+        if session_id is not None:
+            chat_session = await SessionRepo().get_session(db, user_id, session_id)
+            if chat_session is None:
+                raise HTTPException(status_code=404, detail="Chat session not found.")
+            chat_session_id = chat_session.id
+
         research_session: ResearchSession = await research_repo.create_research_session(
             db,
-            intake_session.id,
+            chat_session_id,
             triggered_by="user",
             research_effort=research_effort,
         )
         research_session_id = research_session.id
-
-        if session_id is not None:
-            await SessionRepo().link_session(db, user_id, session_id, research_session)
 
     research_agent = ResearchAgent(research_repo, research_session_id, effort=research_effort)
     async for research_chunk in research_agent.run(intake_session):

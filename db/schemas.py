@@ -42,7 +42,7 @@ class IntakeSessionData(BaseModel):
 class ResearchSessionData(BaseModel):
     id: UUID
     user_id: UUID
-    intake_session_id: Optional[UUID] = None
+    chat_session_id: Optional[UUID] = None
     triggered_by: str = "user"
     research_effort: str = "standard"
     research_report: Optional[str] = None

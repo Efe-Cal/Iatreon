@@ -14,7 +14,7 @@ router = APIRouter()
 class ResearchRequest(BaseModel):
     intake_id: UUID
     session_id: UUID | None = None
-    research_effort: Literal["fast", "standard", "deep"] = "standard"
+    research_effort: Literal["fast", "standard", "deep", "web"] = "standard"
 
 
 class CitationTextRequest(BaseModel):

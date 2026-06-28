@@ -27,11 +27,8 @@ class ChatSession(Base):
     intake_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("intake_sessions.id"), default=None
     )
-    research_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("research_sessions.id"), default=None
-    )
     intake_session: Mapped[Optional["IntakeSession"]] = relationship(foreign_keys=[intake_session_id], default=None)
-    research_session: Mapped[Optional["ResearchSession"]] = relationship(foreign_keys=[research_session_id], default=None)
+    research_sessions: Mapped[list["ResearchSession"]] = relationship(back_populates="chat_session", default_factory=list)
     doctor_session: Mapped[Optional["DoctorSession"]] = relationship(
         "DoctorSession", back_populates="chat_session", foreign_keys="[DoctorSession.chat_session_id]",
         primaryjoin="ChatSession.id == DoctorSession.chat_session_id", default=None, uselist=False
@@ -52,7 +49,8 @@ class ResearchSession(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id"))
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
     encrypted_payload: Mapped[Optional[str]] = mapped_column(Text, default=None)
-    intake_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid(as_uuid=True), ForeignKey("intake_sessions.id"), default=None)
+    chat_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid(as_uuid=True), ForeignKey("chat_sessions.id"), default=None)
+    chat_session: Mapped[Optional["ChatSession"]] = relationship(back_populates="research_sessions", default=None)
     triggered_by: Mapped[str] = mapped_column(String, default="user")
     research_effort: Mapped[str] = mapped_column(String, default="standard")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)

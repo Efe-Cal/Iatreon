@@ -13,6 +13,7 @@ router = APIRouter()
 
 class DiagnosisRequest(BaseModel):
     intake_id: UUID
+    session_id: UUID | None = None
 
 
 @router.post('/diagnose', response_class=EventSourceResponse)
@@ -20,7 +21,7 @@ async def stream_diagnosis(diagnosis_request: DiagnosisRequest, request: Request
     user_id = get_user_id_or_400(request)
     token = require_encryption_context(request)
     try:
-        async for event in stream_diagnosis_service(diagnosis_request.intake_id, user_id):
+        async for event in stream_diagnosis_service(diagnosis_request.intake_id, user_id, diagnosis_request.session_id):
             yield event
     finally:
         clear_encryption_context(token)
