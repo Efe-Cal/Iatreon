@@ -223,8 +223,12 @@
         background: #101716;
       }
 
+      .command-code {
+        position: relative;
+        min-width: 0;
+      }
+
       code {
-        overflow-x: auto;
         color: #edf8f4;
         font-family:
           "SFMono-Regular",
@@ -233,7 +237,59 @@
           monospace;
         font-size: 14px;
         line-height: 1.6;
+      }
+
+      .command code {
+        display: block;
+        min-width: 0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
         white-space: nowrap;
+        -ms-overflow-style: none;
+      }
+
+      .command code::-webkit-scrollbar {
+        display: none;
+      }
+
+      .command-scrollbar {
+        position: absolute;
+        right: 0;
+        bottom: -3px;
+        left: 0;
+        height: 3px;
+        border-radius: 999px;
+        background: rgb(237 248 244 / 0.12);
+        cursor: pointer;
+        opacity: 0.72;
+        transition: opacity 160ms ease;
+      }
+
+      .command:hover .command-scrollbar,
+      .command:focus-within .command-scrollbar,
+      .command-scrollbar.is-dragging {
+        opacity: 1;
+      }
+
+      .command-scrollbar[hidden] {
+        display: none;
+      }
+
+      .command-scrollbar-thumb {
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 100%;
+        min-width: 36px;
+        border-radius: 999px;
+        background: #75b8ae;
+        box-shadow: 0 0 0 1px rgb(16 23 22 / 0.35);
+      }
+
+      .command-scrollbar:hover .command-scrollbar-thumb,
+      .command-scrollbar.is-dragging .command-scrollbar-thumb {
+        background: #9bd4cc;
       }
 
       .hint {
@@ -253,15 +309,33 @@
       }
 
       .copy {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
         border: 0;
         border-radius: 999px;
         background: #e8f6f2;
         color: #103c37;
         cursor: pointer;
         font: inherit;
-        font-size: 13px;
-        font-weight: 800;
-        padding: 10px 14px;
+        padding: 0;
+        transition:
+          background 160ms ease,
+          color 160ms ease,
+          transform 160ms ease;
+      }
+
+      .copy svg {
+        width: 18px;
+        height: 18px;
+        fill: currentColor;
+      }
+
+      .copy.is-copied {
+        background: #75b8ae;
+        color: #08231f;
       }
 
       .copy:active {
@@ -412,8 +486,17 @@
               <button class="tab" type="button" role="tab" data-os="windows">Windows</button>
             </div>
             <div class="command">
-              <code id="command"></code>
-              <button class="copy" type="button">Copy</button>
+              <div class="command-code">
+                <code id="command" tabindex="0"></code>
+                <div class="command-scrollbar" aria-hidden="true" hidden>
+                  <div class="command-scrollbar-thumb"></div>
+                </div>
+              </div>
+              <button class="copy" type="button" aria-label="Copy setup command" title="Copy setup command">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" aria-hidden="true" focusable="false">
+                  <path d="M480 400L288 400C279.2 400 272 392.8 272 384L272 128C272 119.2 279.2 112 288 112L421.5 112C425.7 112 429.8 113.7 432.8 116.7L491.3 175.2C494.3 178.2 496 182.3 496 186.5L496 384C496 392.8 488.8 400 480 400zM288 448L480 448C515.3 448 544 419.3 544 384L544 186.5C544 169.5 537.3 153.2 525.3 141.2L466.7 82.7C454.7 70.7 438.5 64 421.5 64L288 64C252.7 64 224 92.7 224 128L224 384C224 419.3 252.7 448 288 448zM160 192C124.7 192 96 220.7 96 256L96 512C96 547.3 124.7 576 160 576L352 576C387.3 576 416 547.3 416 512L416 496L368 496L368 512C368 520.8 360.8 528 352 528L160 528C151.2 528 144 520.8 144 512L144 256C144 247.2 151.2 240 160 240L176 240L176 192L160 192z" />
+                </svg>
+              </button>
             </div>
             <p class="hint">After setup, connect with <code class="inline-code" id="ssh-command"></code>.</p>
           </div>
@@ -450,8 +533,31 @@
 
       const tabs = [...document.querySelectorAll(".tab")];
       const command = document.querySelector("#command");
+      const commandScrollbar = document.querySelector(".command-scrollbar");
+      const commandScrollbarThumb = document.querySelector(".command-scrollbar-thumb");
       const sshCommand = document.querySelector("#ssh-command");
       const copy = document.querySelector(".copy");
+      let dragStartX = 0;
+      let dragStartScroll = 0;
+      let copiedTimer;
+
+      function updateCommandScrollbar() {
+        const maxScroll = command.scrollWidth - command.clientWidth;
+        const trackWidth = commandScrollbar.parentElement.clientWidth;
+
+        if (maxScroll <= 1 || trackWidth <= 0) {
+          commandScrollbar.hidden = true;
+          return;
+        }
+
+        commandScrollbar.hidden = false;
+        const thumbWidth = Math.max(36, (command.clientWidth / command.scrollWidth) * trackWidth);
+        const maxThumbLeft = trackWidth - thumbWidth;
+        const thumbLeft = (command.scrollLeft / maxScroll) * maxThumbLeft;
+
+        commandScrollbarThumb.style.width = `${thumbWidth}px`;
+        commandScrollbarThumb.style.transform = `translateX(${thumbLeft}px)`;
+      }
 
       function detectedOS() {
         const platform = (navigator.userAgentData?.platform || navigator.platform || "").toLowerCase();
@@ -463,11 +569,67 @@
       function selectOS(os) {
         tabs.forEach((tab) => tab.setAttribute("aria-selected", String(tab.dataset.os === os)));
         command.textContent = commands[os];
+        command.scrollLeft = 0;
         sshCommand.textContent = `ssh -A ${new URL(base).host}`;
-        copy.textContent = "Copy";
+        clearTimeout(copiedTimer);
+        copy.classList.remove("is-copied");
+        copy.setAttribute("aria-label", "Copy setup command");
+        copy.title = "Copy setup command";
+        requestAnimationFrame(updateCommandScrollbar);
       }
 
       tabs.forEach((tab) => tab.addEventListener("click", () => selectOS(tab.dataset.os)));
+      command.addEventListener("scroll", updateCommandScrollbar);
+      window.addEventListener("resize", updateCommandScrollbar);
+
+      commandScrollbar.addEventListener("pointerdown", (event) => {
+        if (commandScrollbar.hidden) return;
+
+        const trackRect = commandScrollbar.getBoundingClientRect();
+        const thumbRect = commandScrollbarThumb.getBoundingClientRect();
+        const maxScroll = command.scrollWidth - command.clientWidth;
+        const maxThumbLeft = trackRect.width - thumbRect.width;
+
+        if (maxScroll <= 0 || maxThumbLeft <= 0) return;
+
+        if (event.target !== commandScrollbarThumb) {
+          const targetLeft = Math.max(0, Math.min(maxThumbLeft, event.clientX - trackRect.left - thumbRect.width / 2));
+          command.scrollLeft = (targetLeft / maxThumbLeft) * maxScroll;
+        }
+
+        dragStartX = event.clientX;
+        dragStartScroll = command.scrollLeft;
+        commandScrollbar.classList.add("is-dragging");
+        commandScrollbar.setPointerCapture(event.pointerId);
+      });
+
+      commandScrollbar.addEventListener("pointermove", (event) => {
+        if (!commandScrollbar.classList.contains("is-dragging")) return;
+
+        const trackWidth = commandScrollbar.clientWidth;
+        const thumbWidth = commandScrollbarThumb.offsetWidth;
+        const maxScroll = command.scrollWidth - command.clientWidth;
+        const maxThumbLeft = trackWidth - thumbWidth;
+
+        if (maxScroll <= 0 || maxThumbLeft <= 0) return;
+
+        command.scrollLeft = dragStartScroll + ((event.clientX - dragStartX) / maxThumbLeft) * maxScroll;
+      });
+
+      commandScrollbar.addEventListener("pointerup", (event) => {
+        commandScrollbar.classList.remove("is-dragging");
+        if (commandScrollbar.hasPointerCapture(event.pointerId)) {
+          commandScrollbar.releasePointerCapture(event.pointerId);
+        }
+      });
+
+      commandScrollbar.addEventListener("pointercancel", (event) => {
+        commandScrollbar.classList.remove("is-dragging");
+        if (commandScrollbar.hasPointerCapture(event.pointerId)) {
+          commandScrollbar.releasePointerCapture(event.pointerId);
+        }
+      });
+
       copy.addEventListener("click", async () => {
         try {
           await navigator.clipboard.writeText(command.textContent);
@@ -479,7 +641,15 @@
           document.execCommand("copy");
           input.remove();
         }
-        copy.textContent = "Copied";
+        copy.classList.add("is-copied");
+        copy.setAttribute("aria-label", "Copied setup command");
+        copy.title = "Copied";
+        clearTimeout(copiedTimer);
+        copiedTimer = setTimeout(() => {
+          copy.classList.remove("is-copied");
+          copy.setAttribute("aria-label", "Copy setup command");
+          copy.title = "Copy setup command";
+        }, 1400);
       });
 
       selectOS(detectedOS());
