@@ -183,7 +183,6 @@ func (m *chatModel) renderMarkdown(text string, isUser bool) string {
 	return out
 }
 
-// agentLabel returns the styled AI label for the active agent.
 func (m *chatModel) agentLabel() string {
 	if m.agent == nil {
 		return aiLabelStyle.Render("Iatreon:")
@@ -191,8 +190,6 @@ func (m *chatModel) agentLabel() string {
 	return aiLabelStyle.Render(m.agent.AgentLabel())
 }
 
-// renderHistory turns the current message list into a single string for the
-// viewport. The live streaming chunk is appended at the end.
 func (m *chatModel) renderHistory() string {
 	var sb strings.Builder
 	for _, msg := range m.history {
@@ -216,14 +213,42 @@ func (m *chatModel) renderHistory() string {
 }
 
 func (m *chatModel) shimmer(text string, offset float64) string {
-	var builder strings.Builder
-	for i, r := range text {
+	runes := []rune(text)
 
-		wave := math.Sin(float64(i)*0.4 - m.shimmerFrame + offset)
-		brightness := int(175 + 80*wave)
+	var builder strings.Builder
+
+	cycleFrames := 80.0 + offset
+	activeFrames := 0.65 * cycleFrames //65.0
+	bandWidth := 5.0
+
+	cyclePos := math.Mod(m.shimmerFrame, cycleFrames)
+
+	if cyclePos > activeFrames {
+		style := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#787878"))
+
+		return style.Render(text)
+	}
+
+	progress := cyclePos / activeFrames
+
+	center := -bandWidth + progress*(float64(len(runes))+bandWidth*2)
+
+	for i, r := range runes {
+		dist := math.Abs(float64(i) - center)
+
+		intensity := 0.0
+
+		if dist < bandWidth {
+			x := 1.0 - dist/bandWidth
+			intensity = math.Sin(x * math.Pi / 2)
+		}
+
+		brightness := int(150 + 120*intensity)
 
 		hexColor := fmt.Sprintf("#%02x%02x%02x", brightness, brightness, brightness)
 		style := lipgloss.NewStyle().Foreground(lipgloss.Color(hexColor))
+
 		builder.WriteString(style.Render(string(r)))
 	}
 	return builder.String()
@@ -247,7 +272,7 @@ func getPhaseOffset(toolID string) float64 {
 	for _, r := range toolID {
 		sum += int(r)
 	}
-	return float64(sum%360) * (math.Pi / 180.0)
+	return float64(sum%100) / 5.0
 }
 
 func (m *chatModel) renderToolMessage(toolMsg messageItem) string {
@@ -267,9 +292,8 @@ func (m *chatModel) renderMessage(msg messageItem) string {
 	log.Printf("Rendering message: %+v\n", msg)
 	switch msg.role {
 	case "user":
-		label := userLabelStyle.Render("You :")
 		body := m.renderMarkdown(msg.text, true)
-		return lipgloss.JoinVertical(lipgloss.Left, label, body)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render("> " + body)
 	case "ai":
 		label := m.agentLabel()
 		if msg.text == "" {
