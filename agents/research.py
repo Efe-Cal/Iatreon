@@ -123,8 +123,6 @@ class ResearchAgent:
         self.book_section_repo = BookSectionRepo()
         self.web_search_result_repo = WebSearchResultRepo()
 
-        #TODO: DB-assigned sequence: make citation_num an auto-increment per research_session_id
-        self.citation_num = 0
         self._citation_lookup: dict[int, dict] = {}
         self._citation_lock = asyncio.Lock()
     
@@ -132,21 +130,19 @@ class ResearchAgent:
         print(f"Performing web search for query: {query}")
         results = await asyncio.to_thread(web_search, query, self.effort_settings["web_results"])
 
-        async with self._citation_lock:
-            start = self.citation_num + 1
-            self.citation_num += len(results)
-
-        async with unit_of_work() as db:
-            for citation_num, result in enumerate(results, start=start):
-                db_result = await self.web_search_result_repo.upsert(
-                    db=db,
-                    query=query,
-                    url=result["url"],
-                    title=result.get("title"),
-                    highlights="\n".join(result.get("highlights", [])),
-                    full_content=None,
-                )
-                await self._record_citation(citation_num, "web_search_result", db_result, query=query)
+        if results:
+            async with unit_of_work() as db:
+                start = await self.research_repo.reserve_citation_numbers(db, self.session_id, len(results))
+                for citation_num, result in enumerate(results, start=start):
+                    db_result = await self.web_search_result_repo.upsert(
+                        db=db,
+                        query=query,
+                        url=result["url"],
+                        title=result.get("title"),
+                        highlights="\n".join(result.get("highlights", [])),
+                        full_content=None,
+                    )
+                    await self._record_citation(citation_num, "web_search_result", db_result, query=query)
 
         formatted_results = "\n\n".join(
             [
@@ -181,30 +177,29 @@ class ResearchAgent:
         results = await run_pipeline(query, max_articles=max_articles, include_books=include_books)
         articles = results["articles"]
         books = results["books"]
-
-        async with self._citation_lock:
-            start = self.citation_num + 1
-            self.citation_num += len(articles) + len(books)
         
         content = f"Search results for query: '{query}'\n\nArticles:\n"
-        async with unit_of_work() as db:
-            for i, article in enumerate(articles, start=start):
-                content += f"[{i}] {article['title']} ({article['journal']}, {article['year']}, Citations: {article['citation_count']})\nAuthors: {', '.join(article['authors'])}\nAbstract: {article['abstract']}\n\n"
-                db_article = await self.article_repo.upsert(db, ArticleData(**article))
-                await self._record_citation(
-                    i,
-                    "article",
-                    db_article,
-                    query=query,
-                    quality_score=article.get("quality_score", 0.0) or 0.0,
-                )
+        source_count = len(articles) + len(books)
+        if source_count:
+            async with unit_of_work() as db:
+                start = await self.research_repo.reserve_citation_numbers(db, self.session_id, source_count)
+                for i, article in enumerate(articles, start=start):
+                    content += f"[{i}] {article['title']} ({article['journal']}, {article['year']}, Citations: {article['citation_count']})\nAuthors: {', '.join(article['authors'])}\nAbstract: {article['abstract']}\n\n"
+                    db_article = await self.article_repo.upsert(db, ArticleData(**article))
+                    await self._record_citation(
+                        i,
+                        "article",
+                        db_article,
+                        query=query,
+                        quality_score=article.get("quality_score", 0.0) or 0.0,
+                    )
 
-            if books:
-                content += f"Relevant Book Sections:\n"
-                for i, book in enumerate(books, start + len(articles)):
-                    content += f"[{i}] {book['title']}\nContent: {book['text']}\n\n"
-                    db_section = await self.book_section_repo.upsert(db, BookSectionData(**book))
-                    await self._record_citation(i, "book_section", db_section, query=query)
+                if books:
+                    content += f"Relevant Book Sections:\n"
+                    for i, book in enumerate(books, start + len(articles)):
+                        content += f"[{i}] {book['title']}\nContent: {book['text']}\n\n"
+                        db_section = await self.book_section_repo.upsert(db, BookSectionData(**book))
+                        await self._record_citation(i, "book_section", db_section, query=query)
 
         return "<source>\n" + content + "\n</source>"
     
@@ -221,14 +216,12 @@ class ResearchAgent:
         book_client = BookshelfClient()
         books = await book_client.get_book_contents(query)
         
-        async with self._citation_lock:
-            start = self.citation_num + 1
-            self.citation_num += len(books)
-        
-        async with unit_of_work() as db:
-            for i, book in enumerate(books, start=start):
-                db_section = await self.book_section_repo.upsert(db, BookSectionData(**book))
-                await self._record_citation(i, "book_section", db_section, query=query)
+        if books:
+            async with unit_of_work() as db:
+                start = await self.research_repo.reserve_citation_numbers(db, self.session_id, len(books))
+                for i, book in enumerate(books, start=start):
+                    db_section = await self.book_section_repo.upsert(db, BookSectionData(**book))
+                    await self._record_citation(i, "book_section", db_section, query=query)
         formatted_books = "\n\n".join(
             [
                 f"- {b['title']} ({b['url']})\nContent: {b['text']}..." for b in books
@@ -252,21 +245,19 @@ class ResearchAgent:
             max_results=self.effort_settings["openalex_results"],
             semantic=True,
         )
-
-        async with self._citation_lock:
-            start = self.citation_num + 1
-            self.citation_num += len(articles)
         
-        async with unit_of_work() as db:
-            for i, article in enumerate(articles, start=start):
-                db_article = await self.article_repo.upsert(db, article)
-                await self._record_citation(
-                    i,
-                    "article",
-                    db_article,
-                    query=query,
-                    quality_score=article.quality_score or 0.0,
-                )
+        if articles:
+            async with unit_of_work() as db:
+                start = await self.research_repo.reserve_citation_numbers(db, self.session_id, len(articles))
+                for i, article in enumerate(articles, start=start):
+                    db_article = await self.article_repo.upsert(db, article)
+                    await self._record_citation(
+                        i,
+                        "article",
+                        db_article,
+                        query=query,
+                        quality_score=article.quality_score or 0.0,
+                    )
 
         formatted_articles = "\n\n".join(
             [

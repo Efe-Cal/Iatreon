@@ -215,6 +215,26 @@ class ResearchRepo:
         await db.flush()
         return await self._read_session(db, session)
 
+    async def reserve_citation_numbers(self, db: AsyncSession, session_id: uuid.UUID, count: int) -> int:
+        if count < 1:
+            raise ValueError("count must be positive")
+        if isinstance(session_id, str):
+            session_id = uuid.UUID(session_id)
+
+        stmt = (
+            select(ResearchSession)
+            .where(ResearchSession.id == session_id, ResearchSession.user_id == self.user_id)
+            .with_for_update()
+        )
+        session = (await db.execute(stmt)).scalar_one_or_none()
+        if session is None:
+            raise ValueError("Research session not found")
+
+        start = session.next_citation_num
+        session.next_citation_num = start + count
+        await db.flush()
+        return start
+
     async def get_research_session(self, db: AsyncSession, session_id: uuid.UUID) -> ResearchSessionData | None:
         if isinstance(session_id, str):
             session_id = uuid.UUID(session_id)

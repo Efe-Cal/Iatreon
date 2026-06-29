@@ -183,6 +183,36 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(got, {"text": "user-1: citation text"})
 
+    async def test_research_repo_reserves_citation_numbers(self):
+        from db.repositories import ResearchRepo
+
+        user_id = uuid.uuid4()
+        session = SimpleNamespace(next_citation_num=4)
+
+        class FakeResult:
+            def scalar_one_or_none(self):
+                return session
+
+        class FakeDb:
+            flushed = False
+
+            async def execute(self, stmt):
+                return FakeResult()
+
+            async def flush(self):
+                self.flushed = True
+
+        db = FakeDb()
+        repo = ResearchRepo(str(user_id))
+
+        start = await repo.reserve_citation_numbers(db, uuid.uuid4(), 3)
+
+        self.assertEqual(start, 4)
+        self.assertEqual(session.next_citation_num, 7)
+        self.assertTrue(db.flushed)
+        with self.assertRaises(ValueError):
+            await repo.reserve_citation_numbers(db, uuid.uuid4(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

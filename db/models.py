@@ -53,6 +53,7 @@ class ResearchSession(Base):
     chat_session: Mapped[Optional["ChatSession"]] = relationship(back_populates="research_sessions", default=None)
     triggered_by: Mapped[str] = mapped_column(String, default="user")
     research_effort: Mapped[str] = mapped_column(String, default="standard")
+    next_citation_num: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
 
 class DoctorSession(Base):
