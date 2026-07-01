@@ -570,6 +570,95 @@ class SessionRepo:
         if session is None or session.user_id != user_id:
             return None
         return session
+
+    async def list_history(self, db: AsyncSession, user_id: uuid.UUID) -> list[dict]:
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+
+        sessions = (
+            await db.execute(
+                select(ChatSession)
+                .where(ChatSession.user_id == user_id)
+                .order_by(ChatSession.created_at.desc())
+            )
+        ).scalars().all()
+
+        intake_repo = IntakeRepo(str(user_id))
+        research_repo = ResearchRepo(str(user_id))
+        diagnosis_repo = DiagnosisRepo(str(user_id))
+        history = []
+
+        for chat in sessions:
+            sections = []
+
+            if chat.intake_session_id:
+                intake = await intake_repo.get_session(db, chat.intake_session_id)
+                if intake:
+                    sections.append({
+                        "id": str(intake.id),
+                        "type": "intake",
+                        "title": intake.chief_complaint or "Intake",
+                        "created_at": intake.completed_at,
+                        "content": intake.medical_summary or "_No intake summary saved._",
+                    })
+
+            research_rows = (
+                await db.execute(
+                    select(ResearchSession)
+                    .where(ResearchSession.user_id == user_id, ResearchSession.chat_session_id == chat.id)
+                    .order_by(ResearchSession.created_at.asc())
+                )
+            ).scalars().all()
+            for row in research_rows:
+                research = await research_repo._read_session(db, row)
+                sections.append({
+                    "id": str(research.id),
+                    "type": "research",
+                    "title": f"Research ({research.research_effort})",
+                    "created_at": row.created_at,
+                    "content": research.research_report or "_No research report saved._",
+                    "citations": research.citations,
+                })
+
+            diagnosis_rows = (
+                await db.execute(
+                    select(DiagnosisSession)
+                    .where(DiagnosisSession.user_id == user_id, DiagnosisSession.chat_session_id == chat.id)
+                    .order_by(DiagnosisSession.created_at.asc())
+                )
+            ).scalars().all()
+            for row in diagnosis_rows:
+                diagnosis = await diagnosis_repo._read_session(db, row)
+                sections.append({
+                    "id": str(diagnosis.id),
+                    "type": "diagnosis",
+                    "title": "Diagnosis",
+                    "created_at": row.created_at,
+                    "content": diagnosis.report,
+                })
+
+            doctor = (
+                await db.execute(
+                    select(DoctorSession)
+                    .where(DoctorSession.user_id == user_id, DoctorSession.chat_session_id == chat.id)
+                )
+            ).scalar_one_or_none()
+            if doctor:
+                sections.append({
+                    "id": str(doctor.id),
+                    "type": "doctor",
+                    "title": "Doctor",
+                    "created_at": None,
+                    "content": f"## Doctor\n\n**Thread ID:** {doctor.thread_id}\n\n_Full doctor transcripts are not saved yet._",
+                })
+
+            history.append({
+                "id": str(chat.id),
+                "created_at": chat.created_at,
+                "sections": sections,
+            })
+
+        return history
     
     async def link_session(self, db: AsyncSession, user_id: uuid.UUID, session_id: uuid.UUID, session_to_link: IntakeSession | DoctorSession) -> ChatSession:
         session = await self.get_session(db, user_id, session_id)

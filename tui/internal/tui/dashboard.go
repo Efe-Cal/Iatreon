@@ -22,6 +22,7 @@ const (
 	dashboardActionNone dashboardAction = iota
 	dashboardActionStartIntake
 	dashboardActionStartDoctor
+	dashboardActionHistory
 	dashboardActionSetup
 )
 
@@ -34,7 +35,7 @@ type dashboardCard struct {
 var dashboardCards = []dashboardCard{
 	{title: "Start Intake", description: "Begin a new patient intake conversation with the AI assistant.", color: colorPrimary},
 	{title: "See the Doctor", description: "Get a differential diagnosis and clinical assessment.", color: lipgloss.Color("#7C3AED")},
-	{title: "My Profile", description: "View and manage your patient profile and history.", color: lipgloss.Color("#0891B2")},
+	{title: "History", description: "Review saved chat sessions, sections, and reports.", color: lipgloss.Color("#0891B2")},
 	{title: "Settings", description: "Configure your preferences and system settings.", color: lipgloss.Color("#D97706")},
 }
 
@@ -99,7 +100,7 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 				m.action = dashboardActionStartDoctor
 				return m, nil
 			case 2:
-				m.placeholderMsg = "🚧 Your profile page is coming soon.\n\nYou'll be able to view and manage your medical history,\nmedications, allergies, and family history here."
+				m.action = dashboardActionHistory
 				return m, nil
 			case 3:
 				m.placeholderMsg = "🚧 Settings are not yet available.\n\nFuture settings will include notification preferences,\ntheme options, and API configuration."

@@ -30,6 +30,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/diagnose", paths)
         self.assertIn("/chat/doctor", paths)
         self.assertIn("/create-session", paths)
+        self.assertIn("/history", paths)
 
     async def test_shared_header_validation(self):
         from api.shared import get_user_id_or_400, require_encryption_context
@@ -80,6 +81,36 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(got, {"session_id": session_id})
+        with self.assertRaises(ValueError):
+            require_session_kek()
+
+    async def test_history_route_delegates_and_clears_session_key(self):
+        from api.routes import history as history_route
+        from db.crypto import require_session_kek
+
+        user_id = uuid.uuid4()
+        expected = [{"id": "session-1", "sections": []}]
+
+        @asynccontextmanager
+        async def fake_read_only_session():
+            yield object()
+
+        test_case = self
+
+        class FakeSessionRepo:
+            async def list_history(self, db, got_user_id):
+                test_case.assertEqual(got_user_id, str(user_id))
+                return expected
+
+        with (
+            patch.object(history_route, "read_only_session", fake_read_only_session),
+            patch.object(history_route, "SessionRepo", FakeSessionRepo),
+        ):
+            got = await history_route.history(
+                FakeRequest({"X-User-ID": str(user_id), "X-Session-Key": SESSION_KEY}),
+            )
+
+        self.assertEqual(got, {"sessions": expected})
         with self.assertRaises(ValueError):
             require_session_kek()
 

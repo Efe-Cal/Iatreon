@@ -14,6 +14,7 @@ const (
 	setupScreen
 	chatScreen
 	reportScreen
+	historyScreen
 )
 
 type model struct {
@@ -23,6 +24,7 @@ type model struct {
 	setup      setupModel
 	chat       chatModel
 	report     reportModel
+	history    historyModel
 	width      int
 	height     int
 	userid     string
@@ -80,6 +82,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setup.SetSize(wsm.Width, m.bodyHeightFor(setupScreen))
 		m.chat.SetSize(wsm.Width, m.bodyHeightFor(chatScreen))
 		m.report.SetSize(wsm.Width, m.bodyHeightFor(reportScreen))
+		m.history.SetSize(wsm.Width, m.bodyHeightFor(historyScreen))
 		return m, nil
 	}
 
@@ -97,6 +100,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateChat(msg)
 	case reportScreen:
 		return m.updateReport(msg)
+	case historyScreen:
+		return m.updateHistory(msg)
 	default:
 		return m, nil
 	}
@@ -122,6 +127,11 @@ func (m *model) initReport(rm reportModel) reportModel {
 	return rm
 }
 
+func (m *model) initHistory(hm historyModel) historyModel {
+	hm.SetSize(m.width, m.bodyHeightFor(historyScreen))
+	return hm
+}
+
 func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 	updated, cmd := m.dashboard.Update(msg)
 	m.dashboard = updated
@@ -137,6 +147,11 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = chatScreen
 		return m, m.chat.Init()
+	case dashboardActionHistory:
+		m.history = m.initHistory(newHistoryModel(m.userid, m.sessionKey))
+		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
+		m.active = historyScreen
+		return m, m.history.Init()
 	case dashboardActionSetup:
 		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey, true))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
@@ -214,6 +229,20 @@ func (m model) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.history.Update(msg)
+	m.history = updated
+
+	if m.history.close {
+		m.history = m.initHistory(newHistoryModel(m.userid, m.sessionKey))
+		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
+		m.active = dashboardScreen
+		return m, nil
+	}
+
+	return m, cmd
+}
+
 func (m model) View() string {
 	headerText, footerActions := m.chrome()
 	header := renderHeader(headerText, m.width)
@@ -229,6 +258,8 @@ func (m model) View() string {
 		body = m.chat.View()
 	case reportScreen:
 		body = m.report.View()
+	case historyScreen:
+		body = m.history.View()
 	default:
 		body = "Unknown screen"
 	}
@@ -255,6 +286,8 @@ func (m model) chromeFor(active screen) (string, []string) {
 		return m.chat.agent.Header(), m.chat.footerActions
 	case reportScreen:
 		return "Iatreon - Research Report", []string{"↑/↓ Scroll", "c Citations", "Tab Focus", "j/k Citation", "Esc Continue", "Ctrl+C Quit"}
+	case historyScreen:
+		return "Iatreon - History", m.history.footer()
 	default:
 		return "Iatreon - Dashboard", m.dashboard.footer()
 	}
