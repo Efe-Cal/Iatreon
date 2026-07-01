@@ -64,14 +64,14 @@ func newReportModel(report string, citations []citation, researchSessionID, user
 
 var (
 	reportStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorBorder).
-			Padding(0, 1)
+			Border(lipgloss.NormalBorder(), false, true, false, false).
+			BorderForeground(colorBorder)
 
 	reportFocusStyle = reportStyle.Copy().
 				BorderForeground(colorPrimary)
 
-	citationStyle = reportStyle.Copy().
+	citationStyle = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder(), false, false, false, true).
 			BorderForeground(colorBorder)
 
 	citationFocusStyle = citationStyle.Copy().
