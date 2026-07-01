@@ -48,6 +48,13 @@ class ResearchSessionData(BaseModel):
     research_report: Optional[str] = None
     citations: dict[int, dict] = Field(default_factory=dict)
 
+class DiagnosisSessionData(BaseModel):
+    id: UUID
+    user_id: UUID
+    intake_session_id: UUID
+    chat_session_id: Optional[UUID] = None
+    report: dict = Field(default_factory=dict)
+
 class DifferentialItem(BaseModel):
     condition: str
     likelihood: Literal["primary", "possible", "unlikely_but_considered"]

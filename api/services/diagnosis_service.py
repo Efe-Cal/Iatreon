@@ -1,7 +1,7 @@
 from typing import AsyncIterable
 
-from db.db import read_only_session
-from db.repositories import IntakeRepo, ResearchRepo, SessionRepo
+from db.db import read_only_session, unit_of_work
+from db.repositories import DiagnosisRepo, IntakeRepo, ResearchRepo, SessionRepo
 from db.schemas import IntakeSessionData
 from agents.diagnosis import DiagnosisAgent
 
@@ -32,4 +32,17 @@ async def stream_diagnosis(intake_id: str, user_id: str, session_id: str | None 
 
     diagnosis_agent = DiagnosisAgent(intake_session, research_session, chat_session_id)
     async for diagnosis_chunk in diagnosis_agent.diagnose():
-        yield {"type": "diagnosis_complete", "data": {"report": diagnosis_chunk}}
+        async with unit_of_work() as db:
+            diagnosis_session = await DiagnosisRepo(user_id).create_diagnosis_session(
+                db,
+                intake_session.id,
+                diagnosis_chunk if isinstance(diagnosis_chunk, dict) else {"content": diagnosis_chunk},
+                chat_session_id,
+            )
+        yield {
+            "type": "diagnosis_complete",
+            "data": {
+                "report": diagnosis_chunk,
+                "diagnosis_session_id": str(diagnosis_session.id),
+            },
+        }

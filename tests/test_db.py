@@ -12,8 +12,8 @@ from db.crypto import (
     wrap_data_key,
     zero_bytes,
 )
-from db.models import ChatSession, IntakeSession, User
-from db.repositories import IntakeRepo, SessionRepo, _normalize_unique_identifier
+from db.models import ChatSession, DiagnosisSession, IntakeSession, User
+from db.repositories import DiagnosisRepo, IntakeRepo, SessionRepo, _normalize_unique_identifier
 from db.schemas import IntakeProfile, Symptom
 
 
@@ -127,6 +127,29 @@ class DbTests(unittest.IsolatedAsyncioTestCase):
                 await other_repo.complete_session(db, session.id, sample_profile(), "thread-2"),
                 "Error: Unauthorized",
             )
+        finally:
+            reset_session_kek(token)
+
+    async def test_diagnosis_repo_encrypts_and_reads_report(self):
+        token = set_session_kek(SESSION_KEY)
+        try:
+            db = FakeAsyncDB()
+            user_id = uuid.uuid4()
+            db.add(User(id=user_id, ssh_key="user-key"))
+            intake = IntakeSession(user_id=user_id)
+            db.add(intake)
+
+            saved = await DiagnosisRepo(str(user_id)).create_diagnosis_session(
+                db,
+                intake.id,
+                {"primary_diagnosis": "Migraine"},
+            )
+            raw = db.objects[(DiagnosisSession, saved.id)]
+            self.assertNotIn("Migraine", raw.encrypted_payload)
+
+            read = await DiagnosisRepo(str(user_id)).get_diagnosis_session(db, saved.id)
+            self.assertEqual(read.report["primary_diagnosis"], "Migraine")
+            self.assertEqual(read.intake_session_id, intake.id)
         finally:
             reset_session_kek(token)
 

@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
 import uuid
 from .models import (
+    DiagnosisSession,
     DoctorSession,
     IntakeSession,
     Article,
@@ -13,7 +14,15 @@ from .models import (
     ChatSession,
     WebSearchResult,
 )
-from .schemas import BookSectionData, IntakeProfile, IntakeSessionData, ArticleData, ResearchSessionData, UserProfileData
+from .schemas import (
+    ArticleData,
+    BookSectionData,
+    DiagnosisSessionData,
+    IntakeProfile,
+    IntakeSessionData,
+    ResearchSessionData,
+    UserProfileData,
+)
 from .crypto import decrypt_json, encrypt_json, new_data_key, unwrap_data_key, wrap_data_key, zero_bytes
 
 
@@ -261,6 +270,64 @@ class ResearchRepo:
             stmt = stmt.where(ResearchSession.triggered_by == triggered_by)
         stmt = stmt.order_by(ResearchSession.created_at.desc()).limit(1)
         return await self._read_session(db, (await db.execute(stmt)).scalar_one_or_none())
+
+class DiagnosisRepo:
+    def __init__(self, user_id: str):
+        self.user_id = uuid.UUID(str(user_id))
+
+    async def _read_session(self, db: AsyncSession, session: DiagnosisSession | None) -> DiagnosisSessionData | None:
+        if session is None:
+            return None
+        payload = {}
+        if session.encrypted_payload:
+            payload = await _decrypt_record_payload(
+                db,
+                self.user_id,
+                f'diagnosis-session:{session.id}',
+                session.encrypted_payload,
+            )
+        return DiagnosisSessionData(
+            id=session.id,
+            user_id=session.user_id,
+            intake_session_id=session.intake_session_id,
+            chat_session_id=session.chat_session_id,
+            report=payload.get('report', {}),
+        )
+
+    async def create_diagnosis_session(
+        self,
+        db: AsyncSession,
+        intake_session_id: uuid.UUID,
+        report: dict,
+        chat_session_id: uuid.UUID | None = None,
+    ) -> DiagnosisSessionData:
+        if isinstance(intake_session_id, str):
+            intake_session_id = uuid.UUID(intake_session_id)
+        if isinstance(chat_session_id, str):
+            chat_session_id = uuid.UUID(chat_session_id)
+        session = DiagnosisSession(
+            user_id=self.user_id,
+            intake_session_id=intake_session_id,
+            chat_session_id=chat_session_id,
+        )
+        db.add(session)
+        await db.flush()
+        session.encrypted_payload = await _encrypt_record_payload(
+            db,
+            self.user_id,
+            f'diagnosis-session:{session.id}',
+            {'report': report},
+        )
+        await db.flush()
+        return await self._read_session(db, session)
+
+    async def get_diagnosis_session(self, db: AsyncSession, session_id: uuid.UUID) -> DiagnosisSessionData | None:
+        if isinstance(session_id, str):
+            session_id = uuid.UUID(session_id)
+        session = await db.get(DiagnosisSession, session_id)
+        if session and session.user_id == self.user_id:
+            return await self._read_session(db, session)
+        return None
 
 class ArticleRepo:
     def __init__(self):
