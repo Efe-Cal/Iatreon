@@ -274,7 +274,8 @@ func getPhaseOffset(toolID string) float64 {
 	for _, r := range toolID {
 		sum += int(r)
 	}
-	return float64(sum%100) / 5.0
+	return 0.0
+	// return float64(sum%100) / 5.0
 }
 
 func (m *chatModel) renderToolMessage(toolMsg messageItem) string {
