@@ -24,7 +24,7 @@ def get_model(agent_type: Agent, temperature: float = 0.7, model_name: str | Non
                       temperature=temperature)
 
 def load_system_prompt(agent_type: Agent) -> str:
-    with open(os.path.join(__file__, "..", "prompts", f"{agent_type}_agent_system_prompt.txt")) as f:
+    with open(os.path.join(os.path.dirname(__file__), "prompts", f"{agent_type}_agent_system_prompt.txt")) as f:
         return f.read()
 
 def create_agent_by_type(
