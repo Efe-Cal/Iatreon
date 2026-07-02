@@ -11,6 +11,7 @@ from ..processing.pdf_utils_v2 import PDFClient
 from ..processing.ranking import QualityRanker
 from ..models import Article
 from ..config import RATE_LIMIT_DELAY
+from ..errors import log_external_failure
 from db.db import unit_of_work
 
 load_dotenv()
@@ -37,8 +38,12 @@ class OpenAlexClient:
             if not article.doi:
                 continue
 
-            data = self._fetch_by_doi(article.doi)
-            if not data:
+            try:
+                data = self._fetch_by_doi(article.doi)
+                if not data:
+                    continue
+            except Exception as exc:
+                log_external_failure("OpenAlex", "DOI enrichment", exc)
                 continue
 
             article.citation_count = data.get("cited_by_count", 0)
@@ -73,17 +78,21 @@ class OpenAlexClient:
             "select": "id,title,abstract_inverted_index,doi,cited_by_count,open_access,publication_year,authorships,primary_location,type,concepts",
         }
 
-        r = await asyncio.to_thread(
-            requests.get,
-            f"{OPENALEX_BASE}/works",
-            params=params,
-            headers=self._headers(),
-        )
-        r.raise_for_status()
-        await asyncio.sleep(RATE_LIMIT_DELAY)
-        # print(f"[OpenAlex] Found {r.json().get('meta', {}).get('count', 0)} total results, returning top {max_results}")
-        
-        results = r.json().get("results", [])
+        try:
+            r = await asyncio.to_thread(
+                requests.get,
+                f"{OPENALEX_BASE}/works",
+                params=params,
+                headers=self._headers(),
+                timeout=15,
+            )
+            r.raise_for_status()
+            await asyncio.sleep(RATE_LIMIT_DELAY)
+            # print(f"[OpenAlex] Found {r.json().get('meta', {}).get('count', 0)} total results, returning top {max_results}")
+            results = r.json().get("results", [])
+        except (requests.RequestException, ValueError) as exc:
+            log_external_failure("OpenAlex", "search", exc)
+            return []
         articles = []
 
         quality_ranker = QualityRanker()
@@ -109,7 +118,11 @@ class OpenAlexClient:
             if not a.full_text_available:
                 if pmc_id := PDFClient._extract_pmc_id(oa.get("oa_url", "")):
                     # print(f"[OpenAlex] Found PMC ID {pmc_id}, getting full text...")
-                    a.full_text = self.pmc_client.fetch_full_text(pmc_id)
+                    try:
+                        a.full_text = self.pmc_client.fetch_full_text(pmc_id)
+                    except Exception as exc:
+                        log_external_failure("PMC", "OpenAlex full-text fetch", exc)
+                        a.full_text = ""
                     a.full_text_available = bool(a.full_text)
                     a.source = "PMC XML Fetch"
 
@@ -147,12 +160,12 @@ class OpenAlexClient:
         encoded_doi = quote(doi, safe="")
         url = f"{OPENALEX_BASE}/works/https://doi.org/{encoded_doi}"
         try:
-            r = requests.get(url, headers=self._headers())
+            r = requests.get(url, headers=self._headers(), timeout=15)
             if r.status_code == 200:
                 # print(f"[OpenAlex] Found data for DOI: {doi}")
                 return r.json()
-        except Exception:
-            pass
+        except Exception as exc:
+            log_external_failure("OpenAlex", "DOI fetch", exc)
         return None
 
     def _reconstruct_abstract(self, inverted_index: dict) -> str:

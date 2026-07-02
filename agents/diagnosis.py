@@ -62,6 +62,8 @@ class DiagnosisAgent():
         citations = {}
         research_agent = ResearchAgent(self.research_repo, research_session_id, effort="fast")
         async for research_chunk in research_agent.run(self.intake_session, research_question=research_question):
+            if isinstance(research_chunk, dict) and research_chunk.get("type") == "error":
+                return research_chunk.get("content") or "Research failed."
             if isinstance(research_chunk, tuple) and len(research_chunk) == 2:
                 research_report, citations = research_chunk
 
@@ -131,7 +133,15 @@ Medical Summary: {self.intake_session.medical_summary}"""
         
         logging.debug(f"Diagnosis agent input message: {user_message}")
         
-        response = await self.agent.ainvoke({"messages": [{"role": "user", "content": user_message}]}, version="v2")
-        report = response.get("structured_response")
-        yield report.model_dump() if hasattr(report, "model_dump") else report or response["messages"][-1].content
+        try:
+            response = await self.agent.ainvoke({"messages": [{"role": "user", "content": user_message}]}, version="v2")
+            report = response.get("structured_response")
+            yield report.model_dump() if hasattr(report, "model_dump") else report or response["messages"][-1].content
+        except Exception as exc:
+            logging.exception("Diagnosis agent failed.")
+            yield {
+                "type": "error",
+                "content": f"Diagnosis failed because the AI provider is temporarily unavailable: {exc}",
+                "recoverable": True,
+            }
     

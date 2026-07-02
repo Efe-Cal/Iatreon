@@ -11,6 +11,7 @@ from ..sources.pmc import PMCClient
 from ..sources.pubmed import PubMedClient
 from .ranking import QualityRanker
 from ..sources.get_ncbi_books import BookshelfClient
+from ..errors import log_external_failure
 
 
 class MedicalKnowledgePipeline:
@@ -21,20 +22,41 @@ class MedicalKnowledgePipeline:
         self.bookshelf = BookshelfClient()
         self.ranker = QualityRanker()
         self.pdf_client = PDFClient()
+        self.source_warnings: list[str] = []
+
+    def _source_failed(self, provider: str, operation: str, error: object) -> None:
+        self.source_warnings.append(log_external_failure(provider, operation, error))
 
     async def search(self, query: str, max_results: int = 10, include_books: bool = True) -> dict:
         # print(f"\n{'='*60}")
         # print(f"MEDICAL PIPELINE — Query: '{query}'")
         # print(f"{'='*60}")
 
-        pubmed_ids = await asyncio.to_thread(self.pubmed.search, query, max_results=max_results)
-        articles = await asyncio.to_thread(self.pubmed.fetch_abstracts, pubmed_ids)
+        try:
+            pubmed_ids = await asyncio.to_thread(self.pubmed.search, query, max_results=max_results)
+        except Exception as exc:
+            self._source_failed("PubMed", "search", exc)
+            pubmed_ids = []
+
+        try:
+            articles = await asyncio.to_thread(self.pubmed.fetch_abstracts, pubmed_ids)
+        except Exception as exc:
+            self._source_failed("PubMed", "abstract fetch", exc)
+            articles = []
 
         for article in articles:
             article.source = "PubMed Abstract"
 
-        articles = await asyncio.to_thread(self.pmc.enrich_articles_with_fulltext, articles)
-        articles = await asyncio.to_thread(self.openalex.enrich_articles, articles)
+        try:
+            articles = await asyncio.to_thread(self.pmc.enrich_articles_with_fulltext, articles)
+        except Exception as exc:
+            self._source_failed("PMC", "full-text enrichment", exc)
+
+        try:
+            articles = await asyncio.to_thread(self.openalex.enrich_articles, articles)
+        except Exception as exc:
+            self._source_failed("OpenAlex", "article enrichment", exc)
+
         for article in articles:
             if not article.full_text_available and article.pdf_url:
                 try:
@@ -43,14 +65,24 @@ class MedicalKnowledgePipeline:
                 except Exception as e:
                     print(f"Error fetching PDF content for {article.pdf_url}: {e}")
 
-        openalex_articles = await self.openalex.search_directly(query, max_results=int(max_results*0.6))
+        try:
+            openalex_articles = await self.openalex.search_directly(query, max_results=int(max_results*0.6))
+        except Exception as exc:
+            self._source_failed("OpenAlex", "search", exc)
+            openalex_articles = []
         articles.extend(openalex_articles)
 
         books = []
         if include_books:
-            books = await asyncio.to_thread(self.bookshelf.get_book_contents, query, num_results=3)
+            try:
+                books = await asyncio.to_thread(self.bookshelf.get_book_contents, query, num_results=3)
+            except Exception as exc:
+                self._source_failed("NCBI Bookshelf", "search", exc)
 
-        articles = await asyncio.to_thread(self.ranker.rank, articles)
+        try:
+            articles = await asyncio.to_thread(self.ranker.rank, articles)
+        except Exception as exc:
+            self._source_failed("QualityRanker", "ranking", exc)
 
         full_text_count = sum(1 for a in articles if a.full_text_available)
         pdf_count = sum(1 for a in articles if a.pdf_url and not a.full_text_available)
@@ -69,6 +101,7 @@ class MedicalKnowledgePipeline:
             "query": query,
             "articles": articles,
             "books": books,
+            "warnings": self.source_warnings,
         }
 
     async def get_best_context(self, query: str, max_articles: int = 5, include_books: bool = False) -> str:
@@ -122,7 +155,7 @@ class MedicalKnowledgePipeline:
         results = await self.search(query, max_results=max_articles, include_books=include_books)
         articles = [asdict(a) for a in results["articles"][:max_articles]]
         books = [asdict(b) for b in results["books"]]
-        return {"query": query, "articles": articles, "books": books}
+        return {"query": query, "articles": articles, "books": books, "warnings": results.get("warnings", [])}
 
 def clean_text_for_llm(text):
     if not isinstance(text, str):
@@ -221,12 +254,13 @@ async def run_pipeline(query: str, max_articles: int = 5, include_books: bool = 
     )
     articles = context["articles"]
     books = context["books"]
+    warnings = context.get("warnings", [])
 
     articles = deduplicate_articles(articles)
     articles = [a for a in articles if a["full_text_available"] or a["abstract"]]
     articles = normalize_articles(articles)
 
-    return {"articles": articles, "books": books}
+    return {"articles": articles, "books": books, "warnings": warnings}
 
 if __name__ == "__main__":
     import asyncio

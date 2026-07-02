@@ -27,9 +27,13 @@ async def run_inference(summary: str) -> str:
     "\n\nBased on the patient's chief complaint and HPI details provided above, please generate a ranked differential diagnosis and identify critical information gaps. Use the `web_search` tool if you need to look up any medical information to inform your reasoning. Return your response in a structured format with sections for Differential (ranked), Critical Unknowns, and Recommended Focus Areas."
     
     messages = [{"role": "user", "content": user_message}]
-    response = await inference_agent.ainvoke({"messages": messages})
-    logging.debug(f"Inference agent response: {response}")
-    return _content_to_text(response["messages"][-1].content)
+    try:
+        response = await inference_agent.ainvoke({"messages": messages})
+        logging.debug(f"Inference agent response: {response}")
+        return _content_to_text(response["messages"][-1].content)
+    except Exception:
+        logging.exception("Inference agent failed.")
+        return "Inference is temporarily unavailable."
 
 
 async def run_research_inference(summary: str) -> str:

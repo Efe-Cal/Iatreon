@@ -32,6 +32,10 @@ async def stream_diagnosis(intake_id: str, user_id: str, session_id: str | None 
 
     diagnosis_agent = DiagnosisAgent(intake_session, research_session, chat_session_id)
     async for diagnosis_chunk in diagnosis_agent.diagnose():
+        if isinstance(diagnosis_chunk, dict) and diagnosis_chunk.get("type") == "error":
+            yield diagnosis_chunk
+            return
+
         async with unit_of_work() as db:
             diagnosis_session = await DiagnosisRepo(user_id).create_diagnosis_session(
                 db,

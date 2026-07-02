@@ -9,6 +9,7 @@ from typing import Optional
 import requests
 
 from ..config import NCBI_API_KEY, NCBI_BASE
+from ..errors import log_external_failure
 from ..models import BookSection
 from .ncbi_rate_limit import ncbi_get
 
@@ -28,9 +29,13 @@ class NCBIBooksClient:
         if NCBI_API_KEY:
             params["api_key"] = NCBI_API_KEY
 
-        r = ncbi_get(f"{NCBI_BASE}/esearch.fcgi", params=params)
-        r.raise_for_status()
-        ids = r.json()["esearchresult"]["idlist"]
+        try:
+            r = ncbi_get(f"{NCBI_BASE}/esearch.fcgi", params=params)
+            r.raise_for_status()
+            ids = r.json()["esearchresult"]["idlist"]
+        except (requests.RequestException, KeyError, ValueError) as exc:
+            log_external_failure("NCBI Books", "search", exc)
+            return []
 
         if not ids:
             print("[NCBI Books] No results found")
@@ -53,10 +58,13 @@ class NCBIBooksClient:
         if NCBI_API_KEY:
             params["api_key"] = NCBI_API_KEY
 
-        r = ncbi_get(f"{NCBI_BASE}/esummary.fcgi", params=params)
-        r.raise_for_status()
-
-        summary = r.json().get("result", {})
+        try:
+            r = ncbi_get(f"{NCBI_BASE}/esummary.fcgi", params=params)
+            r.raise_for_status()
+            summary = r.json().get("result", {})
+        except (requests.RequestException, ValueError) as exc:
+            log_external_failure("NCBI Books", "summary fetch", exc)
+            return []
         sections = []
         seen_urls = set()
 

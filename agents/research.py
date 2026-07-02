@@ -125,10 +125,21 @@ class ResearchAgent:
 
         self._citation_lookup: dict[int, dict] = {}
         self._citation_lock = asyncio.Lock()
+        self.source_warnings: list[str] = []
+
+    def _source_warning(self, provider: str, error: Exception) -> str:
+        warning = f"{provider} unavailable: {error}"
+        self.source_warnings.append(warning)
+        logging.warning(warning)
+        return warning
     
     async def _web_search(self, query: str) -> str:
         print(f"Performing web search for query: {query}")
-        results = await asyncio.to_thread(web_search, query, self.effort_settings["web_results"])
+        try:
+            results = await asyncio.to_thread(web_search, query, self.effort_settings["web_results"])
+        except Exception as exc:
+            warning = self._source_warning("Web search", exc)
+            return f"<source>\nWeb search results for query '{query}':\n{warning}\n</source>"
 
         if results:
             async with unit_of_work() as db:
@@ -154,7 +165,10 @@ class ResearchAgent:
     
     async def _fetch_web_content(self, url: str) -> str:
         print(f"Fetching content from URL: {url}")
-        content = await asyncio.to_thread(fetch_web_content, url)
+        try:
+            content = await asyncio.to_thread(fetch_web_content, url)
+        except Exception as exc:
+            content = self._source_warning("Web content fetch", exc)
         return f"Fetched content from {url}:\n{content}"
 
     async def _search_medical_literature(self, query: str, max_articles: int = 5, include_books: bool = False) -> str:
@@ -174,7 +188,13 @@ class ResearchAgent:
         """
         # print(f"Running medical literature search for query: {query}")
         max_articles = min(max_articles, self.effort_settings["max_articles"])
-        results = await run_pipeline(query, max_articles=max_articles, include_books=include_books)
+        try:
+            results = await run_pipeline(query, max_articles=max_articles, include_books=include_books)
+        except Exception as exc:
+            warning = self._source_warning("Medical literature search", exc)
+            return f"<source>\nSearch results for query '{query}':\n{warning}\n</source>"
+
+        self.source_warnings.extend(results.get("warnings", []))
         articles = results["articles"]
         books = results["books"]
         
@@ -214,7 +234,11 @@ class ResearchAgent:
         """
         
         book_client = BookshelfClient()
-        books = await book_client.get_book_contents(query)
+        try:
+            books = await asyncio.to_thread(book_client.get_book_contents, query)
+        except Exception as exc:
+            warning = self._source_warning("NCBI Bookshelf", exc)
+            return f"<source>\nBook search results for query '{query}':\n{warning}\n</source>"
         
         if books:
             async with unit_of_work() as db:
@@ -240,11 +264,15 @@ class ResearchAgent:
             str: A formatted string containing the search results from OpenAlex.
         """
         open_alex_client = OpenAlexClient()
-        articles = await open_alex_client.search_directly(
-            query=query,
-            max_results=self.effort_settings["openalex_results"],
-            semantic=True,
-        )
+        try:
+            articles = await open_alex_client.search_directly(
+                query=query,
+                max_results=self.effort_settings["openalex_results"],
+                semantic=True,
+            )
+        except Exception as exc:
+            warning = self._source_warning("OpenAlex", exc)
+            return f"<source>\nOpenAlex search results for query '{query}':\n{warning}\n</source>"
         
         if articles:
             async with unit_of_work() as db:
@@ -356,26 +384,35 @@ Prioritize urgent/emergent causes first when red flags are present. Normalize la
         messages = [{"role": "user", "content": user_message}]
         parts = []
         fallback_report = ""
-        async for event in self.agent.astream_events({"messages": messages}, config=self.config, version="v2"):
-            print(f"Received event: {event['event']}")
-            if event["event"] == "on_chat_model_stream":
-                chunk: AIMessageChunk = event["data"]["chunk"]
-                for text in _iter_stream_text(chunk.content):
-                    print(text, end="", flush=True)
-                    parts.append(text)
-                    yield {"type": "message", "content": text}
+        try:
+            async for event in self.agent.astream_events({"messages": messages}, config=self.config, version="v2"):
+                print(f"Received event: {event['event']}")
+                if event["event"] == "on_chat_model_stream":
+                    chunk: AIMessageChunk = event["data"]["chunk"]
+                    for text in _iter_stream_text(chunk.content):
+                        print(text, end="", flush=True)
+                        parts.append(text)
+                        yield {"type": "message", "content": text}
 
-            if event["event"] in ["on_chat_model_end", "on_chain_end"]:
-                fallback_text = self._extract_event_text(event.get("data", {}))
-                if fallback_text:
-                    fallback_report = fallback_text
+                if event["event"] in ["on_chat_model_end", "on_chain_end"]:
+                    fallback_text = self._extract_event_text(event.get("data", {}))
+                    if fallback_text:
+                        fallback_report = fallback_text
 
-            if event["event"] in ["on_tool_start", "on_tool_end"]:
-                print(event["run_id"])
-                # content = event["data"]["input"]["query"] if "query" in event["data"]["input"] else event["data"]["input"]["url"] if "url" in event["data"]["input"] else str(event["data"]["input"])
-                inp = event["data"].get("input", {})
-                content = inp.get("query") or inp.get("url") or str(inp)
-                yield {"type": event["event"].replace("on_", ""), "name": event["name"], "content": content, "tool_call_id": event["run_id"]}
+                if event["event"] in ["on_tool_start", "on_tool_end"]:
+                    print(event["run_id"])
+                    # content = event["data"]["input"]["query"] if "query" in event["data"]["input"] else event["data"]["input"]["url"] if "url" in event["data"]["input"] else str(event["data"]["input"])
+                    inp = event["data"].get("input", {})
+                    content = inp.get("query") or inp.get("url") or str(inp)
+                    yield {"type": event["event"].replace("on_", ""), "name": event["name"], "content": content, "tool_call_id": event["run_id"]}
+        except Exception as exc:
+            logging.exception("Research agent failed.")
+            yield {
+                "type": "error",
+                "content": f"Research failed because the AI provider is temporarily unavailable: {exc}",
+                "recoverable": True,
+            }
+            return
 
         final_message = "".join(parts) or fallback_report
         if not parts and final_message:

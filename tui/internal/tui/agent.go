@@ -25,12 +25,12 @@ type toolMessage struct {
 }
 
 type diagnosisReport struct {
-	PrimaryDiagnosis    string                      `json:"primary_diagnosis"`
-	Confidence          string                      `json:"confidence"`
-	Differential        []diagnosisDifferentialItem `json:"differential"`
-	ReasoningSummary    string                      `json:"reasoning_summary"`
+	PrimaryDiagnosis     string                      `json:"primary_diagnosis"`
+	Confidence           string                      `json:"confidence"`
+	Differential         []diagnosisDifferentialItem `json:"differential"`
+	ReasoningSummary     string                      `json:"reasoning_summary"`
 	RecommendedNextSteps []string                    `json:"recommended_next_steps"`
-	RedFlagsToMonitor   []string                    `json:"red_flags_to_monitor"`
+	RedFlagsToMonitor    []string                    `json:"red_flags_to_monitor"`
 }
 
 type diagnosisDifferentialItem struct {
@@ -71,6 +71,7 @@ type sseEvent struct {
 	ToolCallID     string          `json:"tool_call_id"`
 	SessionID      string          `json:"session_id"`
 	ConversationID string          `json:"conversation_id"`
+	Recoverable    bool            `json:"recoverable"`
 }
 
 func newAgentHandler(kind AgentKind) AgentHandler {
@@ -111,6 +112,8 @@ func handleCommonAgentEvent(ev sseEvent) (chunkMsg, bool) {
 		return chunkMsg{content: ev.Content, toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: true}}, true
 	case "tool_end":
 		return chunkMsg{content: ev.Content, toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: false}}, true
+	case "error":
+		return chunkMsg{err: fmt.Errorf("%s", ev.Content), recoverable: ev.Recoverable}, true
 	}
 	if ev.Type == "" && ev.Content != "" {
 		return chunkMsg{content: ev.Content}, true

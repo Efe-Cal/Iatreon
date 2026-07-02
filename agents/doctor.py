@@ -1,5 +1,6 @@
 from typing import AsyncGenerator
 import uuid
+import logging
 from dotenv import load_dotenv
 
 from langchain_core.messages import AIMessageChunk
@@ -41,31 +42,39 @@ class DoctorAgent:
             ]
             await self.agent.aupdate_state(config=config, values={"messages": messages})
         
-        async for event in self.agent.astream_events(
-            {"messages": [{"role": "user", "content": message}]},
-            config=config,
-            version="v2",
-        ):
-            #TODO: Take a look a this when we have tools
-            if event["event"] == "on_tool_start" or event["event"] == "on_tool_end":
-                inp = event.get("data", {}).get("input", {})
-                if isinstance(inp, dict):
-                    query = inp.get("query", "")
-                    effort = inp.get("research_effort", "")
-                    content = f"{query} ({effort})" if effort else query
-                else:
-                    content = str(inp)
-                yield {
-                    "type": event["event"].removeprefix("on_"),
-                    "name": event.get("name") or event.get("data", {}).get("name"),
-                    "content": content or "",
-                    "tool_call_id": event["run_id"],
-                }
-                
-            if event["event"] == "on_chat_model_stream":
-                chunk: AIMessageChunk = event["data"]["chunk"]
-                for text in _iter_stream_text(chunk.content):
-                    yield text
+        try:
+            async for event in self.agent.astream_events(
+                {"messages": [{"role": "user", "content": message}]},
+                config=config,
+                version="v2",
+            ):
+                #TODO: Take a look a this when we have tools
+                if event["event"] == "on_tool_start" or event["event"] == "on_tool_end":
+                    inp = event.get("data", {}).get("input", {})
+                    if isinstance(inp, dict):
+                        query = inp.get("query", "")
+                        effort = inp.get("research_effort", "")
+                        content = f"{query} ({effort})" if effort else query
+                    else:
+                        content = str(inp)
+                    yield {
+                        "type": event["event"].removeprefix("on_"),
+                        "name": event.get("name") or event.get("data", {}).get("name"),
+                        "content": content or "",
+                        "tool_call_id": event["run_id"],
+                    }
+
+                if event["event"] == "on_chat_model_stream":
+                    chunk: AIMessageChunk = event["data"]["chunk"]
+                    for text in _iter_stream_text(chunk.content):
+                        yield text
+        except Exception as exc:
+            logging.exception("Doctor agent failed.")
+            yield {
+                "type": "error",
+                "content": f"Doctor chat failed because the AI provider is temporarily unavailable: {exc}",
+                "recoverable": True,
+            }
 
     async def _call_research_agent(self, query: str, research_effort: ResearchEffort = "standard") -> str:
         if not self.user_id or not self.chat_session_id:
@@ -90,6 +99,8 @@ class DoctorAgent:
         citations = {}
         research_agent = ResearchAgent(research_repo, research_session_id, effort=research_effort)
         async for research_chunk in research_agent.run(None, research_question=query, user_id=self.user_id):
+            if isinstance(research_chunk, dict) and research_chunk.get("type") == "error":
+                return research_chunk.get("content") or "Research failed."
             if isinstance(research_chunk, tuple) and len(research_chunk) == 2:
                 research_report, citations = research_chunk
 

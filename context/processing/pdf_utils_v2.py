@@ -65,31 +65,51 @@ class PDFClient:
             return ""
         return match.group(0).rstrip(").,;?&")
 
+    def _pdf_worker_failed(self, url: str, reason: str) -> None:
+        print(f"[PDFClient] PDF worker unavailable for {url}: {reason}")
+
     async def download_pdf(self, url: str, client: httpx.AsyncClient) -> bytes | None:
-        response = await client.post(f"{os.getenv('PDF_SCRAPER_BASE_URL', 'http://localhost:8000')}/scrape_pdf/", json={"pdf_url": url})
-        if response.status_code != 202:
-            raise Exception(f"Failed to enqueue PDF download for {url}: {response.text}")
+        base_url = os.getenv("PDF_SCRAPER_BASE_URL", "http://localhost:8000")
+        try:
+            response = await client.post(f"{base_url}/scrape_pdf/", json={"pdf_url": url})
+            if response.status_code != 202:
+                self._pdf_worker_failed(url, f"enqueue returned {response.status_code}")
+                return None
 
-        job_id = response.json().get("job_id")
-        if not job_id:
-            raise Exception(f"No job ID returned for {url}: {response.text}")
+            job_id = response.json().get("job_id")
+            if not job_id:
+                self._pdf_worker_failed(url, "enqueue response did not include a job ID")
+                return None
 
-        for _ in range(60):
-            status_response = await client.get(f"{os.getenv('PDF_SCRAPER_BASE_URL', 'http://localhost:8000')}/get_pdf/{job_id}")
-            if status_response.status_code != 200:
-                raise Exception(f"Failed to get PDF download status for {url}: {status_response.text}")
+            for _ in range(60):
+                status_response = await client.get(f"{base_url}/get_pdf/{job_id}")
+                if status_response.status_code != 200:
+                    self._pdf_worker_failed(url, f"status returned {status_response.status_code}")
+                    return None
 
-            status_data = status_response.json()
-            if status_data.get("status") == "finished":
-                download = status_data.get("result")
-            elif status_data.get("status") == "failed":
-                raise Exception(f"PDF download failed for {url}")
-            else:
-                await asyncio.sleep(2)
-                continue
-            
-            pdf = await client.get(f"{os.getenv('PDF_SCRAPER_BASE_URL', 'http://localhost:8000')}/download/", params={"file_path": download})
-            return pdf.content if pdf.status_code == 200 else None
+                status_data = status_response.json()
+                if status_data.get("status") == "finished":
+                    download = status_data.get("result")
+                    if not download:
+                        self._pdf_worker_failed(url, "finished job did not include a file path")
+                        return None
+                elif status_data.get("status") == "failed":
+                    self._pdf_worker_failed(url, "job failed")
+                    return None
+                else:
+                    await asyncio.sleep(2)
+                    continue
+
+                pdf = await client.get(f"{base_url}/download/", params={"file_path": download})
+                if pdf.status_code != 200:
+                    self._pdf_worker_failed(url, f"download returned {pdf.status_code}")
+                    return None
+                return pdf.content
+
+            self._pdf_worker_failed(url, "timed out waiting for job")
+        except Exception as exc:
+            self._pdf_worker_failed(url, str(exc))
+        return None
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         reader = PdfReader(pdf_path)
@@ -115,13 +135,16 @@ class PDFClient:
             try:
                 pdf_bytes = await self.download_pdf(self._special_case_pdf_url(url), client)
                 if not pdf_bytes:
-                    raise Exception(f"Failed to download PDF content from {url}")
+                    return ""
                 
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                     tmp_file.write(pdf_bytes)
                     tmp_path = tmp_file.name
 
                 return self.extract_text_from_pdf_liteparse(tmp_path)
+            except Exception as exc:
+                print(f"[PDFClient] PDF extraction failed for {url}: {exc}")
+                return ""
             finally:
                 if 'tmp_path' in locals() and os.path.exists(tmp_path):
                     os.remove(tmp_path)

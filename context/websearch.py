@@ -4,6 +4,8 @@ from exa_py import Exa
 from exa_py.api import ContentsOptions, TextContentsOptions, HighlightsContentsOptions
 from dotenv import load_dotenv
 
+from context.errors import log_external_failure
+
 load_dotenv()
 
 exa = Exa(api_key=os.getenv("EXA_API_KEY", os.getenv("AI_API_KEY")), base_url=os.getenv("EXA_BASE_URL", "https://ai.hackclub.com/proxy/v1/exa"))
@@ -20,15 +22,16 @@ def web_search(query: str, num_results: int = 5):
     Returns:
         The search highlights.
     """
-    response = exa.search(
-        query, 
-        num_results=num_results,
-        type="deep",
-        system_prompt="Prefer recent information from articles and medical sources.",
-        contents=ContentsOptions(livecrawl="preferred",
-                    text=TextContentsOptions(),
-                    highlights=HighlightsContentsOptions(
-                        query="""BE EXTREAMLY detailed and comprehensive. Extract ALL clinically relevant information.
+    try:
+        response = exa.search(
+            query,
+            num_results=num_results,
+            type="deep",
+            system_prompt="Prefer recent information from articles and medical sources.",
+            contents=ContentsOptions(livecrawl="preferred",
+                        text=TextContentsOptions(),
+                        highlights=HighlightsContentsOptions(
+                            query="""BE EXTREAMLY detailed and comprehensive. Extract ALL clinically relevant information.
 
 Prioritize:
 - symptoms
@@ -55,7 +58,10 @@ Prioritize:
 
 Avoid omitting nuanced or uncertain findings.
 Prefer completeness over brevity."""
-            )))
+                )))
+    except Exception as exc:
+        log_external_failure("Exa", "search", exc)
+        return []
 
     return [{"title": r.title, "url": r.url, "highlights": r.highlights} for r in response.results]
 
@@ -69,8 +75,13 @@ def fetch_web_content(url: str) -> str:
         The text content of the web page.
     """
     
-    response = exa.get_contents(url, livecrawl="preferred", text=TextContentsOptions())
-    if response.statuses[0].status != "success":
+    try:
+        response = exa.get_contents(url, livecrawl="preferred", text=TextContentsOptions())
+    except Exception as exc:
+        log_external_failure("Exa", "content fetch", exc)
+        return "Failed to fetch content."
+
+    if not response.statuses or response.statuses[0].status != "success" or not response.results:
         return "Failed to fetch content."
     return response.results[0].text
 

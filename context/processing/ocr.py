@@ -71,9 +71,18 @@ class MistralOCRService:
                 },
                 "table_format":"markdown",
             }
-            response = httpx.post(os.getenv("OCR_API_URL") or urljoin(os.getenv("AI_API_BASE_URL"),"/ocr"),
-                                  json=body, headers={"Authorization": f"Bearer {os.getenv('OCR_API_KEY') or os.getenv('AI_API_KEY')}"})
-            text = response.json()["pages"][0]["markdown"] if response.status_code == 200 else ""
+            response = httpx.post(
+                os.getenv("OCR_API_URL") or urljoin(os.getenv("AI_API_BASE_URL"), "/ocr"),
+                json=body,
+                headers={"Authorization": f"Bearer {os.getenv('OCR_API_KEY') or os.getenv('AI_API_KEY')}"},
+                timeout=30,
+            )
+            text = ""
+            if response.status_code == 200:
+                try:
+                    text = response.json()["pages"][0]["markdown"]
+                except (KeyError, IndexError, ValueError, TypeError) as exc:
+                    return OCRResult(text="", backend_used="mistral_ocr", error=str(exc))
             return OCRResult(
                 text=text.strip() if text else "",
                 backend_used="mistral_ocr",

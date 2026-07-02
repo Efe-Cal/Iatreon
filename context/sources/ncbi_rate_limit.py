@@ -27,9 +27,19 @@ def wait_for_ncbi_slot() -> None:
 
 def ncbi_get(url: str, *, max_retries: int = 3, **kwargs) -> requests.Response:
     """Run a GET request through the shared NCBI rate limiter."""
+    kwargs.setdefault("timeout", 15)
+    last_error = None
     for attempt in range(max_retries + 1):
         wait_for_ncbi_slot()
-        response = requests.get(url, **kwargs)
+        try:
+            response = requests.get(url, **kwargs)
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt == max_retries:
+                raise
+            time.sleep(_NCBI_REQUEST_INTERVAL * (attempt + 1))
+            continue
+
         if response.status_code != 429 or attempt == max_retries:
             return response
 
@@ -38,6 +48,8 @@ def ncbi_get(url: str, *, max_retries: int = 3, **kwargs) -> requests.Response:
             retry_after = _NCBI_REQUEST_INTERVAL * (attempt + 1)
         time.sleep(retry_after)
 
+    if last_error:
+        raise last_error
     return response
 
 

@@ -1,4 +1,5 @@
 import os
+import logging
 from typing import AsyncGenerator
 from dotenv import load_dotenv
 
@@ -60,34 +61,43 @@ async def run_intake_cli(message: str, conversation_id: str, user_id: str) -> As
         message = await mock_patient_response(state.values["messages"].copy())
         yield f"**Patient:** {message}   \n\n\n\n\n"
 
-    async for event in agent.astream_events(
-        {"messages": [{"role": "user", "content": message}]},
-        config=config,
-        version="v2",
-    ):
-        if event["event"] == "on_tool_start":
-            if event.get("name") == "end_of_intake":
-                end_intake_called = True
+    try:
+        async for event in agent.astream_events(
+            {"messages": [{"role": "user", "content": message}]},
+            config=config,
+            version="v2",
+        ):
+            if event["event"] == "on_tool_start":
+                if event.get("name") == "end_of_intake":
+                    end_intake_called = True
 
-            elif event.get("name") == "infer_condition":
-                infer_condition_active = True
-                # tool_input = event["data"]["input"]["summary"]
-                yield {"type": "tool_start", "name": "infer_condition", "tool_call_id": event["run_id"]}
-            continue
-
-        elif event["event"] == "on_tool_end":
-            if event.get("name") == "infer_condition":
-                infer_condition_active = False
-                yield {"type": "tool_end", "name": "infer_condition", "tool_call_id": event["run_id"]}
-            continue
-
-        if event["event"] == "on_chat_model_stream":
-            if infer_condition_active:
+                elif event.get("name") == "infer_condition":
+                    infer_condition_active = True
+                    # tool_input = event["data"]["input"]["summary"]
+                    yield {"type": "tool_start", "name": "infer_condition", "tool_call_id": event["run_id"]}
                 continue
 
-            chunk: AIMessageChunk = event["data"]["chunk"]
-            for text in _iter_stream_text(chunk.content):
-                yield text
+            elif event["event"] == "on_tool_end":
+                if event.get("name") == "infer_condition":
+                    infer_condition_active = False
+                    yield {"type": "tool_end", "name": "infer_condition", "tool_call_id": event["run_id"]}
+                continue
+
+            if event["event"] == "on_chat_model_stream":
+                if infer_condition_active:
+                    continue
+
+                chunk: AIMessageChunk = event["data"]["chunk"]
+                for text in _iter_stream_text(chunk.content):
+                    yield text
+    except Exception as exc:
+        logging.exception("Intake agent failed.")
+        yield {
+            "type": "error",
+            "content": f"Intake failed because the AI provider is temporarily unavailable: {exc}",
+            "recoverable": True,
+        }
+        return
 
     if end_intake_called:
         model = get_model("intake", 0.3)  # Get the model instance

@@ -2,8 +2,11 @@ import random
 import xml.etree.ElementTree as ET
 from typing import Optional
 
+import requests
+
 from ..models import Article
 from ..config import NCBI_API_KEY, NCBI_BASE, HEADERS, USER_AGENTS
+from ..errors import log_external_failure
 from .ncbi_rate_limit import ncbi_get
 
 class PMCClient:
@@ -24,7 +27,7 @@ class PMCClient:
             r = ncbi_get(f"{NCBI_BASE}/elink.fcgi", params=params, headers=headers)
             r.raise_for_status()
         except Exception as e:
-            print(f"Error fetching PMC ID for PubMed ID {pubmed_id}: {e}")
+            log_external_failure("PMC", "ID lookup", e)
             return None
 
         try:
@@ -33,7 +36,7 @@ class PMCClient:
         except (KeyError, IndexError):
             return None
         except ValueError:
-            print(f"Error decoding JSON for PubMed ID: {pubmed_id}")
+            log_external_failure("PMC", "ID response parse", f"PubMed ID {pubmed_id}")
             return None
 
     def fetch_full_text(self, pmc_id: str) -> str:
@@ -47,8 +50,12 @@ class PMCClient:
         if NCBI_API_KEY:
             params["api_key"] = NCBI_API_KEY
 
-        r = ncbi_get(f"{NCBI_BASE}/efetch.fcgi", params=params)
-        r.raise_for_status()
+        try:
+            r = ncbi_get(f"{NCBI_BASE}/efetch.fcgi", params=params)
+            r.raise_for_status()
+        except requests.RequestException as exc:
+            log_external_failure("PMC", "full-text fetch", exc)
+            return ""
 
         return self._extract_text_from_xml(r.text)
 
@@ -94,7 +101,11 @@ class PMCClient:
                 pmc_id = self.get_pmc_id(article.pubmed_id)
 
             if pmc_id:
-                full_text = self.fetch_full_text(pmc_id)
+                try:
+                    full_text = self.fetch_full_text(pmc_id)
+                except Exception as exc:
+                    log_external_failure("PMC", "article enrichment", exc)
+                    full_text = ""
                 if full_text:
                     article.pmc_id = pmc_id
                     article.full_text = full_text

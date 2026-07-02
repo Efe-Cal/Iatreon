@@ -1,6 +1,9 @@
 import xml.etree.ElementTree as ET
 
+import requests
+
 from ..config import NCBI_API_KEY, NCBI_BASE
+from ..errors import log_external_failure
 from ..models import Article
 from .ncbi_rate_limit import ncbi_get
 
@@ -20,13 +23,12 @@ class PubMedClient:
         if NCBI_API_KEY:
             params["api_key"] = NCBI_API_KEY
 
-        r = ncbi_get(f"{NCBI_BASE}/esearch.fcgi", params=params)
-        r.raise_for_status()
         try:
+            r = ncbi_get(f"{NCBI_BASE}/esearch.fcgi", params=params)
+            r.raise_for_status()
             ids = r.json()["esearchresult"]["idlist"]
-        except ValueError:
-            print(f"Error decoding JSON for query: {query}")
-            print(f"Response content: {r.text}")
+        except (requests.RequestException, KeyError, ValueError) as exc:
+            log_external_failure("PubMed", "search", exc)
             return []
         # print(f"[PubMed] Found {len(ids)} articles")
         return ids
@@ -47,14 +49,21 @@ class PubMedClient:
         if NCBI_API_KEY:
             params["api_key"] = NCBI_API_KEY
 
-        r = ncbi_get(f"{NCBI_BASE}/efetch.fcgi", params=params)
-        r.raise_for_status()
-
-        return self._parse_pubmed_xml(r.text)
+        try:
+            r = ncbi_get(f"{NCBI_BASE}/efetch.fcgi", params=params)
+            r.raise_for_status()
+            return self._parse_pubmed_xml(r.text)
+        except (requests.RequestException, ET.ParseError) as exc:
+            log_external_failure("PubMed", "abstract fetch", exc)
+            return []
 
     def _parse_pubmed_xml(self, xml_text: str) -> list[Article]:
         articles = []
-        root = ET.fromstring(xml_text)
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError as exc:
+            log_external_failure("PubMed", "XML parse", exc)
+            return []
 
         for article_elem in root.findall(".//PubmedArticle"):
             a = Article()

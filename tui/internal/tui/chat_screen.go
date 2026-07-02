@@ -55,6 +55,8 @@ type chatModel struct {
 	footerActions []string
 
 	invokeAgentWithEnter bool
+	retryWithEnter       bool
+	retryMessage         string
 	reportReady          bool
 	report               string
 	citations            []citation
@@ -304,6 +306,9 @@ func (m *chatModel) renderMessage(msg messageItem) string {
 	case "ai_body":
 		return m.renderMarkdown(msg.text, false)
 	case "system":
+		if strings.Contains(strings.ToLower(msg.text), "error") {
+			return errorStyle.Render(msg.text)
+		}
 		return systemStyle.Render(msg.text)
 	case "seperator":
 		return m.renderAgentSeperator(msg.text)
@@ -345,6 +350,11 @@ func (m *chatModel) refreshViewport(scrollToBottom ...bool) {
 	}
 }
 
+func (m *chatModel) addRecoverableRetryPrompt() {
+	m.retryWithEnter = true
+	m.history = append(m.history, messageItem{role: "system", text: "Press Enter to retry."})
+}
+
 type chunkMsg struct {
 	content           string
 	err               error
@@ -355,6 +365,7 @@ type chunkMsg struct {
 	researchSessionID string
 	sessionID         string
 	conversationID    string
+	recoverable       bool
 	ch                chan chunkMsg
 	toolMessage
 }
@@ -434,6 +445,7 @@ func (m *chatModel) streamMessage(agent AgentHandler, conversationID, userid, ms
 				}
 
 				out := agent.HandleEvent(ev)
+				out.recoverable = ev.Recoverable
 				if out.done || out.err != nil {
 					ch <- out
 					return
@@ -483,7 +495,11 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			return *m, waitForChunk(msg.ch)
 		}
 		if msg.err != nil {
+			m.addStreamingMsgToHistory()
 			m.history = append(m.history, messageItem{role: "system", text: "❌ **Error:** " + msg.err.Error()})
+			if msg.recoverable {
+				m.addRecoverableRetryPrompt()
+			}
 			m.isStreaming = false
 			m.streamingMessage = ""
 			m.refreshViewport(true)
@@ -570,18 +586,28 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "enter":
+			text := strings.TrimSpace(m.input.Value())
+			if m.retryWithEnter && text == "" {
+				m.retryWithEnter = false
+				m.history = append(m.history, messageItem{role: "system", text: "Retrying..."})
+				m.isStreaming = true
+				m.refreshViewport(true)
+				return *m, m.streamMessage(m.agent, m.conversationID, m.userid, m.retryMessage)
+			}
+			m.retryWithEnter = false
 			if m.invokeAgentWithEnter {
 				m.invokeAgentWithEnter = false
 				m.history = append(m.history, messageItem{role: "system", text: "Starting " + m.agent.AgentLabel() + "..."})
 				m.refreshViewport(true)
+				m.retryMessage = ""
 				return *m, m.streamMessage(m.agent, m.conversationID, m.userid, "")
 			}
-			text := strings.TrimSpace(m.input.Value())
 			if text == "" {
 				return *m, nil
 			}
 			m.history = append(m.history, messageItem{role: "user", text: text})
 			m.input.SetValue("")
+			m.retryMessage = text
 			m.isStreaming = true
 			m.refreshViewport(true)
 			cmds = append(cmds, m.streamMessage(m.agent, m.conversationID, m.userid, text))

@@ -55,6 +55,7 @@ async def stream_research(intake_id: UUID, user_id: UUID, session_id: UUID | Non
                 "data": {
                     "report": research_report,
                     "citations": citation_payload,
+                    "source_warnings": research_agent.source_warnings,
                     "research_session_id": str(research_session_id),
                     "triggered_by": "user",
                     "research_effort": research_effort,

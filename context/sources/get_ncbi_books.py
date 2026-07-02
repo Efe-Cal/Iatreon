@@ -7,6 +7,7 @@ from markdownify import markdownify as md
 
 from context.models import BookSection
 
+from ..errors import log_external_failure
 from .ncbi_rate_limit import ncbi_get
 
 load_dotenv()
@@ -33,14 +34,19 @@ class BookshelfClient:
         self.exa.headers["Authorization"] = f"Bearer {self.exa.headers['x-api-key']}"
 
     def get_ncbi_books(self, query: str, num_results: int = 5) -> list[dict]:
-        response = self.exa.search(
-            query, 
-            num_results=num_results,
-            type="instant",
-            include_domains=["ncbi.nlm.nih.gov/books"],
-            system_prompt="Extract relevant sections from NCBI Bookshelf entries related to the query.",
-            contents=False
-        )
+        try:
+            response = self.exa.search(
+                query,
+                num_results=num_results,
+                type="instant",
+                include_domains=["ncbi.nlm.nih.gov/books"],
+                system_prompt="Extract relevant sections from NCBI Bookshelf entries related to the query.",
+                contents=False
+            )
+        except Exception as exc:
+            log_external_failure("Exa", "Bookshelf search", exc)
+            return []
+
         books = []
         for result in response.results:
             book = {
@@ -55,10 +61,18 @@ class BookshelfClient:
     def get_book_html_content(self, url: str) -> str:
         headers = HEADERS.copy()
         headers.update({"User-Agent": USER_AGENTS[hash(url) % len(USER_AGENTS)]})
-        response = ncbi_get(url, headers=headers)
+        try:
+            response = ncbi_get(url, headers=headers)
+        except Exception as exc:
+            log_external_failure("NCBI Bookshelf", "HTML fetch", exc)
+            return ""
+
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, "html.parser")
             content_div = soup.find("div", class_="document")
+            if content_div is None:
+                log_external_failure("NCBI Bookshelf", "HTML parse", "missing document content")
+                return ""
             # Remove some divs that are not relevant
             for div in content_div.find_all("div", class_=["pre-content","post-content"]):
                 div.decompose()
@@ -86,6 +100,8 @@ class BookshelfClient:
                         span.decompose()
             
             return content_div
+        log_external_failure("NCBI Bookshelf", "HTML fetch", f"status {response.status_code}")
+        return ""
 
     def _html_to_md(self, html_content) -> str:
         if html_content:
@@ -96,7 +112,11 @@ class BookshelfClient:
     def get_book_contents(self, query: str, num_results: int = 5) -> list[BookSection]:
         books = self.get_ncbi_books(query, num_results)
         for book in books:
-            html_content = self.get_book_html_content(book["url"])
+            try:
+                html_content = self.get_book_html_content(book["url"])
+            except Exception as exc:
+                log_external_failure("NCBI Bookshelf", "book content fetch", exc)
+                html_content = ""
             book["text"] = self._html_to_md(html_content)
             if book["text"] and book["text"] != "Failed to extract content.":
                 book["full_text_available"] = True
