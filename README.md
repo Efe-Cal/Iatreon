@@ -20,12 +20,25 @@ Iatreon is an AI-doctor platform, aiming to be error-free. It uses LLM agents to
 
 ## Getting Started
 
-### Prerequisites
+### How to Run Locally
 
-- Python 3.10+
-- Docker
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/Efe-Cal/Iatreon.git
+   cd Iatreon
+   ```
+2. Run the Docker Compose setup
+   ```bash
+   docker compose up
+   ```
+3. Access the TUI interface with SSH:
+   ```bash
+   ssh -p 2222 -A 127.0.0.1
+   ```
 
-### Installation
+For production, set `TUI_SSH_PORT=22` before running Docker Compose.
+
+### Development Setup
 
 1. Clone the repository:
    ```bash
@@ -57,11 +70,3 @@ docker compose up --build redis pdf-api pdf-worker
 ```
 
 The API listens on port `8000`, Redis listens on port `6379`, and the worker writes downloaded files to the shared `downloads` volume. The API uses a slim Python image, while the RQ worker uses a browser-capable image for SeleniumBase/Chrome.
-
-### Running the Application
-
-To start the TUI application:
-```bash
-python -m cli.cli
-```
-

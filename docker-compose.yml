@@ -55,7 +55,7 @@ services:
     depends_on:
       - api
     ports:
-      - "2222:2222"
+      - "${TUI_SSH_PORT:-2222}:2222"
 
   db:
     image: postgres:16
