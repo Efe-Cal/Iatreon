@@ -1,7 +1,7 @@
 from .sources.books import NCBIBooksClient
 from .models import Article, BookSection
 from .sources.openalex import OpenAlexClient
-from .processing.pdf_utils import PDFClient
+from .processing.pdf_utils_v2 import PDFClient
 from .processing.pipeline import MedicalKnowledgePipeline
 from .sources.pmc import PMCClient
 from .sources.pubmed import PubMedClient

@@ -24,7 +24,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_app_imports_with_expected_routes(self):
         from api.main import app
 
-        paths = {route.path for route in app.routes}
+        paths = set(app.openapi()["paths"])
         self.assertIn("/chat/intake", paths)
         self.assertIn("/research", paths)
         self.assertIn("/diagnose", paths)
