@@ -230,7 +230,7 @@ func StartSSHServer(host string, port int) {
 
 	s, err := wish.NewServer(
 		wish.WithAddress(fmt.Sprintf("%s:%d", host, port)),
-		wish.WithHostKeyPath("./ssh_host_key"),
+		wish.WithHostKeyPath("/data/ssh/ssh_host_key"),
 		wish.WithPublicKeyAuth(func(ctx ssh.Context, key ssh.PublicKey) bool {
 			return getUserWithPubKey(ctx, key)
 		}),

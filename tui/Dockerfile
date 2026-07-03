@@ -10,6 +10,9 @@ RUN CGO_ENABLED=0 go build -o /iatreon-tui ./cmd/app
 
 FROM alpine:3.22
 
+RUN mkdir -p /data/ssh
+RUN chmod 700 /data/ssh
+
 WORKDIR /app
 
 ENV TERM=xterm-256color

@@ -5,3 +5,4 @@ venv/
 *.sqlite
 *.log
 .pytest_cache/
+data/
