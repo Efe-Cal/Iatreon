@@ -1,0 +1,8 @@
+FROM alpine:latest
+
+RUN apk add --no-cache socat
+
+ENV LISTEN_PORT=2222
+ENV NEST_IPV6="2a01:4f9:3a:276e::528"
+
+CMD sh -c 'exec socat -d -d TCP-LISTEN:${LISTEN_PORT},fork,reuseaddr TCP6:[${NEST_IPV6}]:2222'
