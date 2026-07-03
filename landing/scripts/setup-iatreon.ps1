@@ -1,8 +1,9 @@
-#TODO: Update hostname
+# Hostname/port are resolved at runtime from $Origin/host.txt (or fallback 127.0.0.1:2222).
 param(
     [string]$KeyPath = "$env:USERPROFILE\.ssh\id_ed25519",
-    [string]$HostName = "127.0.0.1",
-    [int]$Port = 2222,
+    [string]$HostName,
+    [int]$Port,
+    [string]$Origin = "https://iatreon.efecal.hackclub.app/",
     [string]$HostAlias = "iatreon",
     [switch]$NoConnect
 )
@@ -18,6 +19,52 @@ function Require-Command {
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
         throw "Required command '$Name' was not found. Install OpenSSH Client for Windows and try again."
     }
+}
+
+function Get-IatreonHostInfo {
+    param(
+        [string]$OriginUrl
+    )
+
+    $base = $OriginUrl.TrimEnd('/')
+    $url = "$base/host.txt"
+    Write-Step "Fetching host info from $url"
+
+    $body = $null
+    try {
+        $ProgressPreference = 'SilentlyContinue'
+        $response = Invoke-WebRequest -Uri $url -Method Get -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+        $body = $response.Content
+    } catch {
+        $body = $null
+    } finally {
+        $ProgressPreference = 'Continue'
+    }
+
+    $fallbackHost = "127.0.0.1"
+    $fallbackPort = 2222
+
+    if ([string]::IsNullOrWhiteSpace($body)) {
+        Write-Step "Could not fetch host.txt; falling back to ${fallbackHost}:${fallbackPort}"
+        return @{ HostName = $fallbackHost; Port = $fallbackPort }
+    }
+
+    $firstLine = ($body -split "`r?`n", 2)[0]
+    $tokens = $firstLine -split ':', 3
+    if ($tokens.Count -lt 2 -or [string]::IsNullOrWhiteSpace($tokens[0]) -or [string]::IsNullOrWhiteSpace($tokens[1])) {
+        Write-Step "host.txt was empty or malformed; falling back to ${fallbackHost}:${fallbackPort}"
+        return @{ HostName = $fallbackHost; Port = $fallbackPort }
+    }
+
+    $parsedHost = $tokens[0].Trim()
+    $parsedPort = 0
+    if (-not [int]::TryParse($tokens[1].Trim(), [ref]$parsedPort)) {
+        Write-Step "host.txt port was not numeric; falling back to ${fallbackHost}:${fallbackPort}"
+        return @{ HostName = $fallbackHost; Port = $fallbackPort }
+    }
+
+    Write-Step "Using ${parsedHost}:${parsedPort} from host.txt"
+    return @{ HostName = $parsedHost; Port = $parsedPort }
 }
 
 function Write-SshConfig {
@@ -57,6 +104,14 @@ $endMarker
 Require-Command ssh
 Require-Command ssh-add
 Require-Command ssh-keygen
+
+if ([string]::IsNullOrWhiteSpace($HostName) -or $PSBoundParameters.ContainsKey('Port') -eq $false -or $Port -eq 0) {
+    $info = Get-IatreonHostInfo -OriginUrl $Origin
+    if ([string]::IsNullOrWhiteSpace($HostName)) { $HostName = $info.HostName }
+    if (-not $PSBoundParameters.ContainsKey('Port') -or $Port -eq 0) { $Port = $info.Port }
+} else {
+    Write-Step "Using ${HostName}:${Port} from command line"
+}
 
 $sshDir = Split-Path -Parent $KeyPath
 if (-not (Test-Path $sshDir)) {

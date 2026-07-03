@@ -2,15 +2,16 @@
 set -eu
 
 key_path="${HOME}/.ssh/id_ed25519"
-host_name="127.0.0.1"
-port="2222"
+host_name=""
+port=""
 no_connect=0
 default_agent_sock="${HOME}/.ssh/iatreon-agent.sock"
 host_alias="iatreon"
+origin_url="https://iatreon.efecal.hackclub.app/"
 
 usage() {
     cat <<EOF
-Usage: setup-iatreon.sh [--key PATH] [--host HOST] [--port PORT] [--no-connect]
+Usage: setup-iatreon.sh [--key PATH] [--origin URL] [--no-connect]
 EOF
 }
 
@@ -31,12 +32,8 @@ while [ "$#" -gt 0 ]; do
             key_path="$2"
             shift 2
             ;;
-        --host)
-            host_name="$2"
-            shift 2
-            ;;
-        --port)
-            port="$2"
+        --origin)
+            origin_url="$2"
             shift 2
             ;;
         --no-connect)
@@ -57,6 +54,33 @@ done
 require_command ssh
 require_command ssh-add
 require_command ssh-keygen
+
+fetch_host_info() {
+    require_command curl
+    host_txt_url="${origin_url%/}/host.txt"
+    step "Fetching host info from $host_txt_url"
+    body=$(curl -fsSL --max-time 10 "$host_txt_url" 2>/dev/null || true)
+    if [ -z "$body" ]; then
+        step "Could not fetch host.txt; falling back to 127.0.0.1:2222"
+        host_name="127.0.0.1"
+        port="2222"
+        return
+    fi
+    first_line=$(printf '%s' "$body" | sed -n '1p')
+    parsed_host=$(printf '%s' "$first_line" | awk -F: '{print $1}')
+    parsed_port=$(printf '%s' "$first_line" | awk -F: '{print $2}')
+    if [ -z "$parsed_host" ] || [ -z "$parsed_port" ]; then
+        step "host.txt was empty or malformed; falling back to 127.0.0.1:2222"
+        host_name="127.0.0.1"
+        port="2222"
+        return
+    fi
+    host_name="$parsed_host"
+    port="$parsed_port"
+    step "Using $host_name:$port from host.txt"
+}
+
+fetch_host_info
 
 ssh_dir=$(dirname "$key_path")
 if [ ! -d "$ssh_dir" ]; then
