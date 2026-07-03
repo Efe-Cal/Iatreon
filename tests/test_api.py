@@ -31,6 +31,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/chat/doctor", paths)
         self.assertIn("/create-session", paths)
         self.assertIn("/history", paths)
+        self.assertIn("/health", paths)
 
     async def test_shared_header_validation(self):
         from api.shared import get_user_id_or_400, require_encryption_context

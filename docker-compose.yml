@@ -44,6 +44,11 @@ services:
         condition: service_healthy
       pdf-api:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     ports:
       - "8001:8000"
 
@@ -54,7 +59,8 @@ services:
       API_BASE_URL: http://api:8000
       SSH_AUTH_SOCK: /ssh-agent
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
       - "${TUI_SSH_PORT:-2222}:2222"
     volumes:

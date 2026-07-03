@@ -17,7 +17,7 @@ config = context.config
 # Override sqlalchemy.url from the DATABASE_URL environment variable
 # Alembic uses synchronous drivers, so we convert async schemes to sync.
 
-db_url = os.environ["DATABASE_URL"].replace("+asyncpg", "+psycopg2")
+db_url = os.environ["DATABASE_URL"].replace("+asyncpg", "+psycopg")
 config.set_main_option("sqlalchemy.url", db_url)
 
 
