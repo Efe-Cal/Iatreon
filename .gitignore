@@ -6,3 +6,4 @@ venv/
 *.log
 .pytest_cache/
 data/
+landing/*.txt
