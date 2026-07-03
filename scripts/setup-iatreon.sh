@@ -3,11 +3,14 @@ set -eu
 
 key_path="${HOME}/.ssh/id_ed25519"
 host_name="127.0.0.1"
+port="2222"
 no_connect=0
+default_agent_sock="${HOME}/.ssh/iatreon-agent.sock"
+host_alias="iatreon"
 
 usage() {
     cat <<EOF
-Usage: setup-ssh-agent.sh [--key PATH] [--host HOST] [--no-connect]
+Usage: setup-iatreon.sh [--key PATH] [--host HOST] [--port PORT] [--no-connect]
 EOF
 }
 
@@ -30,6 +33,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --host)
             host_name="$2"
+            shift 2
+            ;;
+        --port)
+            port="$2"
             shift 2
             ;;
         --no-connect)
@@ -58,16 +65,34 @@ if [ ! -d "$ssh_dir" ]; then
 fi
 chmod 700 "$ssh_dir" 2>/dev/null || true
 
+agent_dir=$(dirname "$default_agent_sock")
+if [ ! -d "$agent_dir" ]; then
+    step "Creating $agent_dir"
+    mkdir -p "$agent_dir"
+fi
+chmod 700 "$agent_dir" 2>/dev/null || true
+
 if [ ! -f "$key_path" ]; then
     step "Creating Ed25519 SSH key at $key_path"
     ssh-keygen -t ed25519 -f "$key_path" -N "" -C "iatreon@$(hostname)"
 fi
 chmod 600 "$key_path" 2>/dev/null || true
 
-if ! ssh-add -l >/dev/null 2>&1; then
-    step "Starting ssh-agent for this session"
-    eval "$(ssh-agent -s)" >/dev/null
+agent_responds() {
+    set +e
+    SSH_AUTH_SOCK="$1" ssh-add -l >/dev/null 2>&1
+    status=$?
+    set -e
+    [ "$status" -eq 0 ] || [ "$status" -eq 1 ]
+}
+
+agent_sock="$default_agent_sock"
+if ! agent_responds "$agent_sock"; then
+    step "Starting ssh-agent at $agent_sock"
+    rm -f "$agent_sock"
+    ssh-agent -a "$agent_sock" >/dev/null
 fi
+export SSH_AUTH_SOCK="$agent_sock"
 
 case "$(uname -s)" in
     Darwin)
@@ -88,18 +113,54 @@ if [ -z "$keys" ]; then
     exit 1
 fi
 
+write_ssh_config() {
+    config_path="${HOME}/.ssh/config"
+    tmp_path="${config_path}.tmp.$$"
+    start_marker="# >>> iatreon"
+    end_marker="# <<< iatreon"
+
+    if [ -f "$config_path" ]; then
+        awk -v start="$start_marker" -v end="$end_marker" '
+            $0 == start { skip = 1; next }
+            $0 == end { skip = 0; next }
+            !skip { print }
+        ' "$config_path" > "$tmp_path"
+    else
+        : > "$tmp_path"
+    fi
+
+    {
+        cat "$tmp_path"
+        if [ -s "$tmp_path" ]; then
+            printf '\n'
+        fi
+        printf '%s\n' "$start_marker"
+        printf 'Host %s\n' "$host_alias"
+        printf '    HostName %s\n' "$host_name"
+        printf '    Port %s\n' "$port"
+        printf '    ForwardAgent yes\n'
+        printf '    IdentityAgent %s\n' "$default_agent_sock"
+        printf '%s\n' "$end_marker"
+    } > "$config_path"
+    rm -f "$tmp_path"
+    chmod 600 "$config_path" 2>/dev/null || true
+}
+
+step "Writing SSH config for $host_alias"
+write_ssh_config
+
 step "ssh-agent is ready"
 printf '\nLoaded public key:\n%s\n\n' "$keys"
 
 if [ "$no_connect" -eq 1 ]; then
-    printf 'Connect with:\nssh -A %s\n' "$host_name"
+    printf 'Connect with:\nssh %s\n' "$host_alias"
 else
-    printf 'Run ssh -A %s now? [y/N] ' "$host_name"
+    printf 'Run ssh %s now? [y/N] ' "$host_alias"
     IFS= read -r answer || answer=
     case "$answer" in
         y|Y|yes|YES|Yes)
             step "Connecting to Iatreon SSH server"
-            ssh -A "$host_name"
+            ssh "$host_alias"
             ;;
     esac
 fi

@@ -8,7 +8,7 @@ from .db import Base
 
 class User(Base):
     __tablename__ = "users"
-    email: Mapped[Optional[str]] = mapped_column(String, unique=True, default="")
+    email: Mapped[Optional[str]] = mapped_column(String, unique=True, default=None)
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
     ssh_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True, default="")
     encrypted_data_key: Mapped[Optional[str]] = mapped_column(Text, default=None)

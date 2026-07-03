@@ -94,6 +94,7 @@ class DbTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(intake.status, "in_progress")
         self.assertEqual(chat.user_id, user.id)
+        self.assertIsNone(user.email)
         self.assertEqual(user.to_dict()["ssh_key"], "ssh-ed25519 test")
 
     async def test_intake_repo_creates_completes_reads_and_enforces_user(self):

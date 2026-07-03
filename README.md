@@ -31,9 +31,17 @@ Iatreon is an AI-doctor platform, aiming to be error-free. It uses LLM agents to
    ```bash
    docker compose up
    ```
-3. Access the TUI interface with SSH:
+3. Set up SSH agent forwarding:
    ```bash
-   ssh -p 2222 -A 127.0.0.1
+   ./scripts/setup-iatreon.sh --no-connect
+   ```
+   On Windows PowerShell:
+   ```powershell
+   .\scripts\setup-iatreon.ps1 -NoConnect
+   ```
+4. Access the TUI interface with SSH:
+   ```bash
+   ssh iatreon
    ```
 
 For production, set `TUI_SSH_PORT=22` before running Docker Compose.
