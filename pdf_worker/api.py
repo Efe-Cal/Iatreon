@@ -15,6 +15,8 @@ redis_conn = Redis(
 
 queue = Queue("default", connection=redis_conn)
 
+
+#TODO: returns 422, fix this
 @app.post("/scrape_pdf/", status_code=202)
 def scrape_pdf(pdf_url: str):
     try:

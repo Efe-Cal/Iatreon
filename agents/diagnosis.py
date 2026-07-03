@@ -135,7 +135,7 @@ Medical Summary: {self.intake_session.medical_summary}"""
         
         try:
             response = await self.agent.ainvoke({"messages": [{"role": "user", "content": user_message}]}, version="v2")
-            report = response.get("structured_response")
+            report = response.value["structured_response"]
             yield report.model_dump() if hasattr(report, "model_dump") else report or response["messages"][-1].content
         except Exception as exc:
             logging.exception("Diagnosis agent failed.")
