@@ -14,7 +14,7 @@ COPY agents ./agents
 COPY context ./context
 COPY db ./db
 COPY alembic ./alembic
-COPY alembic.ini main.py .env ./
+COPY alembic.ini .env ./
 
 EXPOSE 8000
 
