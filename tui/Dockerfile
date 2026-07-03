@@ -16,6 +16,8 @@ RUN chmod 700 /data/ssh
 WORKDIR /app
 
 ENV TERM=xterm-256color
+ENV COLORTERM=truecolor
+ENV FORCE_COLOR=1
 
 COPY --from=build /iatreon-tui /usr/local/bin/iatreon-tui
 
