@@ -97,7 +97,6 @@ func buildAgentRequest(endpoint, userid string, sessionKey []byte, payload any) 
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-User-ID", userid)
 	addSessionKeyHeader(req, sessionKey)
 	return req, nil
 }
@@ -129,7 +128,7 @@ type intakeHandler struct{}
 
 func (*intakeHandler) Kind() AgentKind    { return AgentIntake }
 func (*intakeHandler) Header() string     { return "Iatreon - Intake" }
-func (*intakeHandler) Footer() []string   { return []string{"Enter Send", "Esc Logout", "Ctrl+C Quit"} }
+func (*intakeHandler) Footer() []string   { return []string{"Enter Send", "Esc Back", "Ctrl+C Quit"} }
 func (*intakeHandler) Welcome() string    { return "Welcome to Iatreon. Let's start by taking an intake." }
 func (*intakeHandler) AgentLabel() string { return "Iatreon:" }
 
@@ -168,7 +167,7 @@ type researchHandler struct{}
 
 func (*researchHandler) Kind() AgentKind  { return AgentResearch }
 func (*researchHandler) Header() string   { return "Iatreon - Research" }
-func (*researchHandler) Footer() []string { return []string{"Enter Send", "Esc Logout", "Ctrl+C Quit"} }
+func (*researchHandler) Footer() []string { return []string{"Enter Send", "Esc Back", "Ctrl+C Quit"} }
 func (*researchHandler) Welcome() string {
 	return "Tell me what you'd like to research. I'll search the literature and the web."
 }
@@ -267,7 +266,7 @@ type diagnosisHandler struct{}
 func (*diagnosisHandler) Kind() AgentKind { return AgentDiagnosis }
 func (*diagnosisHandler) Header() string  { return "Iatreon - Diagnosis" }
 func (*diagnosisHandler) Footer() []string {
-	return []string{"Enter Send", "Esc Logout", "Ctrl+C Quit"}
+	return []string{"Enter Send", "Esc Back", "Ctrl+C Quit"}
 }
 func (*diagnosisHandler) Welcome() string {
 	return "Describe your symptoms and I'll work through a differential diagnosis."
@@ -390,7 +389,7 @@ type doctorHandler struct{}
 func (*doctorHandler) Kind() AgentKind { return AgentDoctor }
 func (*doctorHandler) Header() string  { return "Iatreon - Doctor" }
 func (*doctorHandler) Footer() []string {
-	return []string{"Enter Send", "Esc Logout", "Ctrl+C Quit"}
+	return []string{"Enter Send", "Esc Back", "Ctrl+C Quit"}
 }
 func (*doctorHandler) Welcome() string {
 	return "You are now connected to a doctor. Please describe your symptoms."
@@ -426,6 +425,8 @@ func addSessionKeyHeader(req *http.Request, sessionKey []byte) {
 }
 
 func sharedHTTPDo(req *http.Request) (*http.Response, error) {
-	client := &http.Client{}
-	return client.Do(req)
+	if defaultAuthClient != nil {
+		return defaultAuthClient.Do(req)
+	}
+	return http.DefaultClient.Do(req)
 }

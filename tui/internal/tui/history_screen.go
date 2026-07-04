@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -23,10 +24,11 @@ type historyModel struct {
 	userid     string
 	sessionKey *SessionKey
 
-	sessions []historySession
-	err      string
-	loading  bool
-	close    bool
+	sessions    []historySession
+	err         string
+	authExpired bool
+	loading     bool
+	close       bool
 
 	sessionCursor int
 	sectionCursor int
@@ -100,7 +102,6 @@ func (m historyModel) load() tea.Cmd {
 		if err != nil {
 			return historyLoadedMsg{err: err}
 		}
-		req.Header.Set("X-User-ID", m.userid)
 		if m.sessionKey != nil {
 			addSessionKeyHeader(req, m.sessionKey.Get())
 		}
@@ -132,6 +133,9 @@ func (m historyModel) Update(msg tea.Msg) (historyModel, tea.Cmd) {
 		m.loading = false
 		if msg.err != nil {
 			m.err = msg.err.Error()
+			if errors.Is(msg.err, ErrAuthRequired) {
+				m.authExpired = true
+			}
 		} else {
 			m.sessions = msg.sessions
 		}

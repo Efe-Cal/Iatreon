@@ -24,6 +24,7 @@ const (
 	dashboardActionStartDoctor
 	dashboardActionHistory
 	dashboardActionSetup
+	dashboardActionLogout
 )
 
 type dashboardCard struct {
@@ -37,6 +38,7 @@ var dashboardCards = []dashboardCard{
 	{title: "See the Doctor", description: "Get a differential diagnosis and clinical assessment.", color: lipgloss.Color("#7C3AED")},
 	{title: "History", description: "Review saved chat sessions, sections, and reports.", color: lipgloss.Color("#0891B2")},
 	{title: "Settings", description: "Configure your preferences and system settings.", color: lipgloss.Color("#D97706")},
+	{title: "Log Out", description: "End this session and return to the login screen.", color: colorError},
 }
 
 func newDashboardModel(userid string) dashboardModel {
@@ -103,7 +105,10 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 				m.action = dashboardActionHistory
 				return m, nil
 			case 3:
-				m.placeholderMsg = "🚧 Settings are not yet available.\n\nFuture settings will include notification preferences,\ntheme options, and API configuration."
+				m.placeholderMsg = "Settings are not yet available.\n\nFuture settings will include notification preferences,\ntheme options, and API configuration."
+				return m, nil
+			case 4:
+				m.action = dashboardActionLogout
 				return m, nil
 			}
 		}
@@ -134,7 +139,6 @@ func (m dashboardModel) View() string {
 		)
 	}
 
-	// Compute the maximum possible info height so the layout never shifts.
 	maxInfoH := m.maxInfoHeight()
 	infoPadded := m.renderInfoPadded(maxInfoH)
 
@@ -172,7 +176,6 @@ func (m dashboardModel) infoWidth() int {
 	return max(1, min(35, m.width-6))
 }
 
-// maxInfoHeight returns the tallest possible info description in lines.
 func (m dashboardModel) maxInfoHeight() int {
 	maxH := 0
 	infoBox := m.infoStyle()
@@ -186,7 +189,6 @@ func (m dashboardModel) maxInfoHeight() int {
 	return maxH
 }
 
-// renderInfoPadded renders the info description padded to a fixed height.
 func (m dashboardModel) renderInfoPadded(targetH int) string {
 	card := dashboardCards[m.cursor]
 	return m.infoStyle().
@@ -228,17 +230,15 @@ func (m dashboardModel) renderCard(card dashboardCard, index int, width int) str
 
 	marker := "  "
 	if isSelected {
-		marker = "▸ "
+		marker = "> "
 	}
 
 	title := btnStyle.Render(marker + card.title)
-
-	// Add a thin separator between buttons (except after the last)
 	if index < len(dashboardCards)-1 {
 		sep := lipgloss.NewStyle().
 			Width(width).
 			Foreground(colorBorder).
-			Render(strings.Repeat("─", width))
+			Render(strings.Repeat("-", width))
 		return lipgloss.JoinVertical(lipgloss.Left, title, sep)
 	}
 
@@ -256,7 +256,7 @@ func (m dashboardModel) renderPlaceholder() string {
 	content := lipgloss.JoinVertical(lipgloss.Center,
 		boxStyle.Render(m.placeholderMsg),
 		"",
-		hintStyle.Render("Press Enter to dismiss · Esc to go back"),
+		hintStyle.Render("Press Enter to dismiss - Esc to go back"),
 	)
 
 	return content

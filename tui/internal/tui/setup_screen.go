@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -71,10 +72,11 @@ type setupModel struct {
 	allergiesLines   []string
 	familyHistLines  []string
 
-	err        error
-	cancelled  bool
-	submitted  bool
-	submitting bool
+	err         error
+	authExpired bool
+	cancelled   bool
+	submitted   bool
+	submitting  bool
 }
 
 func newSetupModel(userid string, sessionKey *SessionKey, canCancel bool) setupModel {
@@ -229,7 +231,6 @@ type profileSubmittedMsg struct {
 func submitProfile(userid string, m setupModel) tea.Cmd {
 	return func() tea.Msg {
 		body := map[string]interface{}{
-			"user_id": userid,
 			"demographics": map[string]string{
 				"age":    m.age.Value(),
 				"gender": m.gender.Value(),
@@ -278,6 +279,9 @@ func (m setupModel) Update(msg tea.Msg) (setupModel, tea.Cmd) {
 			m.submitting = false
 			if msg.err != nil {
 				m.err = msg.err
+				if errors.Is(msg.err, ErrAuthRequired) {
+					m.authExpired = true
+				}
 				return m, nil
 			}
 			m.submitted = true

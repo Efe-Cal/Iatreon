@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import diagnosis, intake, research, user, session, doctor, history
+from api.routes import auth, diagnosis, intake, research, user, session, doctor, history
 from db.db import checkpointer_manager
 
 
@@ -36,6 +36,7 @@ app.include_router(intake.router)
 app.include_router(research.router)
 app.include_router(diagnosis.router)
 app.include_router(user.router)
+app.include_router(auth.router)
 app.include_router(session.router)
 app.include_router(doctor.router)
 app.include_router(history.router)

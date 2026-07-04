@@ -23,4 +23,4 @@ COPY --from=build /iatreon-tui /usr/local/bin/iatreon-tui
 
 EXPOSE 2222
 
-CMD ["iatreon-tui", "-ssh", "-host", "0.0.0.0", "-port", "2222"]
+CMD ["iatreon-tui"]

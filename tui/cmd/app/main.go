@@ -44,7 +44,7 @@ func main() {
 		fmt.Printf("Starting SSH server on port %d...\n", port)
 		ssh.StartSSHServer(host, port)
 	} else {
-		p := tea.NewProgram(tui.NewModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9 ", true), tea.WithAltScreen())
+		p := tea.NewProgram(tui.NewRootModel(), tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "could not start TUI: %v\n", err)
 			os.Exit(1)

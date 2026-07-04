@@ -1,9 +1,10 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from sshpubkeys import SSHKey
 
+from api.security import AuthContext, require_auth
 from api.shared import clear_encryption_context, require_encryption_context
 from db.db import unit_of_work
 from db.repositories import UserRepo
@@ -41,6 +42,16 @@ class GetOrCreateUserRequest(BaseModel):
         return _validate_ssh_public_key(value)
 
 
+class UserProfilePayload(BaseModel):
+    demographics: dict[str, str]
+    pmh: list[str]
+    medications: list[str]
+    allergies: list[str]
+    family_history: list[str]
+    social: dict[str, str]
+    medical_summary: str | None = None
+
+
 @router.post('/user')
 async def get_or_create_user(payload: GetOrCreateUserRequest) -> dict:
     ssh_key = payload.ssh_key
@@ -67,24 +78,31 @@ async def unlock_user_session(user_id: UUID, request: Request) -> dict:
 
 
 @router.get('/user-profile')
-async def get_user_profile(user_id: UUID, request: Request) -> dict:
+async def get_user_profile(request: Request, auth: AuthContext = Depends(require_auth)) -> dict:
     token = require_encryption_context(request)
     try:
         async with unit_of_work() as db:
             user_repo = UserRepo()
-            profile = await user_repo.get_user_profile(db, user_id)
+            profile = await user_repo.get_user_profile(db, auth.user_id)
             return profile
     finally:
         clear_encryption_context(token)
 
 
 @router.post('/user-profile')
-async def update_user_profile(profile_data: UserProfileData, request: Request) -> dict:
+async def update_user_profile(
+    profile_data: UserProfilePayload,
+    request: Request,
+    auth: AuthContext = Depends(require_auth),
+) -> dict:
     token = require_encryption_context(request)
     try:
         async with unit_of_work() as db:
             user_repo = UserRepo()
-            await user_repo.update_user_profile(db, profile_data)
+            await user_repo.update_user_profile(
+                db,
+                UserProfileData(user_id=auth.user_id, **profile_data.model_dump()),
+            )
             return {'status': 'success'}
     finally:
         clear_encryption_context(token)

@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
 import uuid
 from .models import (
+    AuthSession,
     DiagnosisSession,
     DoctorSession,
     IntakeSession,
@@ -493,8 +494,28 @@ class UserRepo:
         await db.flush()
         return user
 
+    async def create_user_with_password(
+        self,
+        db: AsyncSession,
+        email: str,
+        password_hash: str,
+        session_key_salt: str,
+    ) -> User:
+        user = User(
+            email=email,
+            password_hash=password_hash,
+            session_key_salt=session_key_salt,
+        )
+        db.add(user)
+        await db.flush()
+        return user
+
     async def get_user_id_by_ssh_key(self, db: AsyncSession, ssh_key: str) -> uuid.UUID | None:
         stmt = select(User.id).where(User.ssh_key == ssh_key)
+        return (await db.execute(stmt)).scalar_one_or_none()
+
+    async def get_user_by_email(self, db: AsyncSession, email: str) -> User | None:
+        stmt = select(User).where(User.email == email)
         return (await db.execute(stmt)).scalar_one_or_none()
 
     async def has_user_profile(self, db: AsyncSession, user_id: uuid.UUID) -> bool:

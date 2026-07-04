@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -46,9 +47,10 @@ type chatModel struct {
 	streamingMessage string
 	isStreaming      bool
 
-	logout bool
-	width  int
-	height int
+	logout      bool
+	authExpired bool
+	width       int
+	height      int
 
 	aiRenderer   *glamour.TermRenderer
 	userRenderer *glamour.TermRenderer
@@ -106,7 +108,7 @@ func newChatModelForAgent(kind AgentKind, userid string, session_id string, sess
 	handler := newAgentHandler(kind)
 
 	if session_id == "" {
-		req, err := http.NewRequest(http.MethodGet, apiBaseURL+"/create-session?user_id="+userid, nil)
+		req, err := http.NewRequest(http.MethodGet, apiBaseURL+"/create-session", nil)
 		if err != nil {
 			log.Printf("Error building session request: %v", err)
 		} else {
@@ -499,6 +501,9 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		if msg.err != nil {
 			m.addStreamingMsgToHistory()
 			m.history = append(m.history, messageItem{role: "system", text: "❌ **Error:** " + msg.err.Error()})
+			if errors.Is(msg.err, ErrAuthRequired) {
+				m.authExpired = true
+			}
 			if msg.recoverable {
 				m.addRecoverableRetryPrompt()
 			}

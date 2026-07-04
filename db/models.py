@@ -9,10 +9,22 @@ from .db import Base
 class User(Base):
     __tablename__ = "users"
     email: Mapped[Optional[str]] = mapped_column(String, unique=True, default=None)
+    password_hash: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    session_key_salt: Mapped[Optional[str]] = mapped_column(String, default=None)
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
-    ssh_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True, default="")
+    ssh_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True, unique=True, default=None)
     encrypted_data_key: Mapped[Optional[str]] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.id"))
+    refresh_token_hash: Mapped[str] = mapped_column(Text)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default_factory=uuid.uuid4)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
+    last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=datetime.utcnow)
 
 class UserProfile(Base):
     __tablename__ = "user_profile"

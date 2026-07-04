@@ -10,7 +10,8 @@ import (
 type screen int
 
 const (
-	dashboardScreen screen = iota
+	authScreen screen = iota
+	dashboardScreen
 	setupScreen
 	chatScreen
 	reportScreen
@@ -25,10 +26,13 @@ type model struct {
 	chat       chatModel
 	report     reportModel
 	history    historyModel
+	auth       authModel
 	width      int
 	height     int
 	userid     string
 	sessionKey *SessionKey
+	authClient *AuthClient
+	authStore  AuthStore
 }
 
 var (
@@ -36,11 +40,43 @@ var (
 	setupFooter     = []string{"Enter Continue", "Esc Back", "Ctrl+C Quit"}
 )
 
+type authLoggedOutMsg struct {
+	err error
+}
+
 func NewModel(userid string, hasProfile bool, sessionKey ...*SessionKey) model {
 	var key *SessionKey
 	if len(sessionKey) > 0 {
 		key = sessionKey[0]
 	}
+	return newAuthenticatedModel(userid, hasProfile, key, nil, AuthStore{})
+}
+
+func NewRootModel() model {
+	store := DefaultAuthStore()
+	state, err := store.Load()
+	client := NewAuthClient(state, store)
+	SetDefaultAuthClient(client)
+	if err == nil {
+		keyBytes, keyErr := sessionKeyBytes(state)
+		if keyErr == nil {
+			return newAuthenticatedModel(state.UserID, state.HasProfile, NewSessionKey(keyBytes), client, store)
+		}
+		_ = store.Delete()
+	}
+
+	emptyClient := NewAuthClient(AuthState{}, store)
+	SetDefaultAuthClient(emptyClient)
+	auth := newAuthModel(emptyClient)
+	return model{
+		active:     authScreen,
+		auth:       auth,
+		authClient: emptyClient,
+		authStore:  store,
+	}
+}
+
+func newAuthenticatedModel(userid string, hasProfile bool, key *SessionKey, client *AuthClient, store AuthStore) model {
 	dash := newDashboardModel(userid)
 	setup := newSetupModel(userid, key, hasProfile)
 
@@ -58,12 +94,18 @@ func NewModel(userid string, hasProfile bool, sessionKey ...*SessionKey) model {
 		setup:      setup,
 		userid:     userid,
 		sessionKey: key,
+		auth:       newAuthModel(client),
+		authClient: client,
+		authStore:  store,
 	}
 
 	return m
 }
 
 func (m model) Init() tea.Cmd {
+	if m.active == authScreen {
+		return m.auth.Init()
+	}
 	if m.active == setupScreen {
 		return m.setup.Init()
 	}
@@ -75,6 +117,32 @@ func (m *model) wipeSessionKey() {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if msg, ok := msg.(authLoggedOutMsg); ok {
+		m.wipeSessionKey()
+		store := m.authStore
+		if store.path == "" {
+			store = DefaultAuthStore()
+		}
+		client := NewAuthClient(AuthState{}, store)
+		SetDefaultAuthClient(client)
+		m.authClient = client
+		m.authStore = store
+		m.auth = m.initAuth(newAuthModel(client))
+		if msg.err != nil {
+			m.auth.err = msg.err
+		}
+		m.userid = ""
+		m.hasProfile = false
+		m.sessionKey = nil
+		m.dashboard = dashboardModel{}
+		m.setup = setupModel{}
+		m.chat = chatModel{}
+		m.report = reportModel{}
+		m.history = historyModel{}
+		m.active = authScreen
+		return m, m.auth.Init()
+	}
+
 	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = wsm.Width
 		m.height = wsm.Height
@@ -83,6 +151,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat.SetSize(wsm.Width, m.bodyHeightFor(chatScreen))
 		m.report.SetSize(wsm.Width, m.bodyHeightFor(reportScreen))
 		m.history.SetSize(wsm.Width, m.bodyHeightFor(historyScreen))
+		m.auth.SetSize(wsm.Width, m.bodyHeightFor(authScreen))
 		return m, nil
 	}
 
@@ -92,6 +161,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.active {
+	case authScreen:
+		return m.updateAuth(msg)
 	case dashboardScreen:
 		return m.updateDashboard(msg)
 	case setupScreen:
@@ -105,6 +176,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+}
+
+func (m *model) initAuth(am authModel) authModel {
+	am.SetSize(m.width, m.bodyHeightFor(authScreen))
+	return am
 }
 
 func (m *model) initChat(cm chatModel) chatModel {
@@ -132,6 +208,36 @@ func (m *model) initHistory(hm historyModel) historyModel {
 	return hm
 }
 
+func (m model) updateAuth(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.auth.Update(msg)
+	m.auth = updated
+
+	if m.auth.succeeded {
+		state := m.auth.state
+		keyBytes, err := sessionKeyBytes(state)
+		if err != nil {
+			m.auth = m.initAuth(newAuthModel(m.authClient))
+			m.auth.err = err
+			m.active = authScreen
+			return m, nil
+		}
+		m.userid = state.UserID
+		m.hasProfile = state.HasProfile
+		m.sessionKey = NewSessionKey(keyBytes)
+		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
+		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey, m.hasProfile))
+		m.auth = m.initAuth(newAuthModel(m.authClient))
+		if m.hasProfile {
+			m.active = dashboardScreen
+			return m, nil
+		}
+		m.active = setupScreen
+		return m, m.setup.Init()
+	}
+
+	return m, cmd
+}
+
 func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 	updated, cmd := m.dashboard.Update(msg)
 	m.dashboard = updated
@@ -157,14 +263,40 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = setupScreen
 		return m, m.setup.Init()
+	case dashboardActionLogout:
+		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
+		return m, m.logoutCmd()
 	}
 
 	return m, cmd
 }
 
+func (m model) logoutCmd() tea.Cmd {
+	client := m.authClient
+	return func() tea.Msg {
+		if client == nil {
+			return authLoggedOutMsg{}
+		}
+		return authLoggedOutMsg{err: client.Logout()}
+	}
+}
+
+func (m model) clearAuthCmd(err error) tea.Cmd {
+	client := m.authClient
+	return func() tea.Msg {
+		if client != nil {
+			_ = client.Clear()
+		}
+		return authLoggedOutMsg{err: err}
+	}
+}
+
 func (m model) updateSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
 	updated, cmd := m.setup.Update(msg)
 	m.setup = updated
+	if m.setup.authExpired {
+		return m, m.clearAuthCmd(ErrAuthRequired)
+	}
 
 	if m.setup.cancelled {
 		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey, m.hasProfile))
@@ -177,6 +309,9 @@ func (m model) updateSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if m.setup.submitted {
 		m.hasProfile = true
+		if m.authClient != nil {
+			_ = m.authClient.SetHasProfile(true)
+		}
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey, true))
 		m.active = dashboardScreen
@@ -189,6 +324,9 @@ func (m model) updateSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 	updated, cmd := m.chat.Update(msg)
 	m.chat = updated
+	if m.chat.authExpired {
+		return m, m.clearAuthCmd(ErrAuthRequired)
+	}
 
 	if m.chat.logout {
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
@@ -216,6 +354,9 @@ func (m model) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if report, ok := updated.(reportModel); ok {
 		m.report = report
 	}
+	if m.report.authExpired {
+		return m, m.clearAuthCmd(ErrAuthRequired)
+	}
 
 	if m.report.close {
 		m.chat.agent = newAgentHandler(AgentDiagnosis)
@@ -232,6 +373,9 @@ func (m model) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 	updated, cmd := m.history.Update(msg)
 	m.history = updated
+	if m.history.authExpired {
+		return m, m.clearAuthCmd(ErrAuthRequired)
+	}
 
 	if m.history.close {
 		m.history = m.initHistory(newHistoryModel(m.userid, m.sessionKey))
@@ -250,6 +394,8 @@ func (m model) View() string {
 
 	var body string
 	switch m.active {
+	case authScreen:
+		body = m.auth.View()
 	case dashboardScreen:
 		body = m.dashboard.View()
 	case setupScreen:
@@ -277,6 +423,8 @@ func (m model) chrome() (string, []string) {
 
 func (m model) chromeFor(active screen) (string, []string) {
 	switch active {
+	case authScreen:
+		return "Iatreon - Authentication", m.auth.footer()
 	case setupScreen:
 		return "Iatreon - Profile Setup", m.setup.footer()
 	case chatScreen:

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -30,6 +31,7 @@ type reportModel struct {
 	current         int
 	loadingCitation int
 	citationErr     string
+	authExpired     bool
 	close           bool
 }
 
@@ -186,6 +188,9 @@ func (m reportModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := msg.(citationTextMsg); ok {
 		if msg.err != nil {
 			m.citationErr = msg.err.Error()
+			if errors.Is(msg.err, ErrAuthRequired) {
+				m.authExpired = true
+			}
 		} else {
 			if strings.TrimSpace(msg.text) == "" {
 				msg.text = "_No full text available._"

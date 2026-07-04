@@ -39,6 +39,9 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://app:app@db:5432/app
       PDF_SCRAPER_BASE_URL: http://pdf-api:8000
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-jwt-secret-change-me}
+      ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-15}
+      REFRESH_TOKEN_DAYS: ${REFRESH_TOKEN_DAYS:-180}
     depends_on:
       db:
         condition: service_healthy
