@@ -22,8 +22,9 @@ import (
 
 // messageItem holds a single chat entry.
 type messageItem struct {
-	role string // "user", "ai", or "system"
-	text string
+	role  string // "user", "ai", or "system"
+	text  string
+	label string
 	toolMessage
 }
 
@@ -298,7 +299,7 @@ func (m *chatModel) renderMessage(msg messageItem) string {
 		body := m.renderMarkdown(msg.text, true)
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render("> " + body)
 	case "ai":
-		label := m.agentLabel()
+		label := msg.label
 		if msg.text == "" {
 			return label
 		}
@@ -340,7 +341,7 @@ func (m *chatModel) addStreamingMsgToHistory() {
 	if m.hasAgentLabelInCurrent() {
 		role = "ai_body"
 	}
-	m.history = append(m.history, messageItem{role: role, text: m.streamingMessage})
+	m.history = append(m.history, messageItem{role: role, label: m.agent.AgentLabel(), text: m.streamingMessage})
 	m.streamingMessage = ""
 }
 
@@ -538,7 +539,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		} else {
 			m.addStreamingMsgToHistory()
 			if !m.hasAgentLabelInCurrent() {
-				m.history = append(m.history, messageItem{role: "ai"})
+				m.history = append(m.history, messageItem{role: "ai", label: m.agent.AgentLabel()})
 			}
 
 			found := false
