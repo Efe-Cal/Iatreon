@@ -1,6 +1,7 @@
 import os
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from redis import Redis, RedisError
 from rq import Queue
 from rq.exceptions import NoSuchJobError
@@ -16,13 +17,16 @@ redis_conn = Redis(
 queue = Queue("default", connection=redis_conn)
 
 
-#TODO: returns 422, fix this
+class ScrapePDFRequest(BaseModel):
+    pdf_url: str
+
+
 @app.post("/scrape_pdf/", status_code=202)
-def scrape_pdf(pdf_url: str):
+def scrape_pdf(request: ScrapePDFRequest):
     try:
         job = queue.enqueue(
             "pdf_worker.jobs.fetch_pdf",
-            pdf_url
+            request.pdf_url
         )
     except RedisError as exc:
         raise HTTPException(status_code=503, detail="PDF queue unavailable") from exc
