@@ -52,21 +52,6 @@ services:
     ports:
       - "8001:8000"
 
-  tui:
-    build:
-      context: ./tui
-    environment:
-      API_BASE_URL: http://api:8000
-      SSH_AUTH_SOCK: /ssh-agent
-    depends_on:
-      api:
-        condition: service_healthy
-    ports:
-      - "${TUI_SSH_PORT:-2222}:2222"
-    volumes:
-      - ${SSH_AUTH_SOCK:-/tmp/ssh-agent.sock}:/ssh-agent
-      - ./data:/data
-
   db:
     image: postgres:16
     environment:
