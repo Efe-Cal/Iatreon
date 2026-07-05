@@ -1,6 +1,8 @@
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
+import json
+import os
 import uuid
 from .models import (
     DiagnosisSession,
@@ -26,6 +28,10 @@ from .schemas import (
 from .crypto import decrypt_json, encrypt_json, new_data_key, unwrap_data_key, wrap_data_key, zero_bytes
 
 
+def _local_plaintext_payloads() -> bool:
+    return os.getenv("IATREON_LOCAL_WORKER") == "1"
+
+
 async def _get_user_data_key(db: AsyncSession, user_id: uuid.UUID) -> bytearray:
     if isinstance(user_id, str):
         user_id = uuid.UUID(user_id)
@@ -43,6 +49,8 @@ async def _get_user_data_key(db: AsyncSession, user_id: uuid.UUID) -> bytearray:
 
 
 async def _encrypt_record_payload(db: AsyncSession, user_id: uuid.UUID, purpose: str, payload: dict) -> str:
+    if _local_plaintext_payloads():
+        return json.dumps(payload, separators=(',', ':'), default=str)
     data_key = await _get_user_data_key(db, user_id)
     try:
         return encrypt_json(data_key, user_id, purpose, payload)
@@ -51,6 +59,8 @@ async def _encrypt_record_payload(db: AsyncSession, user_id: uuid.UUID, purpose:
 
 
 async def _decrypt_record_payload(db: AsyncSession, user_id: uuid.UUID, purpose: str, encrypted_payload: str) -> dict:
+    if _local_plaintext_payloads():
+        return json.loads(encrypted_payload)
     data_key = await _get_user_data_key(db, user_id)
     try:
         return decrypt_json(data_key, user_id, purpose, encrypted_payload)
@@ -502,6 +512,8 @@ class UserRepo:
         return (await db.execute(stmt)).scalar_one_or_none() is not None
 
     async def initialize_user_encryption(self, db: AsyncSession, user_id: uuid.UUID) -> None:
+        if _local_plaintext_payloads():
+            return
         if isinstance(user_id, str):
             user_id = uuid.UUID(user_id)
         user = await db.get(User, user_id)
@@ -528,6 +540,8 @@ class UserRepo:
         if user_profile is None:
             return {}
         if user_profile.encrypted_payload:
+            if _local_plaintext_payloads():
+                return json.loads(user_profile.encrypted_payload)
             data_key = await self._get_user_data_key(db, user_id)
             try:
                 return decrypt_json(data_key, user_id, 'user-profile', user_profile.encrypted_payload)
@@ -539,11 +553,14 @@ class UserRepo:
         stmt = select(UserProfile).where(UserProfile.user_id == profile_data.user_id)
         user_profile = (await db.execute(stmt)).scalar_one_or_none()
         profile_dict = profile_data.model_dump()
-        data_key = await self._get_user_data_key(db, profile_data.user_id)
-        try:
-            encrypted_payload = encrypt_json(data_key, profile_data.user_id, 'user-profile', profile_dict)
-        finally:
-            zero_bytes(data_key)
+        if _local_plaintext_payloads():
+            encrypted_payload = json.dumps(profile_dict, separators=(',', ':'), default=str)
+        else:
+            data_key = await self._get_user_data_key(db, profile_data.user_id)
+            try:
+                encrypted_payload = encrypt_json(data_key, profile_data.user_id, 'user-profile', profile_dict)
+            finally:
+                zero_bytes(data_key)
         if user_profile is None:
             user_profile = UserProfile(user_id=profile_data.user_id, encrypted_payload=encrypted_payload)
             db.add(user_profile)

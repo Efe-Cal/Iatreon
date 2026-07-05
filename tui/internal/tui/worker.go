@@ -25,8 +25,10 @@ type Request struct {
 type Response struct {
 	ID     string          `json:"id"`
 	OK     bool            `json:"ok"`
+	Event  json.RawMessage `json:"event,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  string          `json:"error,omitempty"`
+	Done   bool            `json:"done,omitempty"`
 }
 
 type Worker struct {
@@ -52,7 +54,9 @@ func workerCommand() (*exec.Cmd, error) {
 
 		workerScript := filepath.Join("..", "local_worker", "worker.py")
 
-		return exec.Command(pythonPath, workerScript), nil
+		cmd := exec.Command(pythonPath, workerScript)
+		cmd.Env = append(os.Environ(), "IATREON_LOCAL_WORKER=1")
+		return cmd, nil
 	}
 
 	exe, err := os.Executable()
@@ -69,7 +73,9 @@ func workerCommand() (*exec.Cmd, error) {
 
 	workerPath := filepath.Join(dir, name)
 
-	return exec.Command(workerPath), nil
+	cmd := exec.Command(workerPath)
+	cmd.Env = append(os.Environ(), "IATREON_LOCAL_WORKER=1")
+	return cmd, nil
 }
 
 func StartPythonWorker() (*Worker, error) {
@@ -127,11 +133,16 @@ func (w *Worker) readLoop() {
 
 		w.pendingMu.Lock()
 		ch := w.pending[resp.ID]
-		delete(w.pending, resp.ID)
+		if resp.Done {
+			delete(w.pending, resp.ID)
+		}
 		w.pendingMu.Unlock()
 
 		if ch != nil {
 			ch <- resp
+			if resp.Done {
+				close(ch)
+			}
 		}
 	}
 
@@ -148,15 +159,47 @@ func (w *Worker) readLoop() {
 			ID:    id,
 			OK:    false,
 			Error: w.err.Error(),
+			Done:  true,
 		}
+		close(ch)
 	}
 	w.pendingMu.Unlock()
 }
 
 func (w *Worker) Call(ctx context.Context, action string, input any) (Response, error) {
+	ch, err := w.call(ctx, action, input, 1)
+	if err != nil {
+		return Response{}, err
+	}
+
+	for {
+		select {
+		case resp, ok := <-ch:
+			if !ok {
+				return Response{}, errors.New("python worker stopped")
+			}
+			if !resp.OK {
+				return resp, errors.New(resp.Error)
+			}
+			if resp.Done {
+				return resp, nil
+			}
+		case <-ctx.Done():
+			return Response{}, ctx.Err()
+		case <-w.done:
+			return Response{}, errors.New("python worker stopped")
+		}
+	}
+}
+
+func (w *Worker) Stream(ctx context.Context, action string, input any) (<-chan Response, error) {
+	return w.call(ctx, action, input, 32)
+}
+
+func (w *Worker) call(ctx context.Context, action string, input any, buffer int) (chan Response, error) {
 	id := strconv.FormatUint(w.nextID.Add(1), 10)
 
-	ch := make(chan Response, 1)
+	ch := make(chan Response, buffer)
 
 	w.pendingMu.Lock()
 	w.pending[id] = ch
@@ -171,7 +214,7 @@ func (w *Worker) Call(ctx context.Context, action string, input any) (Response, 
 	data, err := json.Marshal(req)
 	if err != nil {
 		w.removePending(id)
-		return Response{}, err
+		return nil, err
 	}
 
 	w.writeMu.Lock()
@@ -180,23 +223,23 @@ func (w *Worker) Call(ctx context.Context, action string, input any) (Response, 
 
 	if err != nil {
 		w.removePending(id)
-		return Response{}, err
+		return nil, err
 	}
 
 	select {
-	case resp := <-ch:
-		if !resp.OK {
-			return resp, errors.New(resp.Error)
-		}
-		return resp, nil
-
 	case <-ctx.Done():
 		w.removePending(id)
-		return Response{}, ctx.Err()
-
-	case <-w.done:
-		return Response{}, errors.New("python worker stopped")
+		return nil, ctx.Err()
+	default:
+		return ch, nil
 	}
+}
+
+func decodeWorkerResult[T any](resp Response, out *T) error {
+	if len(resp.Result) == 0 || string(resp.Result) == "null" {
+		return nil
+	}
+	return json.Unmarshal(resp.Result, out)
 }
 
 func (w *Worker) removePending(id string) {

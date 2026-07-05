@@ -5,7 +5,9 @@ from dotenv import load_dotenv
 
 from langchain_core.messages import AIMessageChunk
 from langchain_core.tools import StructuredTool
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import RunnableConfig
+import os
 
 from agents.research import EFFORT_SETTINGS, ResearchAgent, ResearchEffort
 from agents.shared import create_agent_by_type, get_user_info, _iter_stream_text
@@ -27,10 +29,11 @@ class DoctorAgent:
                 "Choose research_effort as fast, standard, deep, or web."
             ),
         )
+        checkpointer = InMemorySaver() if os.getenv("IATREON_LOCAL_WORKER") == "1" else checkpointer_manager.get_checkpointer()
         self.agent = create_agent_by_type(
             "doctor",
             tools=[self.call_research_agent_tool],
-            checkpointer=checkpointer_manager.get_checkpointer(),
+            checkpointer=checkpointer,
         )
 
     async def run_doctor(self, message: str, conversation_id: str) -> AsyncGenerator[str | dict | tuple[IntakeProfile, list[dict[str, str]]], None]:
@@ -84,6 +87,28 @@ class DoctorAgent:
             research_effort = "standard"
 
         research_repo = ResearchRepo(self.user_id)
+
+        if os.getenv("IATREON_LOCAL_WORKER") == "1":
+            from local_worker import store
+            research_session_id = uuid.uuid4()
+            research_report = ""
+            citations = {}
+            research_agent = ResearchAgent(research_repo, research_session_id, effort=research_effort)
+            async for research_chunk in research_agent.run(None, research_question=query, user_id=self.user_id):
+                if isinstance(research_chunk, dict) and research_chunk.get("type") == "error":
+                    return research_chunk.get("content") or "Research failed."
+                if isinstance(research_chunk, tuple) and len(research_chunk) == 2:
+                    research_report, citations = research_chunk
+            store.save_research(
+                self.user_id,
+                str(research_session_id),
+                str(self.chat_session_id),
+                research_effort,
+                research_report,
+                citations,
+                triggered_by="doctor",
+            )
+            return research_report or "No research report was produced."
 
         async with unit_of_work() as db:
             

@@ -1,10 +1,10 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
-	"net/http"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -20,8 +20,8 @@ const (
 )
 
 type historyModel struct {
-	userid     string
-	sessionKey *SessionKey
+	userid string
+	worker *Worker
 
 	sessions []historySession
 	err      string
@@ -66,13 +66,13 @@ var (
 				BorderForeground(colorPrimary)
 )
 
-func newHistoryModel(userid string, sessionKey *SessionKey) historyModel {
+func newHistoryModel(userid string, worker *Worker) historyModel {
 	return historyModel{
-		userid:     userid,
-		sessionKey: sessionKey,
-		loading:    true,
-		focus:      historyFocusSessions,
-		content:    viewport.New(0, 0),
+		userid:  userid,
+		worker:  worker,
+		loading: true,
+		focus:   historyFocusSessions,
+		content: viewport.New(0, 0),
 	}
 }
 
@@ -96,28 +96,23 @@ func (m historyModel) footer() []string {
 
 func (m historyModel) load() tea.Cmd {
 	return func() tea.Msg {
-		req, err := http.NewRequest(http.MethodGet, apiBaseURL+"/history", nil)
-		if err != nil {
-			return historyLoadedMsg{err: err}
-		}
-		req.Header.Set("X-User-ID", m.userid)
-		if m.sessionKey != nil {
-			addSessionKeyHeader(req, m.sessionKey.Get())
+		if m.worker == nil {
+			return historyLoadedMsg{}
 		}
 
-		resp, err := sharedHTTPDo(req)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		resp, err := m.worker.Call(ctx, "history/list", struct {
+			UserID string `json:"user_id"`
+		}{UserID: m.userid})
 		if err != nil {
 			return historyLoadedMsg{err: err}
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return historyLoadedMsg{err: fmt.Errorf("history unavailable: %s", resp.Status)}
 		}
 
 		var body struct {
 			Sessions []historySession `json:"sessions"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		if err := decodeWorkerResult(resp, &body); err != nil {
 			return historyLoadedMsg{err: err}
 		}
 		return historyLoadedMsg{sessions: body.Sessions}

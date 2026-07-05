@@ -37,10 +37,11 @@ agent = None
 def get_intake_agent():
     global agent
     if agent is None:
+        checkpointer = InMemorySaver() if os.getenv("IATREON_LOCAL_WORKER") == "1" else checkpointer_manager.get_checkpointer()
         agent = create_agent_by_type(
             "intake",
             tools=[end_of_intake, infer_condition],
-            checkpointer=checkpointer_manager.get_checkpointer(),
+            checkpointer=checkpointer,
         )
     return agent
 

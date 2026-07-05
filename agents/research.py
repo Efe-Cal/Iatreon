@@ -125,7 +125,16 @@ class ResearchAgent:
 
         self._citation_lookup: dict[int, dict] = {}
         self._citation_lock = asyncio.Lock()
+        self._next_local_citation_num = 1
         self.source_warnings: list[str] = []
+
+    def _local_worker_mode(self) -> bool:
+        return os.getenv("IATREON_LOCAL_WORKER") == "1"
+
+    def _reserve_local_citation_numbers(self, count: int) -> int:
+        start = self._next_local_citation_num
+        self._next_local_citation_num += count
+        return start
 
     def _source_warning(self, provider: str, error: Exception) -> str:
         warning = f"{provider} unavailable: {error}"
@@ -141,7 +150,18 @@ class ResearchAgent:
             warning = self._source_warning("Web search", exc)
             return f"<source>\nWeb search results for query '{query}':\n{warning}\n</source>"
 
-        if results:
+        if results and self._local_worker_mode():
+            start = self._reserve_local_citation_numbers(len(results))
+            for citation_num, result in enumerate(results, start=start):
+                await self._record_local_citation(
+                    citation_num,
+                    "web_search_result",
+                    title=result.get("title") or "",
+                    query=query,
+                    url=result.get("url") or "",
+                    text="\n".join(result.get("highlights", [])),
+                )
+        elif results:
             async with unit_of_work() as db:
                 start = await self.research_repo.reserve_citation_numbers(db, self.session_id, len(results))
                 for citation_num, result in enumerate(results, start=start):
@@ -200,7 +220,33 @@ class ResearchAgent:
         
         content = f"Search results for query: '{query}'\n\nArticles:\n"
         source_count = len(articles) + len(books)
-        if source_count:
+        if source_count and self._local_worker_mode():
+            start = self._reserve_local_citation_numbers(source_count)
+            for i, article in enumerate(articles, start=start):
+                content += f"[{i}] {article['title']} ({article['journal']}, {article['year']}, Citations: {article['citation_count']})\nAuthors: {', '.join(article['authors'])}\nAbstract: {article['abstract']}\n\n"
+                await self._record_local_citation(
+                    i,
+                    "article",
+                    title=article.get("title") or "",
+                    query=query,
+                    doi=article.get("doi") or "",
+                    text="\n\n".join(part for part in [article.get("abstract"), article.get("full_text")] if part),
+                    quality_score=article.get("quality_score", 0.0) or 0.0,
+                )
+
+            if books:
+                content += f"Relevant Book Sections:\n"
+                for i, book in enumerate(books, start + len(articles)):
+                    content += f"[{i}] {book['title']}\nContent: {book['text']}\n\n"
+                    await self._record_local_citation(
+                        i,
+                        "book_section",
+                        title=book.get("title") or "",
+                        query=query,
+                        url=book.get("url") or "",
+                        text=book.get("text") or "",
+                    )
+        elif source_count:
             async with unit_of_work() as db:
                 start = await self.research_repo.reserve_citation_numbers(db, self.session_id, source_count)
                 for i, article in enumerate(articles, start=start):
@@ -240,7 +286,18 @@ class ResearchAgent:
             warning = self._source_warning("NCBI Bookshelf", exc)
             return f"<source>\nBook search results for query '{query}':\n{warning}\n</source>"
         
-        if books:
+        if books and self._local_worker_mode():
+            start = self._reserve_local_citation_numbers(len(books))
+            for i, book in enumerate(books, start=start):
+                await self._record_local_citation(
+                    i,
+                    "book_section",
+                    title=book.get("title") or "",
+                    query=query,
+                    url=book.get("url") or "",
+                    text=book.get("text") or "",
+                )
+        elif books:
             async with unit_of_work() as db:
                 start = await self.research_repo.reserve_citation_numbers(db, self.session_id, len(books))
                 for i, book in enumerate(books, start=start):
@@ -274,7 +331,19 @@ class ResearchAgent:
             warning = self._source_warning("OpenAlex", exc)
             return f"<source>\nOpenAlex search results for query '{query}':\n{warning}\n</source>"
         
-        if articles:
+        if articles and self._local_worker_mode():
+            start = self._reserve_local_citation_numbers(len(articles))
+            for i, article in enumerate(articles, start=start):
+                await self._record_local_citation(
+                    i,
+                    "article",
+                    title=article.title,
+                    query=query,
+                    doi=article.doi or "",
+                    text="\n\n".join(part for part in [article.abstract, article.full_text] if part),
+                    quality_score=article.quality_score or 0.0,
+                )
+        elif articles:
             async with unit_of_work() as db:
                 start = await self.research_repo.reserve_citation_numbers(db, self.session_id, len(articles))
                 for i, article in enumerate(articles, start=start):
@@ -447,6 +516,32 @@ Prioritize urgent/emergent causes first when red flags are present. Normalize la
         else:
             citation["url"] = source.url
 
+        async with self._citation_lock:
+            self._citation_lookup[citation_num] = citation
+
+    async def _record_local_citation(
+        self,
+        citation_num: int,
+        source_type: str,
+        title: str,
+        query: str,
+        url: str = "",
+        doi: str = "",
+        text: str = "",
+        quality_score: float | None = None,
+    ) -> None:
+        citation = {
+            "citation_num": citation_num,
+            "type": source_type,
+            "id": f"local:{citation_num}",
+            "title": title,
+            "query": query,
+            "url": url,
+            "doi": doi,
+            "text": text,
+        }
+        if quality_score is not None:
+            citation["quality_score"] = quality_score
         async with self._citation_lock:
             self._citation_lookup[citation_num] = citation
 

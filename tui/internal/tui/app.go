@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"log"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -28,7 +29,7 @@ type model struct {
 	width      int
 	height     int
 	userid     string
-	sessionKey *SessionKey
+	worker     *Worker
 }
 
 var (
@@ -37,12 +38,13 @@ var (
 )
 
 func NewModel(userid string, hasProfile bool, sessionKey ...*SessionKey) model {
-	var key *SessionKey
-	if len(sessionKey) > 0 {
-		key = sessionKey[0]
+
+	worker, err := StartPythonWorker()
+	if err != nil {
+		log.Printf("python worker unavailable: %v", err)
 	}
 	dash := newDashboardModel(userid)
-	setup := newSetupModel(userid, key, hasProfile)
+	setup := newSetupModel(userid, worker, hasProfile)
 
 	var active screen
 	if hasProfile {
@@ -57,7 +59,7 @@ func NewModel(userid string, hasProfile bool, sessionKey ...*SessionKey) model {
 		dashboard:  dash,
 		setup:      setup,
 		userid:     userid,
-		sessionKey: key,
+		worker:     worker,
 	}
 
 	return m
@@ -68,10 +70,6 @@ func (m model) Init() tea.Cmd {
 		return m.setup.Init()
 	}
 	return nil
-}
-
-func (m *model) wipeSessionKey() {
-	m.sessionKey.Wipe()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -87,7 +85,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "ctrl+c" {
-		m.wipeSessionKey()
 		return m, tea.Quit
 	}
 
@@ -138,22 +135,22 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch m.dashboard.action {
 	case dashboardActionStartIntake:
-		m.chat = m.initChat(newChatModelForAgent(AgentIntake, m.userid, "", m.sessionKey))
+		m.chat = m.initChat(newChatModelForAgent(AgentIntake, m.userid, "", m.worker))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = chatScreen
 		return m, m.chat.Init()
 	case dashboardActionStartDoctor:
-		m.chat = m.initChat(newChatModelForAgent(AgentDoctor, m.userid, "", m.sessionKey))
+		m.chat = m.initChat(newChatModelForAgent(AgentDoctor, m.userid, "", m.worker))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = chatScreen
 		return m, m.chat.Init()
 	case dashboardActionHistory:
-		m.history = m.initHistory(newHistoryModel(m.userid, m.sessionKey))
+		m.history = m.initHistory(newHistoryModel(m.userid, m.worker))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = historyScreen
 		return m, m.history.Init()
 	case dashboardActionSetup:
-		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey, true))
+		m.setup = m.initSetup(newSetupModel(m.userid, m.worker, true))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = setupScreen
 		return m, m.setup.Init()
@@ -167,7 +164,7 @@ func (m model) updateSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.setup = updated
 
 	if m.setup.cancelled {
-		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey, m.hasProfile))
+		m.setup = m.initSetup(newSetupModel(m.userid, m.worker, m.hasProfile))
 		if m.hasProfile {
 			m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 			m.active = dashboardScreen
@@ -178,7 +175,7 @@ func (m model) updateSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.setup.submitted {
 		m.hasProfile = true
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
-		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey, true))
+		m.setup = m.initSetup(newSetupModel(m.userid, m.worker, true))
 		m.active = dashboardScreen
 		return m, nil
 	}
@@ -196,13 +193,13 @@ func (m model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.chat.agent != nil {
 			kind = m.chat.agent.Kind()
 		}
-		m.chat = m.initChat(newChatModelForAgent(kind, m.userid, "", m.sessionKey))
+		m.chat = m.initChat(newChatModelForAgent(kind, m.userid, "", m.worker))
 		m.active = dashboardScreen
 		return m, nil
 	}
 
 	if m.chat.reportReady {
-		m.report = m.initReport(newReportModel(m.chat.report, m.chat.citations, m.chat.researchSessionID, m.userid, m.sessionKey))
+		m.report = m.initReport(newReportModel(m.chat.report, m.chat.citations, m.chat.researchSessionID, m.userid, m.worker))
 		m.chat.reportReady = false
 		m.active = reportScreen
 		return m, m.report.Init()
@@ -221,7 +218,7 @@ func (m model) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat.agent = newAgentHandler(AgentDiagnosis)
 		m.chat.invokeAgentWithEnter = true
 		m.chat.UpdateFooter("Enter Start Diagnosis agent", 0)
-		m.report = m.initReport(newReportModel("", nil, "", m.userid, m.sessionKey))
+		m.report = m.initReport(newReportModel("", nil, "", m.userid, m.worker))
 		m.active = chatScreen
 		return m, nil
 	}
@@ -234,7 +231,7 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.history = updated
 
 	if m.history.close {
-		m.history = m.initHistory(newHistoryModel(m.userid, m.sessionKey))
+		m.history = m.initHistory(newHistoryModel(m.userid, m.worker))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = dashboardScreen
 		return m, nil

@@ -1,6 +1,7 @@
 import logging
+import os
 from dotenv import load_dotenv
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from langchain_core.tools import StructuredTool
 
@@ -49,6 +50,28 @@ class DiagnosisAgent():
         
 
     async def _request_research(self, research_question: str) -> str:
+        if os.getenv("IATREON_LOCAL_WORKER") == "1":
+            from local_worker import store
+            research_session_id = uuid4()
+            research_report = ""
+            citations = {}
+            research_agent = ResearchAgent(self.research_repo, research_session_id, effort="fast")
+            async for research_chunk in research_agent.run(self.intake_session, research_question=research_question):
+                if isinstance(research_chunk, dict) and research_chunk.get("type") == "error":
+                    return research_chunk.get("content") or "Research failed."
+                if isinstance(research_chunk, tuple) and len(research_chunk) == 2:
+                    research_report, citations = research_chunk
+            store.save_research(
+                str(self.user_id),
+                str(research_session_id),
+                str(self.chat_session_id) if self.chat_session_id else None,
+                "fast",
+                research_report,
+                citations,
+                triggered_by="diagnosis",
+            )
+            return research_report or "No research report was produced."
+
         async with unit_of_work() as db:
             research_session = await self.research_repo.create_research_session(
                 db,
@@ -82,6 +105,11 @@ class DiagnosisAgent():
     async def _get_full_source(self, citation_id: int):
         if not self.research_session:
             return f"No source found for citation ID {citation_id}"
+
+        if os.getenv("IATREON_LOCAL_WORKER") == "1":
+            source_info = self.research_session.citations.get(citation_id) or self.research_session.citations.get(str(citation_id))
+            if source_info and source_info.get("text"):
+                return source_info["text"]
 
         async with read_only_session() as db:
             source_info = self.research_session.citations.get(citation_id) or self.research_session.citations.get(str(citation_id))

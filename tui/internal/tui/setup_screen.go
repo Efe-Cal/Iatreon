@@ -1,11 +1,10 @@
 package tui
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
-	"net/http"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -47,12 +46,12 @@ type setupField struct {
 }
 
 type setupModel struct {
-	step       setupStep
-	userid     string
-	sessionKey *SessionKey
-	canCancel  bool
-	width      int
-	height     int
+	step      setupStep
+	userid    string
+	worker    *Worker
+	canCancel bool
+	width     int
+	height    int
 
 	// Form fields
 	age         textinput.Model
@@ -77,7 +76,7 @@ type setupModel struct {
 	submitting bool
 }
 
-func newSetupModel(userid string, sessionKey *SessionKey, canCancel bool) setupModel {
+func newSetupModel(userid string, worker *Worker, canCancel bool) setupModel {
 	// Age input
 	age := textinput.New()
 	age.Placeholder = "e.g. 35"
@@ -131,7 +130,7 @@ func newSetupModel(userid string, sessionKey *SessionKey, canCancel bool) setupM
 	return setupModel{
 		step:             stepLanding,
 		userid:           userid,
-		sessionKey:       sessionKey,
+		worker:           worker,
 		canCancel:        canCancel,
 		age:              age,
 		gender:           gender,
@@ -228,6 +227,9 @@ type profileSubmittedMsg struct {
 
 func submitProfile(userid string, m setupModel) tea.Cmd {
 	return func() tea.Msg {
+		if m.worker == nil {
+			return profileSubmittedMsg{}
+		}
 		body := map[string]interface{}{
 			"user_id": userid,
 			"demographics": map[string]string{
@@ -245,26 +247,11 @@ func submitProfile(userid string, m setupModel) tea.Cmd {
 			},
 		}
 
-		jsonData, err := json.Marshal(body)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, err := m.worker.Call(ctx, "profile/update", body)
 		if err != nil {
 			return profileSubmittedMsg{err: err}
-		}
-
-		req, err := http.NewRequest(http.MethodPost, apiBaseURL+"/user-profile", bytes.NewReader(jsonData))
-		if err != nil {
-			return profileSubmittedMsg{err: err}
-		}
-		req.Header.Set("Content-Type", "application/json")
-		addSessionKeyHeader(req, m.sessionKey.Get())
-
-		resp, err := sharedHTTPDo(req)
-		if err != nil {
-			return profileSubmittedMsg{err: err}
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return profileSubmittedMsg{err: fmt.Errorf("server returned status: %d %s", resp.StatusCode, resp.Status)}
 		}
 
 		return profileSubmittedMsg{}
@@ -466,7 +453,7 @@ func (m setupModel) renderLanding() string {
 		"[1] Intelligent patient intake",
 		"[2] Evidence-based research",
 		"[3] Differential diagnosis support",
-		"[4] End-to-end encrypted via SSH",
+		"[4] Client-side encrypted storage",
 	}
 
 	featureList := lipgloss.JoinVertical(lipgloss.Left, features...)

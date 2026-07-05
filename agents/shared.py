@@ -60,6 +60,10 @@ async def web_search_tool(query: str, num_results: int = 5):
 
 
 async def get_user_info(user_id: str):
+    if os.getenv("IATREON_LOCAL_WORKER") == "1":
+        from local_worker.store import profile_markdown
+        return profile_markdown(user_id)
+
     user_repo = UserRepo()
     async with read_only_session() as db:
         info = "# Patient Profile\n"
