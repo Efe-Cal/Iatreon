@@ -56,7 +56,7 @@ EFFORT_SETTINGS = {
     },
     "web": {
         "temperature": 0.2,
-        "model_env": "RESEARCH_AGENT_WEB_MODEL",
+        "model_env": "RESEARCH_AGENT_FAST_MODEL",
         "max_articles": 0,
         "web_results": 5,
         "openalex_results": 0,
