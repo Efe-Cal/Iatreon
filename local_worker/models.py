@@ -37,6 +37,11 @@ class CitationTextRequest(BaseModel):
     citation_num: int
 
 
+class WorkerInitRequest(BaseModel):
+    db_path: str
+    db_key: str
+
+
 class UserProfileUpdateRequest(BaseModel):
     user_id: UUID
     demographics: dict[str, str] = Field(default_factory=dict)

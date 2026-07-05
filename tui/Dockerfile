@@ -10,9 +10,6 @@ RUN CGO_ENABLED=0 go build -o /iatreon-tui ./cmd/app
 
 FROM alpine:3.22
 
-RUN mkdir -p /data/ssh
-RUN chmod 700 /data/ssh
-
 WORKDIR /app
 
 ENV TERM=xterm-256color
@@ -21,6 +18,4 @@ ENV FORCE_COLOR=1
 
 COPY --from=build /iatreon-tui /usr/local/bin/iatreon-tui
 
-EXPOSE 2222
-
-CMD ["iatreon-tui", "-ssh", "-host", "0.0.0.0", "-port", "2222"]
+CMD ["iatreon-tui"]

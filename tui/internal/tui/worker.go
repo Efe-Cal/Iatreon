@@ -3,6 +3,7 @@ package tui
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type Request struct {
@@ -43,6 +45,11 @@ type Worker struct {
 	nextID atomic.Uint64
 	done   chan struct{}
 	err    error
+}
+
+type workerInitInput struct {
+	DBPath string `json:"db_path"`
+	DBKey  string `json:"db_key"`
 }
 
 func workerCommand() (*exec.Cmd, error) {
@@ -84,8 +91,6 @@ func StartPythonWorker() (*Worker, error) {
 		return nil, err
 	}
 
-	// cmd := exec.Command(path)
-
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -117,6 +122,29 @@ func StartPythonWorker() (*Worker, error) {
 	go func() {
 		_ = cmd.Wait()
 	}()
+
+	key, err := loadOrCreateWorkerKey(osCredentialStore{})
+	if err != nil {
+		_ = w.Close()
+		return nil, err
+	}
+	defer zeroBytes(key)
+
+	dbPath, err := localWorkerDBPath()
+	if err != nil {
+		_ = w.Close()
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := w.Call(ctx, "worker/init", workerInitInput{
+		DBPath: dbPath,
+		DBKey:  base64.StdEncoding.EncodeToString(key),
+	}); err != nil {
+		_ = w.Close()
+		return nil, err
+	}
 
 	return w, nil
 }

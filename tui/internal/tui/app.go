@@ -37,7 +37,7 @@ var (
 	setupFooter     = []string{"Enter Continue", "Esc Back", "Ctrl+C Quit"}
 )
 
-func NewModel(userid string, hasProfile bool, sessionKey ...*SessionKey) model {
+func NewModel(userid string, hasProfile bool) model {
 
 	worker, err := StartPythonWorker()
 	if err != nil {

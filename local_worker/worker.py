@@ -31,12 +31,19 @@ from models import (
     ResearchRequest,
     SessionCreateRequest,
     UserProfileUpdateRequest,
+    WorkerInitRequest,
 )
 from local_worker import store
 from services.diagnosis_service import stream_diagnosis
 from services.intake_service import stream_intake_chat
 from services.doctor_service import stream_doctor_chat_service
 from services.research_service import get_citation_text, stream_research
+
+
+@route("worker/init", WorkerInitRequest)
+async def init_worker(req: WorkerInitRequest):
+    store.initialize(req.db_path, req.db_key)
+    return {"status": "success"}
 
 
 @route("session/create", SessionCreateRequest)

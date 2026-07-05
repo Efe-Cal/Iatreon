@@ -12,7 +12,6 @@ from agents.shared import create_agent_by_type, get_model, get_user_info, _iter_
 from agents.inference import run_inference
 
 from db.schemas import IntakeProfile
-from db.db import checkpointer_manager
 
 from .mock_patient import mock_patient_response
 
@@ -37,7 +36,11 @@ agent = None
 def get_intake_agent():
     global agent
     if agent is None:
-        checkpointer = InMemorySaver() if os.getenv("IATREON_LOCAL_WORKER") == "1" else checkpointer_manager.get_checkpointer()
+        if os.getenv("IATREON_LOCAL_WORKER") == "1":
+            checkpointer = InMemorySaver()
+        else:
+            from db.db import checkpointer_manager
+            checkpointer = checkpointer_manager.get_checkpointer()
         agent = create_agent_by_type(
             "intake",
             tools=[end_of_intake, infer_condition],

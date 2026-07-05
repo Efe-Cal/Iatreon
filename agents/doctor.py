@@ -12,8 +12,6 @@ import os
 from agents.research import EFFORT_SETTINGS, ResearchAgent, ResearchEffort
 from agents.shared import create_agent_by_type, get_user_info, _iter_stream_text
 from db.schemas import IntakeProfile
-from db.db import checkpointer_manager, unit_of_work
-from db.repositories import ResearchRepo
 
 load_dotenv()
 
@@ -29,7 +27,11 @@ class DoctorAgent:
                 "Choose research_effort as fast, standard, deep, or web."
             ),
         )
-        checkpointer = InMemorySaver() if os.getenv("IATREON_LOCAL_WORKER") == "1" else checkpointer_manager.get_checkpointer()
+        if os.getenv("IATREON_LOCAL_WORKER") == "1":
+            checkpointer = InMemorySaver()
+        else:
+            from db.db import checkpointer_manager
+            checkpointer = checkpointer_manager.get_checkpointer()
         self.agent = create_agent_by_type(
             "doctor",
             tools=[self.call_research_agent_tool],
@@ -86,14 +88,12 @@ class DoctorAgent:
         if research_effort not in EFFORT_SETTINGS:
             research_effort = "standard"
 
-        research_repo = ResearchRepo(self.user_id)
-
         if os.getenv("IATREON_LOCAL_WORKER") == "1":
             from local_worker import store
             research_session_id = uuid.uuid4()
             research_report = ""
             citations = {}
-            research_agent = ResearchAgent(research_repo, research_session_id, effort=research_effort)
+            research_agent = ResearchAgent(None, research_session_id, effort=research_effort)
             async for research_chunk in research_agent.run(None, research_question=query, user_id=self.user_id):
                 if isinstance(research_chunk, dict) and research_chunk.get("type") == "error":
                     return research_chunk.get("content") or "Research failed."
@@ -110,6 +110,10 @@ class DoctorAgent:
             )
             return research_report or "No research report was produced."
 
+        from db.db import unit_of_work
+        from db.repositories import ResearchRepo
+
+        research_repo = ResearchRepo(self.user_id)
         async with unit_of_work() as db:
             
             research_session = await research_repo.create_research_session(

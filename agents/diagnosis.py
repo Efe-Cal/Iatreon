@@ -5,8 +5,6 @@ from uuid import UUID, uuid4
 
 from langchain_core.tools import StructuredTool
 
-from db.db import read_only_session, unit_of_work
-from db.repositories import ArticleRepo, BookSectionRepo, ResearchRepo, WebSearchResultRepo
 from agents.research import ResearchAgent
 from agents.shared import create_agent_by_type, get_user_info
 from db.schemas import DiagnosisReport, IntakeSessionData, ResearchSessionData
@@ -19,7 +17,7 @@ class DiagnosisAgent():
         self.research_session = research_session
         self.chat_session_id = chat_session_id
         self.user_id = intake_session.user_id
-        self.research_repo = ResearchRepo(str(self.user_id))
+        self.research_repo = None
         
         self.get_full_source_tool = StructuredTool.from_function(
             func=self._get_full_source,
@@ -55,7 +53,7 @@ class DiagnosisAgent():
             research_session_id = uuid4()
             research_report = ""
             citations = {}
-            research_agent = ResearchAgent(self.research_repo, research_session_id, effort="fast")
+            research_agent = ResearchAgent(None, research_session_id, effort="fast")
             async for research_chunk in research_agent.run(self.intake_session, research_question=research_question):
                 if isinstance(research_chunk, dict) and research_chunk.get("type") == "error":
                     return research_chunk.get("content") or "Research failed."
@@ -72,6 +70,10 @@ class DiagnosisAgent():
             )
             return research_report or "No research report was produced."
 
+        from db.db import unit_of_work
+        from db.repositories import ResearchRepo
+
+        self.research_repo = ResearchRepo(str(self.user_id))
         async with unit_of_work() as db:
             research_session = await self.research_repo.create_research_session(
                 db,
@@ -110,6 +112,10 @@ class DiagnosisAgent():
             source_info = self.research_session.citations.get(citation_id) or self.research_session.citations.get(str(citation_id))
             if source_info and source_info.get("text"):
                 return source_info["text"]
+            return f"No content found for source with citation ID {citation_id}"
+
+        from db.db import read_only_session
+        from db.repositories import ArticleRepo, BookSectionRepo, WebSearchResultRepo
 
         async with read_only_session() as db:
             source_info = self.research_session.citations.get(citation_id) or self.research_session.citations.get(str(citation_id))

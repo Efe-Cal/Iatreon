@@ -9,8 +9,6 @@ from langgraph.graph.state import CompiledStateGraph
 from langchain_core.tools import tool
 
 from context.websearch import web_search
-from db.db import read_only_session
-from db.repositories import UserRepo
 
 load_dotenv()
 
@@ -63,6 +61,9 @@ async def get_user_info(user_id: str):
     if os.getenv("IATREON_LOCAL_WORKER") == "1":
         from local_worker.store import profile_markdown
         return profile_markdown(user_id)
+
+    from db.db import read_only_session
+    from db.repositories import UserRepo
 
     user_repo = UserRepo()
     async with read_only_session() as db:

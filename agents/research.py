@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import re
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 from dotenv import load_dotenv
 from uuid import UUID
 import os
@@ -15,10 +15,7 @@ from langchain_core.messages import AIMessageChunk
 from agents.shared import create_agent_by_type, get_user_info, _iter_stream_text
 from agents.inference import run_research_inference
 from context.sources.openalex import OpenAlexClient
-from db.models import Article, BookSection, WebSearchResult
-from db.repositories import ArticleRepo, BookSectionRepo, ResearchRepo, WebSearchResultRepo
 from db.schemas import ArticleData, BookSectionData, IntakeSessionData
-from db.db import unit_of_work
 
 from context.processing.pipeline import run_pipeline
 from context.websearch import web_search, fetch_web_content
@@ -65,8 +62,18 @@ EFFORT_SETTINGS = {
 }
 
 
+def _as_payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    return {
+        key: item
+        for key, item in vars(value).items()
+        if not key.startswith("_")
+    }
+
+
 class ResearchAgent:
-    def __init__(self, research_repo: ResearchRepo, research_session_id: UUID, effort: ResearchEffort = "standard"):
+    def __init__(self, research_repo: Any | None, research_session_id: UUID, effort: ResearchEffort = "standard"):
         self.effort = effort if effort in EFFORT_SETTINGS else "standard"
         self.effort_settings = EFFORT_SETTINGS[self.effort]
         self.checkpointer = InMemorySaver()
@@ -119,9 +126,14 @@ class ResearchAgent:
                         temperature=self.effort_settings["temperature"],
                         model_name=model_name)
 
-        self.article_repo = ArticleRepo()
-        self.book_section_repo = BookSectionRepo()
-        self.web_search_result_repo = WebSearchResultRepo()
+        self.article_repo = None
+        self.book_section_repo = None
+        self.web_search_result_repo = None
+        if not self._local_worker_mode():
+            from db.repositories import ArticleRepo, BookSectionRepo, WebSearchResultRepo
+            self.article_repo = ArticleRepo()
+            self.book_section_repo = BookSectionRepo()
+            self.web_search_result_repo = WebSearchResultRepo()
 
         self._citation_lookup: dict[int, dict] = {}
         self._citation_lock = asyncio.Lock()
@@ -162,6 +174,8 @@ class ResearchAgent:
                     text="\n".join(result.get("highlights", [])),
                 )
         elif results:
+            from db.db import unit_of_work
+
             async with unit_of_work() as db:
                 start = await self.research_repo.reserve_citation_numbers(db, self.session_id, len(results))
                 for citation_num, result in enumerate(results, start=start):
@@ -247,11 +261,13 @@ class ResearchAgent:
                         text=book.get("text") or "",
                     )
         elif source_count:
+            from db.db import unit_of_work
+
             async with unit_of_work() as db:
                 start = await self.research_repo.reserve_citation_numbers(db, self.session_id, source_count)
                 for i, article in enumerate(articles, start=start):
                     content += f"[{i}] {article['title']} ({article['journal']}, {article['year']}, Citations: {article['citation_count']})\nAuthors: {', '.join(article['authors'])}\nAbstract: {article['abstract']}\n\n"
-                    db_article = await self.article_repo.upsert(db, ArticleData(**article))
+                    db_article = await self.article_repo.upsert(db, ArticleData(**_as_payload(article)))
                     await self._record_citation(
                         i,
                         "article",
@@ -264,7 +280,7 @@ class ResearchAgent:
                     content += f"Relevant Book Sections:\n"
                     for i, book in enumerate(books, start + len(articles)):
                         content += f"[{i}] {book['title']}\nContent: {book['text']}\n\n"
-                        db_section = await self.book_section_repo.upsert(db, BookSectionData(**book))
+                        db_section = await self.book_section_repo.upsert(db, BookSectionData(**_as_payload(book)))
                         await self._record_citation(i, "book_section", db_section, query=query)
 
         return "<source>\n" + content + "\n</source>"
@@ -298,10 +314,12 @@ class ResearchAgent:
                     text=book.get("text") or "",
                 )
         elif books:
+            from db.db import unit_of_work
+
             async with unit_of_work() as db:
                 start = await self.research_repo.reserve_citation_numbers(db, self.session_id, len(books))
                 for i, book in enumerate(books, start=start):
-                    db_section = await self.book_section_repo.upsert(db, BookSectionData(**book))
+                    db_section = await self.book_section_repo.upsert(db, BookSectionData(**_as_payload(book)))
                     await self._record_citation(i, "book_section", db_section, query=query)
         formatted_books = "\n\n".join(
             [
@@ -344,10 +362,12 @@ class ResearchAgent:
                     quality_score=article.quality_score or 0.0,
                 )
         elif articles:
+            from db.db import unit_of_work
+
             async with unit_of_work() as db:
                 start = await self.research_repo.reserve_citation_numbers(db, self.session_id, len(articles))
                 for i, article in enumerate(articles, start=start):
-                    db_article = await self.article_repo.upsert(db, article)
+                    db_article = await self.article_repo.upsert(db, ArticleData(**_as_payload(article)))
                     await self._record_citation(
                         i,
                         "article",
@@ -499,7 +519,7 @@ Prioritize urgent/emergent causes first when red flags are present. Normalize la
         self,
         citation_num: int,
         source_type: str,
-        source: Article | BookSection | WebSearchResult,
+        source: Any,
         query: str,
         quality_score: float | None = None,
     ) -> None:
@@ -510,11 +530,11 @@ Prioritize urgent/emergent causes first when red flags are present. Normalize la
             "title": source.title,
             "query": query,
         }
-        if isinstance(source, Article):
-            citation["doi"] = source.doi
+        if source_type == "article":
+            citation["doi"] = getattr(source, "doi", "")
             citation["quality_score"] = quality_score
         else:
-            citation["url"] = source.url
+            citation["url"] = getattr(source, "url", "")
 
         async with self._citation_lock:
             self._citation_lookup[citation_num] = citation
