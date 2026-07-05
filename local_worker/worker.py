@@ -17,6 +17,17 @@ routes = {}
 protocol_stdout = sys.stdout
 
 
+class _NullWriter:
+    def write(self, value: str) -> int:
+        return len(value)
+
+    def flush(self) -> None:
+        pass
+
+
+route_stdout = _NullWriter()
+
+
 def route(name: str, request_model: type[BaseModel]):
     def decorator(fn):
         routes[name] = {"fn": fn, "request_model": request_model}
@@ -30,6 +41,7 @@ from models import (
     HistoryRequest,
     ResearchRequest,
     SessionCreateRequest,
+    UserProfileStatusRequest,
     UserProfileUpdateRequest,
     WorkerInitRequest,
 )
@@ -55,6 +67,11 @@ async def create_session(req: SessionCreateRequest):
 async def update_profile(req: UserProfileUpdateRequest):
     store.update_profile(req.model_dump(mode="json"))
     return {"status": "success"}
+
+
+@route("profile/status", UserProfileStatusRequest)
+async def profile_status(req: UserProfileStatusRequest):
+    return {"has_profile": store.has_profile(str(req.user_id))}
 
 
 @route("history/list", HistoryRequest)
@@ -108,7 +125,7 @@ async def handle_message(msg: dict) -> None:
         fn = entry["fn"]
 
         req = model.model_validate(msg.get("input", {}))
-        with contextlib.redirect_stdout(sys.stderr):
+        with contextlib.redirect_stdout(route_stdout):
             result = await fn(req)
             if inspect.isasyncgen(result):
                 async for event in result:

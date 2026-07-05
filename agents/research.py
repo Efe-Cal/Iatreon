@@ -420,14 +420,17 @@ class ResearchAgent:
 
         return ""
 
-    async def run(self, profile: IntakeSessionData | None = None, research_question: str | None = None, user_id: str=None) -> AsyncGenerator[dict | tuple[str, dict[int, dict]], None]:
+    async def run(self, profile: IntakeSessionData | None = None, research_question: str | None = None, user_id: str | None = None) -> AsyncGenerator[dict | tuple[str, dict[int, dict]], None]:
+        patient_profile = ""
+        patient_case = ""
+        inference_guidance = ""
+
         if profile:
             symptoms = ', '.join(s["name"] for s in profile.symptoms) if profile.symptoms else "None provided"
             red_flags = ', '.join(profile.red_flags) if profile.red_flags else "None provided"
             medical_summary = profile.medical_summary if profile.medical_summary else "None provided"
 
             patient_profile = await get_user_info(user_id=profile.user_id)
-            inference_guidance = ""
             inference_input = f"""Chief Complaint: {profile.chief_complaint}
 Symptoms: {symptoms}
 Red Flags: {red_flags}
@@ -448,7 +451,6 @@ Medical Summary: {medical_summary}"""
 
         elif user_id:
             patient_profile = await get_user_info(user_id=user_id)
-            patient_case=""
  
         source_instruction = (
             "Use only web search and fetched web pages for insights related to the patient's chief complaint, symptoms, and red flags."

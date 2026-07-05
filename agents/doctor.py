@@ -11,7 +11,7 @@ import os
 
 from agents.research import EFFORT_SETTINGS, ResearchAgent, ResearchEffort
 from agents.shared import create_agent_by_type, get_user_info, _iter_stream_text
-from db.schemas import IntakeProfile
+from db.schemas import IntakeProfile, IntakeSessionData
 
 load_dotenv()
 
@@ -88,13 +88,30 @@ class DoctorAgent:
         if research_effort not in EFFORT_SETTINGS:
             research_effort = "standard"
 
+        intake_session = None
         if os.getenv("IATREON_LOCAL_WORKER") == "1":
             from local_worker import store
+
+            intake_record = store.get_intake_by_chat_session(str(self.chat_session_id))
+            if intake_record:
+                profile = intake_record.get("profile") or {}
+                intake_session = IntakeSessionData(
+                    id=uuid.UUID(str(intake_record["id"])),
+                    user_id=uuid.UUID(str(intake_record["user_id"])),
+                    chief_complaint=profile.get("chief_complaint"),
+                    symptoms=profile.get("symptoms", []),
+                    red_flags=profile.get("red_flags", []),
+                    medical_summary=profile.get("medical_summary"),
+                    thread_id=str(intake_record.get("transcript") or ""),
+                    status="complete",
+                    completed_at=intake_record.get("completed_at"),
+                )
+
             research_session_id = uuid.uuid4()
             research_report = ""
             citations = {}
             research_agent = ResearchAgent(None, research_session_id, effort=research_effort)
-            async for research_chunk in research_agent.run(None, research_question=query, user_id=self.user_id):
+            async for research_chunk in research_agent.run(intake_session, research_question=query, user_id=self.user_id):
                 if isinstance(research_chunk, dict) and research_chunk.get("type") == "error":
                     return research_chunk.get("content") or "Research failed."
                 if isinstance(research_chunk, tuple) and len(research_chunk) == 2:
@@ -111,10 +128,13 @@ class DoctorAgent:
             return research_report or "No research report was produced."
 
         from db.db import unit_of_work
-        from db.repositories import ResearchRepo
+        from db.repositories import IntakeRepo, ResearchRepo, SessionRepo
 
         research_repo = ResearchRepo(self.user_id)
         async with unit_of_work() as db:
+            chat_session = await SessionRepo().get_session(db, self.user_id, self.chat_session_id)
+            if chat_session and chat_session.intake_session_id:
+                intake_session = await IntakeRepo(self.user_id).get_session(db, chat_session.intake_session_id)
             
             research_session = await research_repo.create_research_session(
                 db,
@@ -127,7 +147,7 @@ class DoctorAgent:
         research_report = ""
         citations = {}
         research_agent = ResearchAgent(research_repo, research_session_id, effort=research_effort)
-        async for research_chunk in research_agent.run(None, research_question=query, user_id=self.user_id):
+        async for research_chunk in research_agent.run(intake_session, research_question=query, user_id=self.user_id):
             if isinstance(research_chunk, dict) and research_chunk.get("type") == "error":
                 return research_chunk.get("content") or "Research failed."
             if isinstance(research_chunk, tuple) and len(research_chunk) == 2:

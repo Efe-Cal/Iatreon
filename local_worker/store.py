@@ -162,6 +162,11 @@ def get_profile(user_id: str) -> dict[str, Any]:
         return row.payload if row else {}
 
 
+def has_profile(user_id: str) -> bool:
+    with _lock, _session() as db:
+        return db.get(Profile, str(user_id)) is not None
+
+
 def profile_markdown(user_id: str) -> str:
     profile = get_profile(user_id)
     if not profile:
@@ -241,6 +246,26 @@ def get_intake(intake_id: str) -> dict[str, Any] | None:
         row = db.get(Intake, str(intake_id))
         if row is None:
             return None
+        return {
+            "id": row.id,
+            "user_id": row.user_id,
+            "chat_session_id": row.chat_session_id,
+            "profile": row.profile,
+            "transcript": row.transcript,
+            "completed_at": row.completed_at,
+        }
+
+
+def get_intake_by_chat_session(chat_session_id: str) -> dict[str, Any] | None:
+    with _lock, _session() as db:
+        session = db.get(ChatSession, str(chat_session_id))
+        if session is None or not session.intake_session_id:
+            return None
+
+        row = db.get(Intake, session.intake_session_id)
+        if row is None:
+            return None
+
         return {
             "id": row.id,
             "user_id": row.user_id,

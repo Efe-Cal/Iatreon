@@ -34,6 +34,7 @@ def test_store_round_trips_worker_records(initialized_store):
         "medical_summary": "Headache for two days.",
     }
     store.update_profile(profile)
+    assert store.has_profile(user_id)
     assert store.get_profile(user_id) == profile
     assert "penicillin" in store.profile_markdown(user_id)
 
@@ -41,6 +42,7 @@ def test_store_round_trips_worker_records(initialized_store):
     store.link_intake_session(session_id, intake_id)
     store.save_intake(user_id, intake_id, session_id, profile, "transcript")
     assert store.get_intake(intake_id)["profile"] == profile
+    assert store.get_intake_by_chat_session(session_id)["id"] == intake_id
 
     research_id = str(uuid.uuid4())
     store.save_research(

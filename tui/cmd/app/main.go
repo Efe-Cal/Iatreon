@@ -32,7 +32,13 @@ func main() {
 		return
 	}
 
-	p := tea.NewProgram(tui.NewModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", true), tea.WithAltScreen())
+	userID, err := tui.LocalUserID()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "could not load local user: %v\n", err)
+		os.Exit(1)
+	}
+
+	p := tea.NewProgram(tui.NewLocalModel(userID), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "could not start TUI: %v\n", err)
 		os.Exit(1)

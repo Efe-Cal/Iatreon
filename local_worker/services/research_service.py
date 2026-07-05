@@ -2,10 +2,10 @@ from typing import AsyncIterable
 from uuid import uuid4
 
 from agents.research import ResearchAgent, ResearchEffort
+from local_worker.errors import NotFoundError
 from local_worker import store
 from models import CitationTextRequest, ResearchRequest
 from db.schemas import IntakeSessionData
-from fastapi import HTTPException
 
 
 async def stream_research(req: ResearchRequest) -> AsyncIterable:
@@ -16,7 +16,7 @@ async def stream_research(req: ResearchRequest) -> AsyncIterable:
 
     intake_record = store.get_intake(str(intake_id))
     if not intake_record:
-        raise HTTPException(status_code=404, detail="Intake session not found.")
+        raise NotFoundError("Intake session not found.")
 
     profile = intake_record.get("profile") or {}
     intake_session = IntakeSessionData(
@@ -70,4 +70,4 @@ async def get_citation_text(req: CitationTextRequest) -> str:
     local_text = store.get_citation_text(str(research_session_id), citation_num)
     if local_text:
         return local_text
-    raise HTTPException(status_code=404, detail="Citation not found.")
+    raise NotFoundError("Citation not found.")

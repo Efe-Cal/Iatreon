@@ -11,6 +11,10 @@ class HistoryRequest(BaseModel):
     user_id: UUID
 
 
+class UserProfileStatusRequest(BaseModel):
+    user_id: UUID
+
+
 class DiagnosisRequest(BaseModel):
     user_id: UUID
     intake_id: UUID

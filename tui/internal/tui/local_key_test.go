@@ -81,3 +81,42 @@ func TestLoadOrCreateWorkerKeyReturnsCredentialErrors(t *testing.T) {
 		t.Fatalf("expected %v, got %v", want, err)
 	}
 }
+
+func TestLoadOrCreateLocalUserIDLoadsExistingID(t *testing.T) {
+	want := "ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9"
+	store := &fakeCredentialStore{value: want}
+
+	got, err := loadOrCreateLocalUserID(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("unexpected user id: %q", got)
+	}
+	if store.set != "" {
+		t.Fatal("existing user id should not be replaced")
+	}
+}
+
+func TestLoadOrCreateLocalUserIDCreatesMissingID(t *testing.T) {
+	store := &fakeCredentialStore{err: keyring.ErrNotFound}
+
+	got, err := loadOrCreateLocalUserID(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isUUID(got) {
+		t.Fatalf("new user id is not a UUID: %q", got)
+	}
+	if store.set != got {
+		t.Fatalf("stored user id %q, want %q", store.set, got)
+	}
+}
+
+func TestLoadOrCreateLocalUserIDRejectsBadStoredID(t *testing.T) {
+	store := &fakeCredentialStore{value: "not-a-uuid"}
+
+	if _, err := loadOrCreateLocalUserID(store); err == nil {
+		t.Fatal("expected invalid user id error")
+	}
+}

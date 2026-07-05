@@ -1,12 +1,11 @@
 from typing import AsyncIterable
 from uuid import uuid4
 
+from local_worker.errors import NotFoundError
 from local_worker import store
 from db.schemas import IntakeSessionData, ResearchSessionData
 from agents.diagnosis import DiagnosisAgent
 from models import DiagnosisRequest
-
-from fastapi import HTTPException
 
 async def stream_diagnosis(req: DiagnosisRequest) -> AsyncIterable:
     intake_id = req.intake_id
@@ -15,7 +14,7 @@ async def stream_diagnosis(req: DiagnosisRequest) -> AsyncIterable:
 
     intake_record = store.get_intake(str(intake_id))
     if not intake_record:
-        raise HTTPException(status_code=404, detail="Intake session not found.")
+        raise NotFoundError("Intake session not found.")
 
     profile = intake_record.get("profile") or {}
     intake_session = IntakeSessionData(

@@ -52,6 +52,14 @@ type workerInitInput struct {
 	DBKey  string `json:"db_key"`
 }
 
+type profileStatusInput struct {
+	UserID string `json:"user_id"`
+}
+
+type profileStatusResult struct {
+	HasProfile bool `json:"has_profile"`
+}
+
 func workerCommand() (*exec.Cmd, error) {
 	if os.Getenv("APP_ENV") == "dev" {
 		pythonPath := filepath.Join("..", "venv", "bin", "python")
@@ -101,7 +109,7 @@ func StartPythonWorker() (*Worker, error) {
 		return nil, err
 	}
 
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = io.Discard
 
 	if err := cmd.Start(); err != nil {
 		return nil, err
@@ -268,6 +276,19 @@ func decodeWorkerResult[T any](resp Response, out *T) error {
 		return nil
 	}
 	return json.Unmarshal(resp.Result, out)
+}
+
+func (w *Worker) HasProfile(ctx context.Context, userid string) (bool, error) {
+	resp, err := w.Call(ctx, "profile/status", profileStatusInput{UserID: userid})
+	if err != nil {
+		return false, err
+	}
+
+	var result profileStatusResult
+	if err := decodeWorkerResult(resp, &result); err != nil {
+		return false, err
+	}
+	return result.HasProfile, nil
 }
 
 func (w *Worker) removePending(id string) {

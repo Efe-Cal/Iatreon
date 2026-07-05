@@ -14,6 +14,7 @@ import (
 const (
 	localWorkerKeyService = "Iatreon"
 	localWorkerKeyUser    = "local-worker-db-key"
+	localUserIDKeyUser    = "local-user-id"
 )
 
 type credentialStore interface {
@@ -56,6 +57,67 @@ func loadOrCreateWorkerKey(store credentialStore) ([]byte, error) {
 		return nil, err
 	}
 	return key, nil
+}
+
+func LocalUserID() (string, error) {
+	return loadOrCreateLocalUserID(osCredentialStore{})
+}
+
+func loadOrCreateLocalUserID(store credentialStore) (string, error) {
+	userID, err := store.Get(localWorkerKeyService, localUserIDKeyUser)
+	if err == nil {
+		if !isUUID(userID) {
+			return "", fmt.Errorf("local user id is not a valid UUID: %q", userID)
+		}
+		return userID, nil
+	}
+	if !errors.Is(err, keyring.ErrNotFound) {
+		return "", err
+	}
+
+	userID, err = newUUID()
+	if err != nil {
+		return "", err
+	}
+	if err := store.Set(localWorkerKeyService, localUserIDKeyUser, userID); err != nil {
+		return "", err
+	}
+	return userID, nil
+}
+
+func newUUID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		b[0:4],
+		b[4:6],
+		b[6:8],
+		b[8:10],
+		b[10:16],
+	), nil
+}
+
+func isUUID(value string) bool {
+	if len(value) != 36 {
+		return false
+	}
+	for i, c := range value {
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			if !('0' <= c && c <= '9') && !('a' <= c && c <= 'f') && !('A' <= c && c <= 'F') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func localWorkerDBPath() (string, error) {

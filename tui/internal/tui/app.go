@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"context"
 	"log"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -33,7 +35,7 @@ type model struct {
 }
 
 var (
-	dashboardFooter = []string{"↑/↓/←/→ Navigate", "Enter Select", "Esc Setup", "Ctrl+C Quit"}
+	dashboardFooter = []string{"↑/↓/←/→ Navigate", "Enter Select", "Ctrl+C Quit"}
 	setupFooter     = []string{"Enter Continue", "Esc Back", "Ctrl+C Quit"}
 )
 
@@ -43,6 +45,27 @@ func NewModel(userid string, hasProfile bool) model {
 	if err != nil {
 		log.Printf("python worker unavailable: %v", err)
 	}
+	return newModel(userid, hasProfile, worker)
+}
+
+func NewLocalModel(userid string) model {
+	worker, err := StartPythonWorker()
+	if err != nil {
+		log.Printf("python worker unavailable: %v", err)
+		return newModel(userid, false, nil)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	hasProfile, err := worker.HasProfile(ctx, userid)
+	if err != nil {
+		log.Printf("could not load local profile status: %v", err)
+	}
+	return newModel(userid, hasProfile, worker)
+}
+
+func newModel(userid string, hasProfile bool, worker *Worker) model {
 	dash := newDashboardModel(userid)
 	setup := newSetupModel(userid, worker, hasProfile)
 
