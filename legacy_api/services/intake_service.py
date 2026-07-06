@@ -1,7 +1,7 @@
 import uuid
 from typing import AsyncIterable
 
-from api.shared import ChatRequest
+from legacy_api.shared import ChatRequest
 from agents.intake import run_intake_cli
 
 from db.models import IntakeSession

@@ -1,7 +1,7 @@
 import uuid
 from typing import AsyncIterable
 
-from api.shared import ChatRequest
+from legacy_api.shared import ChatRequest
 
 from agents.doctor import DoctorAgent
 

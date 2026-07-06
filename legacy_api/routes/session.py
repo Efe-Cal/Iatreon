@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Request
 
-from api.shared import clear_encryption_context, require_encryption_context
+from legacy_api.shared import clear_encryption_context, require_encryption_context
 from db.db import unit_of_work
 from db.repositories import SessionRepo
 

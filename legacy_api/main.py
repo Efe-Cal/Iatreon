@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import diagnosis, intake, research, user, session, doctor, history
+from legacy_api.routes import diagnosis, intake, research, user, session, doctor, history
 from db.db import checkpointer_manager
 
 
