@@ -6,7 +6,7 @@ from typing import Any
 _current_user_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("iatreon_user_id", default=None)
 
 LLM_BASE_URLS = {
-    "Iatreon AI": "https://ai.hackclub.com/proxy/v1",
+    "Iatreon AI": "https://iatreon.efecal.hackclub.app/v1",
     "OpenRouter": "https://openrouter.ai/api/v1",
     "Together": "https://api.together.ai/v1",
     "Groq": "https://api.groq.com/openai/v1",
@@ -20,7 +20,7 @@ LLM_BASE_URLS = {
 }
 
 SEARCH_BASE_URLS = {
-    "Iatreon AI": "https://ai.hackclub.com/proxy/v1/exa",
+    "Iatreon AI": "https://iatreon.efecal.hackclub.app/v1/exa",
 }
 
 

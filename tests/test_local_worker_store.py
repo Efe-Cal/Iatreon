@@ -112,6 +112,17 @@ def test_local_provider_setup_drives_model_and_search_clients(initialized_store,
         reset_current_user_id(token)
 
 
+def test_iatreon_ai_defaults_use_proxy(monkeypatch):
+    monkeypatch.delenv("IATREON_LOCAL_WORKER", raising=False)
+    monkeypatch.delenv("AI_API_BASE_URL", raising=False)
+    monkeypatch.delenv("EXA_BASE_URL", raising=False)
+
+    from local_worker.provider_config import llm_config, search_config
+
+    assert llm_config()["base_url"] == "https://iatreon.efecal.hackclub.app/v1"
+    assert search_config()["base_url"] == "https://iatreon.efecal.hackclub.app/v1/exa"
+
+
 def test_store_reopens_with_same_key(initialized_store):
     user_id = str(uuid.uuid4())
     session_id = store.create_session(user_id)

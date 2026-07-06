@@ -1,8 +1,12 @@
 package tui
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -15,6 +19,8 @@ type providerSetupStep int
 
 const (
 	providerStepLLM providerSetupStep = iota
+	providerStepProxyUsername
+	providerStepProxyPassword
 	providerStepLLMKey
 	providerStepLLMBaseURL
 	providerStepSearch
@@ -48,6 +54,8 @@ type providerSetupModel struct {
 	cursor int
 
 	llmProvider    string
+	proxyUsername  textinput.Model
+	proxyPassword  textinput.Model
 	llmAPIKey      textinput.Model
 	llmBaseURL     textinput.Model
 	searchProvider string
@@ -64,6 +72,17 @@ type providerSubmittedMsg struct {
 }
 
 func newProviderSetupModel(userid string, worker *Worker) providerSetupModel {
+	proxyUsername := textinput.New()
+	proxyUsername.Placeholder = "Proxy username"
+	proxyUsername.CharLimit = 128
+	proxyUsername.Width = 54
+
+	proxyPassword := textinput.New()
+	proxyPassword.Placeholder = "Proxy password"
+	proxyPassword.CharLimit = 256
+	proxyPassword.Width = 54
+	proxyPassword.EchoMode = textinput.EchoPassword
+
 	llmKey := textinput.New()
 	llmKey.Placeholder = "API key"
 	llmKey.CharLimit = 256
@@ -91,6 +110,8 @@ func newProviderSetupModel(userid string, worker *Worker) providerSetupModel {
 		userid:         userid,
 		worker:         worker,
 		llmProvider:    llmProviders[0],
+		proxyUsername:  proxyUsername,
+		proxyPassword:  proxyPassword,
 		llmAPIKey:      llmKey,
 		llmBaseURL:     llmBase,
 		searchProvider: searchProviders[0],
@@ -111,6 +132,8 @@ func (m *providerSetupModel) SetSize(w, h int) {
 	}
 	m.llmAPIKey.Width = fieldWidth
 	m.llmBaseURL.Width = fieldWidth
+	m.proxyUsername.Width = fieldWidth
+	m.proxyPassword.Width = fieldWidth
 	m.searchAPIKey.Width = fieldWidth
 	m.searchBaseURL.Width = fieldWidth
 }
@@ -140,14 +163,23 @@ func submitProviderSetup(m providerSetupModel) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
+		token := ""
+		if m.usesIatreonProxy() {
+			var err error
+			token, err = authenticateIatreonProxy(ctx, iatreonProxyBaseURL(), strings.TrimSpace(m.proxyUsername.Value()), m.proxyPassword.Value())
+			if err != nil {
+				return providerSubmittedMsg{err: err}
+			}
+		}
+
 		err := m.worker.UpdateProviderSetup(ctx, providerSetupInput{
 			UserID:         m.userid,
 			LLMProvider:    m.llmProvider,
-			LLMAPIKey:      strings.TrimSpace(m.llmAPIKey.Value()),
+			LLMAPIKey:      m.llmAPIKeyValue(token),
 			LLMBaseURL:     m.llmBaseURLValue(),
 			SearchProvider: m.searchProvider,
-			SearchAPIKey:   strings.TrimSpace(m.searchAPIKey.Value()),
-			SearchBaseURL:  strings.TrimSpace(m.searchBaseURL.Value()),
+			SearchAPIKey:   m.searchAPIKeyValue(token),
+			SearchBaseURL:  m.searchBaseURLValue(),
 		})
 		return providerSubmittedMsg{err: err}
 	}
@@ -222,6 +254,10 @@ func (m providerSetupModel) currentOptions() []string {
 
 func (m *providerSetupModel) currentInput() *textinput.Model {
 	switch m.step {
+	case providerStepProxyUsername:
+		return &m.proxyUsername
+	case providerStepProxyPassword:
+		return &m.proxyPassword
 	case providerStepLLMKey:
 		return &m.llmAPIKey
 	case providerStepLLMBaseURL:
@@ -236,7 +272,7 @@ func (m *providerSetupModel) currentInput() *textinput.Model {
 }
 
 func (m *providerSetupModel) focusCurrentInput() {
-	for _, input := range []*textinput.Model{&m.llmAPIKey, &m.llmBaseURL, &m.searchAPIKey, &m.searchBaseURL} {
+	for _, input := range []*textinput.Model{&m.proxyUsername, &m.proxyPassword, &m.llmAPIKey, &m.llmBaseURL, &m.searchAPIKey, &m.searchBaseURL} {
 		input.Blur()
 	}
 	if input := m.currentInput(); input != nil {
@@ -252,10 +288,28 @@ func (m providerSetupModel) advance() (providerSetupModel, tea.Cmd) {
 		m.llmProvider = llmProviders[m.cursor]
 		m.cursor = 0
 		if isIatreonProvider(m.llmProvider) {
-			m.step = providerStepSearch
-			return m, nil
+			m.step = providerStepProxyUsername
+			m.focusCurrentInput()
+			return m, textinput.Blink
 		}
 		m.step = providerStepLLMKey
+	case providerStepProxyUsername:
+		if strings.TrimSpace(m.proxyUsername.Value()) == "" {
+			m.err = fmt.Errorf("proxy username is required")
+			return m, nil
+		}
+		m.step = providerStepProxyPassword
+	case providerStepProxyPassword:
+		if len(m.proxyPassword.Value()) < 8 {
+			m.err = fmt.Errorf("proxy password must be at least 8 characters")
+			return m, nil
+		}
+		if isIatreonProvider(m.llmProvider) {
+			m.step = providerStepSearch
+			m.cursor = 0
+		} else {
+			m.step = providerStepConfirm
+		}
 	case providerStepLLMKey:
 		if strings.TrimSpace(m.llmAPIKey.Value()) == "" {
 			m.err = fmt.Errorf("API key is required for %s", m.llmProvider)
@@ -272,6 +326,11 @@ func (m providerSetupModel) advance() (providerSetupModel, tea.Cmd) {
 		m.searchProvider = searchProviders[m.cursor]
 		m.cursor = 0
 		if isIatreonProvider(m.searchProvider) {
+			if !isIatreonProvider(m.llmProvider) && !m.hasProxyCredentials() {
+				m.step = providerStepProxyUsername
+				m.focusCurrentInput()
+				return m, textinput.Blink
+			}
 			m.step = providerStepConfirm
 			return m, nil
 		}
@@ -298,13 +357,21 @@ func (m providerSetupModel) goBack() (providerSetupModel, tea.Cmd) {
 	switch m.step {
 	case providerStepLLM:
 		return m, nil
+	case providerStepProxyUsername:
+		if isIatreonProvider(m.llmProvider) {
+			m.step = providerStepLLM
+		} else {
+			m.step = providerStepSearch
+		}
+	case providerStepProxyPassword:
+		m.step = providerStepProxyUsername
 	case providerStepLLMKey:
 		m.step = providerStepLLM
 	case providerStepLLMBaseURL:
 		m.step = providerStepLLMKey
 	case providerStepSearch:
 		if isIatreonProvider(m.llmProvider) {
-			m.step = providerStepLLM
+			m.step = providerStepProxyPassword
 		} else {
 			m.step = providerStepLLMBaseURL
 		}
@@ -333,13 +400,50 @@ func defaultLLMBaseURL(provider string) string {
 
 func (m providerSetupModel) llmBaseURLValue() string {
 	if isIatreonProvider(m.llmProvider) {
-		return ""
+		return iatreonProxyBaseURL() + "/v1"
 	}
 	value := strings.TrimSpace(m.llmBaseURL.Value())
 	if value != "" {
 		return value
 	}
 	return defaultLLMBaseURL(m.llmProvider)
+}
+
+func (m providerSetupModel) searchBaseURLValue() string {
+	if isIatreonProvider(m.searchProvider) {
+		return iatreonProxyBaseURL() + "/v1/exa"
+	}
+	return strings.TrimSpace(m.searchBaseURL.Value())
+}
+
+func (m providerSetupModel) llmAPIKeyValue(proxyToken string) string {
+	if isIatreonProvider(m.llmProvider) {
+		return proxyToken
+	}
+	return strings.TrimSpace(m.llmAPIKey.Value())
+}
+
+func (m providerSetupModel) searchAPIKeyValue(proxyToken string) string {
+	if isIatreonProvider(m.searchProvider) {
+		return proxyToken
+	}
+	return strings.TrimSpace(m.searchAPIKey.Value())
+}
+
+func (m providerSetupModel) usesIatreonProxy() bool {
+	return isIatreonProvider(m.llmProvider) || isIatreonProvider(m.searchProvider)
+}
+
+func (m providerSetupModel) hasProxyCredentials() bool {
+	return strings.TrimSpace(m.proxyUsername.Value()) != "" && len(m.proxyPassword.Value()) >= 8
+}
+
+func iatreonProxyBaseURL() string {
+	value := strings.TrimSpace(os.Getenv("IATREON_PROXY_BASE_URL"))
+	if value == "" {
+		value = "https://iatreon.efecal.hackclub.app"
+	}
+	return strings.TrimRight(value, "/")
 }
 
 func (m providerSetupModel) View() string {
@@ -390,6 +494,8 @@ func (m providerSetupModel) stepTitle() string {
 		return "Step 2 of 3 - Choose your search provider"
 	case providerStepConfirm:
 		return "Step 3 of 3 - Review provider setup"
+	case providerStepProxyUsername, providerStepProxyPassword:
+		return "Iatreon AI account"
 	default:
 		return "Provider credentials"
 	}
@@ -399,6 +505,10 @@ func (m providerSetupModel) renderStep() string {
 	switch m.step {
 	case providerStepLLM:
 		return m.renderOptions(llmProviders)
+	case providerStepProxyUsername:
+		return m.renderInput("Proxy username", m.proxyUsername.View())
+	case providerStepProxyPassword:
+		return m.renderInput("Proxy password", m.proxyPassword.View())
 	case providerStepSearch:
 		return m.renderOptions(searchProviders)
 	case providerStepLLMKey:
@@ -447,7 +557,9 @@ func (m providerSetupModel) renderSummary() string {
 		llmURL = "Default"
 	}
 	searchURL := strings.TrimSpace(m.searchBaseURL.Value())
-	if searchURL == "" {
+	if isIatreonProvider(m.searchProvider) {
+		searchURL = m.searchBaseURLValue()
+	} else if searchURL == "" {
 		searchURL = "Default"
 	}
 
@@ -470,6 +582,10 @@ func (m providerSetupModel) renderPrompt() string {
 	switch m.step {
 	case providerStepLLM:
 		return hintStyle.Render("Iatreon AI uses the built-in AI and search proxy.")
+	case providerStepProxyUsername:
+		return hintStyle.Render("Enter a proxy username. New usernames are created automatically.")
+	case providerStepProxyPassword:
+		return hintStyle.Render("Enter the proxy password for this username.")
 	case providerStepLLMBaseURL, providerStepSearchBaseURL:
 		return hintStyle.Render("Leave blank to use the provider default.")
 	case providerStepConfirm:
@@ -477,4 +593,45 @@ func (m providerSetupModel) renderPrompt() string {
 	default:
 		return hintStyle.Render("Enter the requested provider detail.")
 	}
+}
+
+type proxyTokenRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type proxyTokenResponse struct {
+	AccessToken string `json:"access_token"`
+}
+
+func authenticateIatreonProxy(ctx context.Context, baseURL, username, password string) (string, error) {
+	body, err := json.Marshal(proxyTokenRequest{Username: username, Password: password})
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/auth/token", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("proxy login failed: %s", resp.Status)
+	}
+
+	var payload proxyTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", err
+	}
+	if payload.AccessToken == "" {
+		return "", fmt.Errorf("proxy login did not return a token")
+	}
+	return payload.AccessToken, nil
 }

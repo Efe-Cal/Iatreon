@@ -32,6 +32,20 @@ services:
       - downloads:/app/downloads
       - worker-profile:/app/pdf_worker/chrome_profile
 
+  hcai-proxy:
+    build:
+      context: .
+      dockerfile: hcai_proxy/Dockerfile
+    environment:
+      HCAI_API_KEY: ${HCAI_API_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      HCAI_PROXY_DB_URL: sqlite:////data/hcai_proxy.sqlite3
+    ports:
+      - "8787:8787"
+    volumes:
+      - hcai-proxy-data:/data
+    command: ["uvicorn", "hcai_proxy.main:app", "--host", "0.0.0.0", "--port", "8787", "--no-access-log"]
+
   api:
     build:
       context: .
@@ -69,4 +83,5 @@ services:
 volumes:
   downloads:
   worker-profile:
+  hcai-proxy-data:
   pgdata:
