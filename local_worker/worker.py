@@ -52,6 +52,7 @@ from services.diagnosis_service import stream_diagnosis
 from services.intake_service import stream_intake_chat
 from services.doctor_service import stream_doctor_chat_service
 from services.research_service import get_citation_text, stream_research
+from local_worker.provider_config import reset_current_user_id, set_current_user_id
 
 
 @route("worker/init", WorkerInitRequest)
@@ -138,18 +139,22 @@ async def handle_message(msg: dict) -> None:
         fn = entry["fn"]
 
         req = model.model_validate(msg.get("input", {}))
-        with contextlib.redirect_stdout(route_stdout):
-            result = await fn(req)
-            if inspect.isasyncgen(result):
-                async for event in result:
-                    emit({
-                        "id": request_id,
-                        "ok": True,
-                        "event": serialize(event),
-                        "done": False,
-                    })
-                emit({"id": request_id, "ok": True, "result": None, "done": True})
-                return
+        token = set_current_user_id(getattr(req, "user_id", None))
+        try:
+            with contextlib.redirect_stdout(route_stdout):
+                result = await fn(req)
+                if inspect.isasyncgen(result):
+                    async for event in result:
+                        emit({
+                            "id": request_id,
+                            "ok": True,
+                            "event": serialize(event),
+                            "done": False,
+                        })
+                    emit({"id": request_id, "ok": True, "result": None, "done": True})
+                    return
+        finally:
+            reset_current_user_id(token)
 
         emit({
             "id": request_id,

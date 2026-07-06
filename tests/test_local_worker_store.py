@@ -1,5 +1,6 @@
 import base64
 import uuid
+from unittest.mock import patch
 
 import pytest
 
@@ -76,6 +77,39 @@ def test_store_round_trips_worker_records(initialized_store):
     history = store.list_history(user_id)
     assert history[0]["id"] == session_id
     assert [section["type"] for section in history[0]["sections"]] == ["intake", "research", "diagnosis"]
+
+
+def test_local_provider_setup_drives_model_and_search_clients(initialized_store, monkeypatch):
+    monkeypatch.setenv("IATREON_LOCAL_WORKER", "1")
+    user_id = str(uuid.uuid4())
+    store.update_provider_setup({
+        "user_id": user_id,
+        "llm_provider": "Groq",
+        "llm_api_key": "groq-key",
+        "llm_base_url": "",
+        "search_provider": "Exa",
+        "search_api_key": "exa-key",
+        "search_base_url": "",
+    })
+
+    from agents import shared
+    from context import websearch
+    from local_worker.provider_config import reset_current_user_id, set_current_user_id
+
+    token = set_current_user_id(user_id)
+    try:
+        with patch.object(shared, "ChatOpenAI") as chat:
+            shared.get_model("intake")
+            assert chat.call_args.kwargs["api_key"] == "groq-key"
+            assert chat.call_args.kwargs["base_url"] == "https://api.groq.com/openai/v1"
+
+        with patch.object(websearch, "Exa") as exa_cls:
+            exa_cls.return_value.headers = {"x-api-key": "exa-key"}
+            websearch.make_exa_client()
+            assert exa_cls.call_args.kwargs == {"api_key": "exa-key"}
+            assert exa_cls.return_value.headers["Authorization"] == "Bearer exa-key"
+    finally:
+        reset_current_user_id(token)
 
 
 def test_store_reopens_with_same_key(initialized_store):

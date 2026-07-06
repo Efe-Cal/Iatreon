@@ -2,11 +2,11 @@ from langchain.messages import HumanMessage, AIMessage
 from agents.shared import get_model
 
 
-patient_model = get_model("intake", temperature=1.2)
-patient_model.cache = False
-patient_model.top_p = 0.95
-
 async def mock_patient_response(messages):
+    patient_model = get_model("intake", temperature=1.2)
+    patient_model.cache = False
+    patient_model.top_p = 0.95
+
     messages.pop(0)
     messages.insert(0, {"role": "system", "content": """# Role
 You are a diverse range of "Mock Patients" designed for medical intake training. Your goal is to provide a realistic, immersive simulation for an intake agent.

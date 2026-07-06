@@ -1,13 +1,12 @@
 from dotenv import load_dotenv
-import os
 
-from exa_py import Exa
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 
 from context.models import BookSection
 
 from ..errors import log_external_failure
+from ..websearch import make_exa_client
 from .ncbi_rate_limit import ncbi_get
 
 load_dotenv()
@@ -30,8 +29,7 @@ USER_AGENTS = [
 
 class BookshelfClient:
     def __init__(self):
-        self.exa = Exa(api_key=os.getenv("EXA_API_KEY", os.getenv("AI_API_KEY")), base_url=os.getenv("EXA_BASE_URL", "https://ai.hackclub.com/proxy/v1/exa"))
-        self.exa.headers["Authorization"] = f"Bearer {self.exa.headers['x-api-key']}"
+        self.exa = make_exa_client()
 
     def get_ncbi_books(self, query: str, num_results: int = 5) -> list[dict]:
         try:
