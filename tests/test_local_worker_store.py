@@ -38,6 +38,19 @@ def test_store_round_trips_worker_records(initialized_store):
     assert store.get_profile(user_id) == profile
     assert "penicillin" in store.profile_markdown(user_id)
 
+    provider_setup = {
+        "user_id": user_id,
+        "llm_provider": "OpenRouter",
+        "llm_api_key": "sk-test",
+        "llm_base_url": "https://openrouter.ai/api/v1",
+        "search_provider": "Exa",
+        "search_api_key": "exa-test",
+        "search_base_url": "",
+    }
+    store.update_provider_setup(provider_setup)
+    assert store.has_provider_setup(user_id)
+    assert store.get_provider_setup(user_id) == provider_setup
+
     intake_id = str(uuid.uuid4())
     store.link_intake_session(session_id, intake_id)
     store.save_intake(user_id, intake_id, session_id, profile, "transcript")

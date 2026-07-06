@@ -60,6 +60,24 @@ type profileStatusResult struct {
 	HasProfile bool `json:"has_profile"`
 }
 
+type providerStatusInput struct {
+	UserID string `json:"user_id"`
+}
+
+type providerStatusResult struct {
+	HasProviderSetup bool `json:"has_provider_setup"`
+}
+
+type providerSetupInput struct {
+	UserID         string `json:"user_id"`
+	LLMProvider    string `json:"llm_provider"`
+	LLMAPIKey      string `json:"llm_api_key"`
+	LLMBaseURL     string `json:"llm_base_url"`
+	SearchProvider string `json:"search_provider"`
+	SearchAPIKey   string `json:"search_api_key"`
+	SearchBaseURL  string `json:"search_base_url"`
+}
+
 func workerCommand() (*exec.Cmd, error) {
 	if os.Getenv("APP_ENV") == "dev" {
 		pythonPath := filepath.Join("..", "venv", "bin", "python")
@@ -289,6 +307,24 @@ func (w *Worker) HasProfile(ctx context.Context, userid string) (bool, error) {
 		return false, err
 	}
 	return result.HasProfile, nil
+}
+
+func (w *Worker) HasProviderSetup(ctx context.Context, userid string) (bool, error) {
+	resp, err := w.Call(ctx, "provider/status", providerStatusInput{UserID: userid})
+	if err != nil {
+		return false, err
+	}
+
+	var result providerStatusResult
+	if err := decodeWorkerResult(resp, &result); err != nil {
+		return false, err
+	}
+	return result.HasProviderSetup, nil
+}
+
+func (w *Worker) UpdateProviderSetup(ctx context.Context, input providerSetupInput) error {
+	_, err := w.Call(ctx, "provider/update", input)
+	return err
 }
 
 func (w *Worker) removePending(id string) {

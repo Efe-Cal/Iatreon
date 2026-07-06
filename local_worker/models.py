@@ -15,6 +15,10 @@ class UserProfileStatusRequest(BaseModel):
     user_id: UUID
 
 
+class ProviderSetupStatusRequest(BaseModel):
+    user_id: UUID
+
+
 class DiagnosisRequest(BaseModel):
     user_id: UUID
     intake_id: UUID
@@ -55,3 +59,13 @@ class UserProfileUpdateRequest(BaseModel):
     family_history: list[str] = Field(default_factory=list)
     social: dict[str, str] = Field(default_factory=dict)
     medical_summary: str | None = None
+
+
+class ProviderSetupUpdateRequest(BaseModel):
+    user_id: UUID
+    llm_provider: str
+    llm_api_key: str = ""
+    llm_base_url: str = ""
+    search_provider: str
+    search_api_key: str = ""
+    search_base_url: str = ""

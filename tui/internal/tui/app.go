@@ -14,6 +14,7 @@ type screen int
 
 const (
 	dashboardScreen screen = iota
+	providerSetupScreen
 	setupScreen
 	chatScreen
 	reportScreen
@@ -21,17 +22,19 @@ const (
 )
 
 type model struct {
-	active     screen
-	hasProfile bool
-	dashboard  dashboardModel
-	setup      setupModel
-	chat       chatModel
-	report     reportModel
-	history    historyModel
-	width      int
-	height     int
-	userid     string
-	worker     *Worker
+	active           screen
+	hasProfile       bool
+	hasProviderSetup bool
+	dashboard        dashboardModel
+	providerSetup    providerSetupModel
+	setup            setupModel
+	chat             chatModel
+	report           reportModel
+	history          historyModel
+	width            int
+	height           int
+	userid           string
+	worker           *Worker
 }
 
 var (
@@ -45,14 +48,14 @@ func NewModel(userid string, hasProfile bool) model {
 	if err != nil {
 		log.Printf("python worker unavailable: %v", err)
 	}
-	return newModel(userid, hasProfile, worker)
+	return newModel(userid, hasProfile, hasProfile, worker)
 }
 
 func NewLocalModel(userid string) model {
 	worker, err := StartPythonWorker()
 	if err != nil {
 		log.Printf("python worker unavailable: %v", err)
-		return newModel(userid, false, nil)
+		return newModel(userid, false, false, nil)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -62,33 +65,45 @@ func NewLocalModel(userid string) model {
 	if err != nil {
 		log.Printf("could not load local profile status: %v", err)
 	}
-	return newModel(userid, hasProfile, worker)
+	hasProviderSetup, err := worker.HasProviderSetup(ctx, userid)
+	if err != nil {
+		log.Printf("could not load local provider status: %v", err)
+	}
+	return newModel(userid, hasProfile, hasProviderSetup, worker)
 }
 
-func newModel(userid string, hasProfile bool, worker *Worker) model {
+func newModel(userid string, hasProfile bool, hasProviderSetup bool, worker *Worker) model {
 	dash := newDashboardModel(userid)
+	providerSetup := newProviderSetupModel(userid, worker)
 	setup := newSetupModel(userid, worker, hasProfile)
 
 	var active screen
-	if hasProfile {
-		active = dashboardScreen
-	} else {
+	if !hasProviderSetup {
+		active = providerSetupScreen
+	} else if !hasProfile {
 		active = setupScreen
+	} else {
+		active = dashboardScreen
 	}
 
 	m := model{
-		active:     active,
-		hasProfile: hasProfile,
-		dashboard:  dash,
-		setup:      setup,
-		userid:     userid,
-		worker:     worker,
+		active:           active,
+		hasProfile:       hasProfile,
+		hasProviderSetup: hasProviderSetup,
+		dashboard:        dash,
+		providerSetup:    providerSetup,
+		setup:            setup,
+		userid:           userid,
+		worker:           worker,
 	}
 
 	return m
 }
 
 func (m model) Init() tea.Cmd {
+	if m.active == providerSetupScreen {
+		return m.providerSetup.Init()
+	}
 	if m.active == setupScreen {
 		return m.setup.Init()
 	}
@@ -100,6 +115,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = wsm.Width
 		m.height = wsm.Height
 		m.dashboard.SetSize(wsm.Width, m.bodyHeightFor(dashboardScreen))
+		m.providerSetup.SetSize(wsm.Width, m.bodyHeightFor(providerSetupScreen))
 		m.setup.SetSize(wsm.Width, m.bodyHeightFor(setupScreen))
 		m.chat.SetSize(wsm.Width, m.bodyHeightFor(chatScreen))
 		m.report.SetSize(wsm.Width, m.bodyHeightFor(reportScreen))
@@ -114,6 +130,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.active {
 	case dashboardScreen:
 		return m.updateDashboard(msg)
+	case providerSetupScreen:
+		return m.updateProviderSetup(msg)
 	case setupScreen:
 		return m.updateSetup(msg)
 	case chatScreen:
@@ -135,6 +153,11 @@ func (m *model) initChat(cm chatModel) chatModel {
 func (m *model) initDashboard(dm dashboardModel) dashboardModel {
 	dm.SetSize(m.width, m.bodyHeightFor(dashboardScreen))
 	return dm
+}
+
+func (m *model) initProviderSetup(pm providerSetupModel) providerSetupModel {
+	pm.SetSize(m.width, m.bodyHeightFor(providerSetupScreen))
+	return pm
 }
 
 func (m *model) initSetup(sm setupModel) setupModel {
@@ -172,9 +195,24 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = historyScreen
 		return m, m.history.Init()
-	case dashboardActionSetup:
-		m.setup = m.initSetup(newSetupModel(m.userid, m.worker, true))
-		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
+	}
+
+	return m, cmd
+}
+
+func (m model) updateProviderSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.providerSetup.Update(msg)
+	m.providerSetup = updated
+
+	if m.providerSetup.submitted {
+		m.hasProviderSetup = true
+		m.providerSetup = m.initProviderSetup(newProviderSetupModel(m.userid, m.worker))
+		if m.hasProfile {
+			m.dashboard = m.initDashboard(newDashboardModel(m.userid))
+			m.active = dashboardScreen
+			return m, nil
+		}
+		m.setup = m.initSetup(newSetupModel(m.userid, m.worker, false))
 		m.active = setupScreen
 		return m, m.setup.Init()
 	}
@@ -272,6 +310,8 @@ func (m model) View() string {
 	switch m.active {
 	case dashboardScreen:
 		body = m.dashboard.View()
+	case providerSetupScreen:
+		body = m.providerSetup.View()
 	case setupScreen:
 		body = m.setup.View()
 	case chatScreen:
@@ -297,6 +337,8 @@ func (m model) chrome() (string, []string) {
 
 func (m model) chromeFor(active screen) (string, []string) {
 	switch active {
+	case providerSetupScreen:
+		return "Iatreon - Provider Setup", m.providerSetup.footer()
 	case setupScreen:
 		return "Iatreon - Profile Setup", m.setup.footer()
 	case chatScreen:

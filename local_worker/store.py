@@ -34,6 +34,13 @@ class Profile(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
 
+class ProviderSetup(Base):
+    __tablename__ = "provider_setup"
+
+    user_id: Mapped[str] = mapped_column(String, primary_key=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
@@ -165,6 +172,28 @@ def get_profile(user_id: str) -> dict[str, Any]:
 def has_profile(user_id: str) -> bool:
     with _lock, _session() as db:
         return db.get(Profile, str(user_id)) is not None
+
+
+def update_provider_setup(payload: dict[str, Any]) -> None:
+    with _lock, _session() as db:
+        user_id = str(payload["user_id"])
+        row = db.get(ProviderSetup, user_id)
+        if row is None:
+            db.add(ProviderSetup(user_id=user_id, payload=payload))
+        else:
+            row.payload = payload
+        db.commit()
+
+
+def get_provider_setup(user_id: str) -> dict[str, Any]:
+    with _lock, _session() as db:
+        row = db.get(ProviderSetup, str(user_id))
+        return row.payload if row else {}
+
+
+def has_provider_setup(user_id: str) -> bool:
+    with _lock, _session() as db:
+        return db.get(ProviderSetup, str(user_id)) is not None
 
 
 def profile_markdown(user_id: str) -> str:

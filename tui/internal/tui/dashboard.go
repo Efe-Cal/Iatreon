@@ -23,7 +23,6 @@ const (
 	dashboardActionStartIntake
 	dashboardActionStartDoctor
 	dashboardActionHistory
-	dashboardActionSetup
 )
 
 type dashboardCard struct {
@@ -80,9 +79,6 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
-		// case "esc":
-		// 	m.action = dashboardActionSetup
-		// 	return m, nil
 		case "tab", "right", "down":
 			m.cursor = (m.cursor + 1) % len(dashboardCards)
 			m.placeholderMsg = ""

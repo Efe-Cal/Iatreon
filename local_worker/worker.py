@@ -39,6 +39,8 @@ from models import (
     CitationTextRequest,
     DiagnosisRequest,
     HistoryRequest,
+    ProviderSetupStatusRequest,
+    ProviderSetupUpdateRequest,
     ResearchRequest,
     SessionCreateRequest,
     UserProfileStatusRequest,
@@ -72,6 +74,17 @@ async def update_profile(req: UserProfileUpdateRequest):
 @route("profile/status", UserProfileStatusRequest)
 async def profile_status(req: UserProfileStatusRequest):
     return {"has_profile": store.has_profile(str(req.user_id))}
+
+
+@route("provider/update", ProviderSetupUpdateRequest)
+async def update_provider_setup(req: ProviderSetupUpdateRequest):
+    store.update_provider_setup(req.model_dump(mode="json"))
+    return {"status": "success"}
+
+
+@route("provider/status", ProviderSetupStatusRequest)
+async def provider_status(req: ProviderSetupStatusRequest):
+    return {"has_provider_setup": store.has_provider_setup(str(req.user_id))}
 
 
 @route("history/list", HistoryRequest)
