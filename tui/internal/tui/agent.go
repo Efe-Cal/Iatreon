@@ -1,11 +1,8 @@
 package tui
 
 import (
-	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strconv"
 )
 
@@ -51,7 +48,9 @@ type AgentHandler interface {
 
 	AgentLabel() string
 
-	BuildRequest(conversationID, userid, message, sessionID string, sessionKey []byte) (*http.Request, error)
+	Action() string
+
+	BuildInput(conversationID, userid, message, sessionID string) any
 
 	HandleEvent(ev sseEvent) chunkMsg
 }
@@ -87,21 +86,6 @@ func newAgentHandler(kind AgentKind) AgentHandler {
 	}
 }
 
-func buildAgentRequest(endpoint, userid string, sessionKey []byte, payload any) (*http.Request, error) {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(http.MethodPost, apiBaseURL+endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-User-ID", userid)
-	addSessionKeyHeader(req, sessionKey)
-	return req, nil
-}
-
 func handleCommonAgentEvent(ev sseEvent) (chunkMsg, bool) {
 	switch ev.Type {
 	case "session_started":
@@ -132,18 +116,20 @@ func (*intakeHandler) Header() string     { return "Iatreon - Intake" }
 func (*intakeHandler) Footer() []string   { return []string{"Enter Send", "Esc Logout", "Ctrl+C Quit"} }
 func (*intakeHandler) Welcome() string    { return "Welcome to Iatreon. Let's start by taking an intake." }
 func (*intakeHandler) AgentLabel() string { return "Iatreon:" }
+func (*intakeHandler) Action() string     { return "chat/intake" }
 
-func (*intakeHandler) BuildRequest(conversationID, userid, message, sessionID string, sessionKey []byte) (*http.Request, error) {
-	payload := struct {
+func (*intakeHandler) BuildInput(conversationID, userid, message, sessionID string) any {
+	return struct {
+		UserID         string `json:"user_id"`
 		ConversationID string `json:"conversation_id"`
 		Message        string `json:"message"`
 		SessionID      string `json:"session_id"`
 	}{
+		UserID:         userid,
 		ConversationID: conversationID,
 		Message:        message,
 		SessionID:      sessionID,
 	}
-	return buildAgentRequest("/chat/intake", userid, sessionKey, payload)
 }
 
 func (*intakeHandler) HandleEvent(ev sseEvent) chunkMsg {
@@ -173,6 +159,7 @@ func (*researchHandler) Welcome() string {
 	return "Tell me what you'd like to research. I'll search the literature and the web."
 }
 func (*researchHandler) AgentLabel() string { return "Researcher:" }
+func (*researchHandler) Action() string     { return "research" }
 
 type citation struct {
 	Title          string `json:"title"`
@@ -211,16 +198,18 @@ func parseCitations(raw json.RawMessage) []citation {
 	return nil
 }
 
-func (*researchHandler) BuildRequest(conversationID, userid, message, sessionID string, sessionKey []byte) (*http.Request, error) {
-	payload := struct {
-		IntakeID  string `json:"intake_id"`
-		SessionID string `json:"session_id"`
+func (*researchHandler) BuildInput(conversationID, userid, message, sessionID string) any {
+	return struct {
+		UserID         string `json:"user_id"`
+		IntakeID       string `json:"intake_id"`
+		SessionID      string `json:"session_id"`
+		ResearchEffort string `json:"research_effort"`
 	}{
-		IntakeID:  conversationID,
-		SessionID: sessionID,
+		UserID:         userid,
+		IntakeID:       conversationID,
+		SessionID:      sessionID,
+		ResearchEffort: "standard",
 	}
-
-	return buildAgentRequest("/research", userid, sessionKey, payload)
 }
 
 func (*researchHandler) HandleEvent(ev sseEvent) chunkMsg {
@@ -273,18 +262,18 @@ func (*diagnosisHandler) Welcome() string {
 	return "Describe your symptoms and I'll work through a differential diagnosis."
 }
 func (*diagnosisHandler) AgentLabel() string { return "Diagnostician:" }
+func (*diagnosisHandler) Action() string     { return "diagnose" }
 
-func (*diagnosisHandler) BuildRequest(conversationID, userid, message, sessionID string, sessionKey []byte) (*http.Request, error) {
-
-	payload := struct {
+func (*diagnosisHandler) BuildInput(conversationID, userid, message, sessionID string) any {
+	return struct {
+		UserID    string `json:"user_id"`
 		IntakeID  string `json:"intake_id"`
 		SessionID string `json:"session_id"`
 	}{
+		UserID:    userid,
 		IntakeID:  conversationID,
 		SessionID: sessionID,
 	}
-
-	return buildAgentRequest("/diagnose", userid, sessionKey, payload)
 }
 
 func formatDiagnosisList(title string, items []string) string {
@@ -396,19 +385,20 @@ func (*doctorHandler) Welcome() string {
 	return "You are now connected to a doctor. Please describe your symptoms."
 }
 func (*doctorHandler) AgentLabel() string { return "Doctor:" }
+func (*doctorHandler) Action() string     { return "chat/doctor" }
 
-func (*doctorHandler) BuildRequest(conversationID, userid, message, sessionID string, sessionKey []byte) (*http.Request, error) {
-	payload := struct {
+func (*doctorHandler) BuildInput(conversationID, userid, message, sessionID string) any {
+	return struct {
+		UserID         string `json:"user_id"`
 		ConversationID string `json:"conversation_id"`
 		Message        string `json:"message"`
 		SessionID      string `json:"session_id"`
 	}{
+		UserID:         userid,
 		ConversationID: conversationID,
 		Message:        message,
 		SessionID:      sessionID,
 	}
-
-	return buildAgentRequest("/chat/doctor", userid, sessionKey, payload)
 }
 
 func (*doctorHandler) HandleEvent(ev sseEvent) chunkMsg {
@@ -416,16 +406,4 @@ func (*doctorHandler) HandleEvent(ev sseEvent) chunkMsg {
 		return msg
 	}
 	return chunkMsg{}
-}
-
-func addSessionKeyHeader(req *http.Request, sessionKey []byte) {
-	if len(sessionKey) == 0 {
-		return
-	}
-	req.Header.Set("X-Session-Key", base64.StdEncoding.EncodeToString(sessionKey))
-}
-
-func sharedHTTPDo(req *http.Request) (*http.Response, error) {
-	client := &http.Client{}
-	return client.Do(req)
 }

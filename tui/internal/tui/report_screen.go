@@ -1,11 +1,12 @@
 package tui
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -18,7 +19,7 @@ type reportModel struct {
 	citations         []citation
 	researchSessionID string
 	userid            string
-	sessionKey        *SessionKey
+	worker            *Worker
 
 	reportViewport   viewport.Model
 	citationViewport viewport.Model
@@ -39,7 +40,7 @@ type citationTextMsg struct {
 	err         error
 }
 
-func newReportModel(report string, citations []citation, researchSessionID, userid string, sessionKey *SessionKey) reportModel {
+func newReportModel(report string, citations []citation, researchSessionID, userid string, worker *Worker) reportModel {
 	sort.SliceStable(citations, func(i, j int) bool {
 		return citations[i].CitationNumber < citations[j].CitationNumber
 	})
@@ -53,7 +54,7 @@ func newReportModel(report string, citations []citation, researchSessionID, user
 		citations:         citations,
 		researchSessionID: researchSessionID,
 		userid:            userid,
-		sessionKey:        sessionKey,
+		worker:            worker,
 		reportViewport:    viewport.New(0, 0),
 		citationViewport:  viewport.New(0, 0),
 		citationTexts:     map[int]string{},
@@ -245,7 +246,7 @@ func (m reportModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *reportModel) loadCitationText() tea.Cmd {
-	if len(m.citations) == 0 || m.researchSessionID == "" || m.sessionKey == nil {
+	if len(m.citations) == 0 || m.researchSessionID == "" || m.worker == nil {
 		return nil
 	}
 	num := m.citations[m.current].CitationNumber
@@ -257,25 +258,20 @@ func (m *reportModel) loadCitationText() tea.Cmd {
 	m.refresh()
 
 	return func() tea.Msg {
-		req, err := buildAgentRequest("/research/citation", m.userid, m.sessionKey.Get(), struct {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		resp, err := m.worker.Call(ctx, "research/citation", struct {
+			UserID            string `json:"user_id"`
 			ResearchSessionID string `json:"research_session_id"`
 			CitationNum       int    `json:"citation_num"`
-		}{m.researchSessionID, num})
+		}{m.userid, m.researchSessionID, num})
 		if err != nil {
 			return citationTextMsg{citationNum: num, err: err}
-		}
-		resp, err := sharedHTTPDo(req)
-		if err != nil {
-			return citationTextMsg{citationNum: num, err: err}
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return citationTextMsg{citationNum: num, err: fmt.Errorf("citation text unavailable")}
 		}
 		var body struct {
 			Text string `json:"text"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		if err := decodeWorkerResult(resp, &body); err != nil {
 			return citationTextMsg{citationNum: num, err: err}
 		}
 		return citationTextMsg{citationNum: num, text: body.Text}

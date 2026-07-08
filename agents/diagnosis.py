@@ -1,11 +1,10 @@
 import logging
+import os
 from dotenv import load_dotenv
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from langchain_core.tools import StructuredTool
 
-from db.db import read_only_session, unit_of_work
-from db.repositories import ArticleRepo, BookSectionRepo, ResearchRepo, WebSearchResultRepo
 from agents.research import ResearchAgent
 from agents.shared import create_agent_by_type, get_user_info
 from db.schemas import DiagnosisReport, IntakeSessionData, ResearchSessionData
@@ -18,7 +17,7 @@ class DiagnosisAgent():
         self.research_session = research_session
         self.chat_session_id = chat_session_id
         self.user_id = intake_session.user_id
-        self.research_repo = ResearchRepo(str(self.user_id))
+        self.research_repo = None
         
         self.get_full_source_tool = StructuredTool.from_function(
             func=self._get_full_source,
@@ -49,6 +48,32 @@ class DiagnosisAgent():
         
 
     async def _request_research(self, research_question: str) -> str:
+        if os.getenv("IATREON_LOCAL_WORKER") == "1":
+            from local_worker import store
+            research_session_id = uuid4()
+            research_report = ""
+            citations = {}
+            research_agent = ResearchAgent(None, research_session_id, effort="fast")
+            async for research_chunk in research_agent.run(self.intake_session, research_question=research_question):
+                if isinstance(research_chunk, dict) and research_chunk.get("type") == "error":
+                    return research_chunk.get("content") or "Research failed."
+                if isinstance(research_chunk, tuple) and len(research_chunk) == 2:
+                    research_report, citations = research_chunk
+            store.save_research(
+                str(self.user_id),
+                str(research_session_id),
+                str(self.chat_session_id) if self.chat_session_id else None,
+                "fast",
+                research_report,
+                citations,
+                triggered_by="diagnosis",
+            )
+            return research_report or "No research report was produced."
+
+        from db.db import unit_of_work
+        from db.repositories import ResearchRepo
+
+        self.research_repo = ResearchRepo(str(self.user_id))
         async with unit_of_work() as db:
             research_session = await self.research_repo.create_research_session(
                 db,
@@ -82,6 +107,15 @@ class DiagnosisAgent():
     async def _get_full_source(self, citation_id: int):
         if not self.research_session:
             return f"No source found for citation ID {citation_id}"
+
+        if os.getenv("IATREON_LOCAL_WORKER") == "1":
+            source_info = self.research_session.citations.get(citation_id) or self.research_session.citations.get(str(citation_id))
+            if source_info and source_info.get("text"):
+                return source_info["text"]
+            return f"No content found for source with citation ID {citation_id}"
+
+        from db.db import read_only_session
+        from db.repositories import ArticleRepo, BookSectionRepo, WebSearchResultRepo
 
         async with read_only_session() as db:
             source_info = self.research_session.citations.get(citation_id) or self.research_session.citations.get(str(citation_id))

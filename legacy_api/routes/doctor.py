@@ -3,8 +3,8 @@
 from fastapi import APIRouter, Request
 from fastapi.sse import EventSourceResponse
 
-from api.shared import ChatRequest, clear_encryption_context, get_user_id_or_400, require_encryption_context
-from api.services.doctor_service import stream_doctor_chat_service
+from legacy_api.shared import ChatRequest, clear_encryption_context, get_user_id_or_400, require_encryption_context
+from legacy_api.services.doctor_service import stream_doctor_chat_service
 
 router = APIRouter()
 

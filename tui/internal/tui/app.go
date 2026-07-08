@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"context"
+	"log"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -11,6 +14,7 @@ type screen int
 
 const (
 	dashboardScreen screen = iota
+	providerSetupScreen
 	setupScreen
 	chatScreen
 	reportScreen
@@ -18,60 +22,92 @@ const (
 )
 
 type model struct {
-	active     screen
-	hasProfile bool
-	dashboard  dashboardModel
-	setup      setupModel
-	chat       chatModel
-	report     reportModel
-	history    historyModel
-	width      int
-	height     int
-	userid     string
-	sessionKey *SessionKey
+	active           screen
+	hasProfile       bool
+	hasProviderSetup bool
+	dashboard        dashboardModel
+	providerSetup    providerSetupModel
+	setup            setupModel
+	chat             chatModel
+	report           reportModel
+	history          historyModel
+	width            int
+	height           int
+	userid           string
+	worker           *Worker
 }
 
 var (
-	dashboardFooter = []string{"↑/↓/←/→ Navigate", "Enter Select", "Esc Setup", "Ctrl+C Quit"}
+	dashboardFooter = []string{"↑/↓/←/→ Navigate", "Enter Select", "Ctrl+C Quit"}
 	setupFooter     = []string{"Enter Continue", "Esc Back", "Ctrl+C Quit"}
 )
 
-func NewModel(userid string, hasProfile bool, sessionKey ...*SessionKey) model {
-	var key *SessionKey
-	if len(sessionKey) > 0 {
-		key = sessionKey[0]
+func NewModel(userid string, hasProfile bool) model {
+
+	worker, err := StartPythonWorker()
+	if err != nil {
+		log.Printf("python worker unavailable: %v", err)
 	}
+	return newModel(userid, hasProfile, hasProfile, worker)
+}
+
+func NewLocalModel(userid string) model {
+	worker, err := StartPythonWorker()
+	if err != nil {
+		log.Printf("python worker unavailable: %v", err)
+		return newModel(userid, false, false, nil)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	hasProfile, err := worker.HasProfile(ctx, userid)
+	if err != nil {
+		log.Printf("could not load local profile status: %v", err)
+	}
+	hasProviderSetup, err := worker.HasProviderSetup(ctx, userid)
+	if err != nil {
+		log.Printf("could not load local provider status: %v", err)
+	}
+	return newModel(userid, hasProfile, hasProviderSetup, worker)
+}
+
+func newModel(userid string, hasProfile bool, hasProviderSetup bool, worker *Worker) model {
 	dash := newDashboardModel(userid)
-	setup := newSetupModel(userid, key, hasProfile)
+	providerSetup := newProviderSetupModel(userid, worker)
+	setup := newSetupModel(userid, worker, hasProfile)
 
 	var active screen
-	if hasProfile {
-		active = dashboardScreen
-	} else {
+	if !hasProviderSetup {
+		active = providerSetupScreen
+	} else if !hasProfile {
 		active = setupScreen
+	} else {
+		active = dashboardScreen
 	}
 
 	m := model{
-		active:     active,
-		hasProfile: hasProfile,
-		dashboard:  dash,
-		setup:      setup,
-		userid:     userid,
-		sessionKey: key,
+		active:           active,
+		hasProfile:       hasProfile,
+		hasProviderSetup: hasProviderSetup,
+		dashboard:        dash,
+		providerSetup:    providerSetup,
+		setup:            setup,
+		userid:           userid,
+		worker:           worker,
 	}
 
 	return m
 }
 
 func (m model) Init() tea.Cmd {
+	if m.active == providerSetupScreen {
+		return m.providerSetup.Init()
+	}
 	if m.active == setupScreen {
 		return m.setup.Init()
 	}
 	return nil
-}
-
-func (m *model) wipeSessionKey() {
-	m.sessionKey.Wipe()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -79,6 +115,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = wsm.Width
 		m.height = wsm.Height
 		m.dashboard.SetSize(wsm.Width, m.bodyHeightFor(dashboardScreen))
+		m.providerSetup.SetSize(wsm.Width, m.bodyHeightFor(providerSetupScreen))
 		m.setup.SetSize(wsm.Width, m.bodyHeightFor(setupScreen))
 		m.chat.SetSize(wsm.Width, m.bodyHeightFor(chatScreen))
 		m.report.SetSize(wsm.Width, m.bodyHeightFor(reportScreen))
@@ -87,13 +124,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "ctrl+c" {
-		m.wipeSessionKey()
 		return m, tea.Quit
 	}
 
 	switch m.active {
 	case dashboardScreen:
 		return m.updateDashboard(msg)
+	case providerSetupScreen:
+		return m.updateProviderSetup(msg)
 	case setupScreen:
 		return m.updateSetup(msg)
 	case chatScreen:
@@ -117,6 +155,11 @@ func (m *model) initDashboard(dm dashboardModel) dashboardModel {
 	return dm
 }
 
+func (m *model) initProviderSetup(pm providerSetupModel) providerSetupModel {
+	pm.SetSize(m.width, m.bodyHeightFor(providerSetupScreen))
+	return pm
+}
+
 func (m *model) initSetup(sm setupModel) setupModel {
 	sm.SetSize(m.width, m.bodyHeightFor(setupScreen))
 	return sm
@@ -138,23 +181,38 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch m.dashboard.action {
 	case dashboardActionStartIntake:
-		m.chat = m.initChat(newChatModelForAgent(AgentIntake, m.userid, "", m.sessionKey))
+		m.chat = m.initChat(newChatModelForAgent(AgentIntake, m.userid, "", m.worker))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = chatScreen
 		return m, m.chat.Init()
 	case dashboardActionStartDoctor:
-		m.chat = m.initChat(newChatModelForAgent(AgentDoctor, m.userid, "", m.sessionKey))
+		m.chat = m.initChat(newChatModelForAgent(AgentDoctor, m.userid, "", m.worker))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = chatScreen
 		return m, m.chat.Init()
 	case dashboardActionHistory:
-		m.history = m.initHistory(newHistoryModel(m.userid, m.sessionKey))
+		m.history = m.initHistory(newHistoryModel(m.userid, m.worker))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = historyScreen
 		return m, m.history.Init()
-	case dashboardActionSetup:
-		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey, true))
-		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
+	}
+
+	return m, cmd
+}
+
+func (m model) updateProviderSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.providerSetup.Update(msg)
+	m.providerSetup = updated
+
+	if m.providerSetup.submitted {
+		m.hasProviderSetup = true
+		m.providerSetup = m.initProviderSetup(newProviderSetupModel(m.userid, m.worker))
+		if m.hasProfile {
+			m.dashboard = m.initDashboard(newDashboardModel(m.userid))
+			m.active = dashboardScreen
+			return m, nil
+		}
+		m.setup = m.initSetup(newSetupModel(m.userid, m.worker, false))
 		m.active = setupScreen
 		return m, m.setup.Init()
 	}
@@ -167,7 +225,7 @@ func (m model) updateSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.setup = updated
 
 	if m.setup.cancelled {
-		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey, m.hasProfile))
+		m.setup = m.initSetup(newSetupModel(m.userid, m.worker, m.hasProfile))
 		if m.hasProfile {
 			m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 			m.active = dashboardScreen
@@ -178,7 +236,7 @@ func (m model) updateSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.setup.submitted {
 		m.hasProfile = true
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
-		m.setup = m.initSetup(newSetupModel(m.userid, m.sessionKey, true))
+		m.setup = m.initSetup(newSetupModel(m.userid, m.worker, true))
 		m.active = dashboardScreen
 		return m, nil
 	}
@@ -196,13 +254,13 @@ func (m model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.chat.agent != nil {
 			kind = m.chat.agent.Kind()
 		}
-		m.chat = m.initChat(newChatModelForAgent(kind, m.userid, "", m.sessionKey))
+		m.chat = m.initChat(newChatModelForAgent(kind, m.userid, "", m.worker))
 		m.active = dashboardScreen
 		return m, nil
 	}
 
 	if m.chat.reportReady {
-		m.report = m.initReport(newReportModel(m.chat.report, m.chat.citations, m.chat.researchSessionID, m.userid, m.sessionKey))
+		m.report = m.initReport(newReportModel(m.chat.report, m.chat.citations, m.chat.researchSessionID, m.userid, m.worker))
 		m.chat.reportReady = false
 		m.active = reportScreen
 		return m, m.report.Init()
@@ -221,7 +279,7 @@ func (m model) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat.agent = newAgentHandler(AgentDiagnosis)
 		m.chat.invokeAgentWithEnter = true
 		m.chat.UpdateFooter("Enter Start Diagnosis agent", 0)
-		m.report = m.initReport(newReportModel("", nil, "", m.userid, m.sessionKey))
+		m.report = m.initReport(newReportModel("", nil, "", m.userid, m.worker))
 		m.active = chatScreen
 		return m, nil
 	}
@@ -234,7 +292,7 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.history = updated
 
 	if m.history.close {
-		m.history = m.initHistory(newHistoryModel(m.userid, m.sessionKey))
+		m.history = m.initHistory(newHistoryModel(m.userid, m.worker))
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = dashboardScreen
 		return m, nil
@@ -252,6 +310,8 @@ func (m model) View() string {
 	switch m.active {
 	case dashboardScreen:
 		body = m.dashboard.View()
+	case providerSetupScreen:
+		body = m.providerSetup.View()
 	case setupScreen:
 		body = m.setup.View()
 	case chatScreen:
@@ -277,6 +337,8 @@ func (m model) chrome() (string, []string) {
 
 func (m model) chromeFor(active screen) (string, []string) {
 	switch active {
+	case providerSetupScreen:
+		return "Iatreon - Provider Setup", m.providerSetup.footer()
 	case setupScreen:
 		return "Iatreon - Profile Setup", m.setup.footer()
 	case chatScreen:

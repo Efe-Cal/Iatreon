@@ -22,7 +22,7 @@ async def collect(source):
 
 class ApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_app_imports_with_expected_routes(self):
-        from api.main import app
+        from legacy_api.main import app
 
         paths = set(app.openapi()["paths"])
         self.assertIn("/chat/intake", paths)
@@ -34,7 +34,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/health", paths)
 
     async def test_shared_header_validation(self):
-        from api.shared import get_user_id_or_400, require_encryption_context
+        from legacy_api.shared import get_user_id_or_400, require_encryption_context
 
         with self.assertRaises(HTTPException) as missing_user:
             get_user_id_or_400(FakeRequest())
@@ -49,13 +49,13 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bad_key.exception.status_code, 400)
 
     async def test_user_ssh_key_validation_rejects_junk(self):
-        from api.routes.user import _validate_ssh_public_key
+        from legacy_api.routes.user import _validate_ssh_public_key
 
         with self.assertRaises(ValueError):
             _validate_ssh_public_key("not-a-key")
 
     async def test_create_session_uses_repo_and_clears_session_key(self):
-        from api.routes import session as session_route
+        from legacy_api.routes import session as session_route
         from db.crypto import require_session_kek
 
         user_id = uuid.uuid4()
@@ -86,7 +86,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             require_session_kek()
 
     async def test_history_route_delegates_and_clears_session_key(self):
-        from api.routes import history as history_route
+        from legacy_api.routes import history as history_route
         from db.crypto import require_session_kek
 
         user_id = uuid.uuid4()
@@ -116,8 +116,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             require_session_kek()
 
     async def test_intake_stream_requires_user_header(self):
-        from api.routes.intake import stream_intake_chat
-        from api.shared import ChatRequest
+        from legacy_api.routes.intake import stream_intake_chat
+        from legacy_api.shared import ChatRequest
 
         with self.assertRaises(HTTPException) as exc:
             await collect(
@@ -129,8 +129,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(exc.exception.status_code, 400)
 
     async def test_stream_routes_delegate_and_clear_session_key(self):
-        from api.routes import diagnosis, doctor, intake, research
-        from api.shared import ChatRequest
+        from legacy_api.routes import diagnosis, doctor, intake, research
+        from legacy_api.shared import ChatRequest
         from db.crypto import require_session_kek
 
         headers = {"X-User-ID": str(uuid.uuid4()), "X-Session-Key": SESSION_KEY}
@@ -198,7 +198,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             require_session_kek()
 
     async def test_citation_route_delegates(self):
-        from api.routes import research
+        from legacy_api.routes import research
 
         research_session_id = uuid.uuid4()
 

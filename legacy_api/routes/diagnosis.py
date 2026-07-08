@@ -5,8 +5,8 @@ from fastapi import APIRouter, Request
 from fastapi.sse import EventSourceResponse
 from pydantic import BaseModel
 
-from api.shared import clear_encryption_context, get_user_id_or_400, require_encryption_context
-from api.services.diagnosis_service import stream_diagnosis as stream_diagnosis_service
+from legacy_api.shared import clear_encryption_context, get_user_id_or_400, require_encryption_context
+from legacy_api.services.diagnosis_service import stream_diagnosis as stream_diagnosis_service
 
 router = APIRouter()
 

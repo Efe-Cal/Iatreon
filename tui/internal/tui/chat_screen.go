@@ -1,16 +1,15 @@
 package tui
 
 import (
-	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math"
-	"net/http"
-	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -33,7 +32,7 @@ type chatModel struct {
 	userid         string
 	conversationID string
 	sessionID      string
-	sessionKey     *SessionKey
+	worker         *Worker
 
 	input    textinput.Model
 	viewport viewport.Model
@@ -78,11 +77,11 @@ func generateUUID() string {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-func newChatModel(userid string, sessionKey *SessionKey) chatModel {
-	return newChatModelForAgent(AgentIntake, userid, "", sessionKey)
+func newChatModel(userid string, worker *Worker) chatModel {
+	return newChatModelForAgent(AgentIntake, userid, "", worker)
 }
 
-func newChatModelForAgent(kind AgentKind, userid string, session_id string, sessionKey *SessionKey) chatModel {
+func newChatModelForAgent(kind AgentKind, userid string, session_id string, worker *Worker) chatModel {
 	aiRenderer, _ := glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
 		glamour.WithWordWrap(100),
@@ -106,24 +105,24 @@ func newChatModelForAgent(kind AgentKind, userid string, session_id string, sess
 	handler := newAgentHandler(kind)
 
 	if session_id == "" {
-		req, err := http.NewRequest(http.MethodGet, apiBaseURL+"/create-session?user_id="+userid, nil)
-		if err != nil {
-			log.Printf("Error building session request: %v", err)
-		} else {
-			addSessionKeyHeader(req, sessionKey.Get())
-			resp, err := sharedHTTPDo(req)
+		session_id = generateUUID()
+		if worker != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			resp, err := worker.Call(ctx, "session/create", struct {
+				UserID string `json:"user_id"`
+			}{UserID: userid})
+			cancel()
 			if err != nil {
-				log.Printf("Error creating session: %v", err)
+				log.Printf("Error creating worker session: %v", err)
 			} else {
-				defer resp.Body.Close()
-				type payload struct {
+				var p struct {
 					SessionID string `json:"session_id"`
 				}
-				var p payload
-				if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
-					log.Printf("Error decoding session response: %v", err)
+				if err := decodeWorkerResult(resp, &p); err != nil {
+					log.Printf("Error decoding worker session response: %v", err)
+				} else if p.SessionID != "" {
+					session_id = p.SessionID
 				}
-				session_id = p.SessionID
 			}
 		}
 	}
@@ -142,7 +141,7 @@ func newChatModelForAgent(kind AgentKind, userid string, session_id string, sess
 		userRenderer:  userRenderer,
 		toolSpinner:   spinner.New(spinner.WithSpinner(spinner.Points)),
 		sessionID:     session_id,
-		sessionKey:    sessionKey,
+		worker:        worker,
 		footerActions: handler.Footer(),
 	}
 }
@@ -382,16 +381,16 @@ func continueFromAgent(agentKind AgentKind) tea.Cmd {
 	}
 }
 
-var apiBaseURL = func() string {
-	if v := strings.TrimRight(os.Getenv("API_BASE_URL"), "/"); v != "" {
-		return v
-	}
-	return "http://localhost:8000"
-}()
-
 func waitForChunk(ch chan chunkMsg) tea.Cmd {
 	return func() tea.Msg {
-		return <-ch
+		if ch == nil {
+			return chunkMsg{done: true}
+		}
+		msg, ok := <-ch
+		if !ok {
+			return chunkMsg{done: true}
+		}
+		return msg
 	}
 }
 
@@ -401,48 +400,36 @@ func (m *chatModel) streamMessage(agent AgentHandler, conversationID, userid, ms
 		go func() {
 			defer close(ch)
 
-			req, err := agent.BuildRequest(conversationID, userid, msg, m.sessionID, m.sessionKey.Get())
+			if m.worker == nil {
+				ch <- chunkMsg{err: fmt.Errorf("python worker is not available")}
+				return
+			}
+
+			responses, err := m.worker.Stream(
+				context.Background(),
+				agent.Action(),
+				agent.BuildInput(conversationID, userid, msg, m.sessionID),
+			)
 			if err != nil {
 				ch <- chunkMsg{err: err}
 				return
 			}
 
-			resp, err := sharedHTTPDo(req)
-			if err != nil {
-				ch <- chunkMsg{err: err}
-				return
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				ch <- chunkMsg{err: fmt.Errorf("server returned status: %d %s", resp.StatusCode, resp.Status)}
-				return
-			}
-
-			reader := bufio.NewReader(resp.Body)
-			for {
-				line, err := reader.ReadString('\n')
-				if err != nil {
-					ch <- chunkMsg{done: true}
+			for resp := range responses {
+				if !resp.OK {
+					ch <- chunkMsg{err: fmt.Errorf("%s", resp.Error)}
 					return
 				}
-
-				line = strings.TrimSpace(line)
-				if line == "" {
+				if len(resp.Event) == 0 {
+					if resp.Done {
+						ch <- chunkMsg{done: true}
+						return
+					}
 					continue
 				}
-
-				if !strings.HasPrefix(line, "data: ") {
-					continue
-				}
-				dataStr := strings.TrimPrefix(line, "data: ")
-				if dataStr == "" {
-					continue
-				}
-
 				var ev sseEvent
-				if err := json.Unmarshal([]byte(dataStr), &ev); err != nil {
-					ch <- chunkMsg{content: dataStr, ch: ch}
+				if err := json.Unmarshal(resp.Event, &ev); err != nil {
+					ch <- chunkMsg{content: string(resp.Event), ch: ch}
 					continue
 				}
 
@@ -457,6 +444,7 @@ func (m *chatModel) streamMessage(agent AgentHandler, conversationID, userid, ms
 					ch <- out
 				}
 			}
+			ch <- chunkMsg{done: true}
 		}()
 
 		return <-ch

@@ -9,18 +9,18 @@ from langgraph.graph.state import CompiledStateGraph
 from langchain_core.tools import tool
 
 from context.websearch import web_search
-from db.db import read_only_session
-from db.repositories import UserRepo
+from local_worker.provider_config import llm_config
 
 load_dotenv()
 
 Agent = Literal["intake", "research", "diagnosis", "inference"]
 
 def get_model(agent_type: Agent, temperature: float = 0.7, model_name: str | None = None) -> ChatOpenAI:
+    provider = llm_config()
     model_name = model_name or os.getenv(f"{agent_type.upper()}_AGENT_MODEL")
     return ChatOpenAI(model=model_name or "google/gemini-3-flash-preview",
-                      base_url=os.getenv("AI_API_BASE_URL") or "https://ai.hackclub.com/proxy/v1",
-                      api_key=os.getenv("AI_API_KEY"),
+                      base_url=provider["base_url"],
+                      api_key=provider["api_key"],
                       temperature=temperature)
 
 def load_system_prompt(agent_type: Agent) -> str:
@@ -60,6 +60,13 @@ async def web_search_tool(query: str, num_results: int = 5):
 
 
 async def get_user_info(user_id: str):
+    if os.getenv("IATREON_LOCAL_WORKER") == "1":
+        from local_worker.store import profile_markdown
+        return profile_markdown(user_id)
+
+    from db.db import read_only_session
+    from db.repositories import UserRepo
+
     user_repo = UserRepo()
     async with read_only_session() as db:
         info = "# Patient Profile\n"

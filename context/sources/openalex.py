@@ -12,7 +12,6 @@ from ..processing.ranking import QualityRanker
 from ..models import Article
 from ..config import RATE_LIMIT_DELAY
 from ..errors import log_external_failure
-from db.db import unit_of_work
 
 load_dotenv()
 

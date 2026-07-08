@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import re
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 from dotenv import load_dotenv
 from uuid import UUID
 import os
@@ -15,10 +15,7 @@ from langchain_core.messages import AIMessageChunk
 from agents.shared import create_agent_by_type, get_user_info, _iter_stream_text
 from agents.inference import run_research_inference
 from context.sources.openalex import OpenAlexClient
-from db.models import Article, BookSection, WebSearchResult
-from db.repositories import ArticleRepo, BookSectionRepo, ResearchRepo, WebSearchResultRepo
 from db.schemas import ArticleData, BookSectionData, IntakeSessionData
-from db.db import unit_of_work
 
 from context.processing.pipeline import run_pipeline
 from context.websearch import web_search, fetch_web_content
@@ -65,8 +62,18 @@ EFFORT_SETTINGS = {
 }
 
 
+def _as_payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    return {
+        key: item
+        for key, item in vars(value).items()
+        if not key.startswith("_")
+    }
+
+
 class ResearchAgent:
-    def __init__(self, research_repo: ResearchRepo, research_session_id: UUID, effort: ResearchEffort = "standard"):
+    def __init__(self, research_repo: Any | None, research_session_id: UUID, effort: ResearchEffort = "standard"):
         self.effort = effort if effort in EFFORT_SETTINGS else "standard"
         self.effort_settings = EFFORT_SETTINGS[self.effort]
         self.checkpointer = InMemorySaver()
@@ -119,13 +126,27 @@ class ResearchAgent:
                         temperature=self.effort_settings["temperature"],
                         model_name=model_name)
 
-        self.article_repo = ArticleRepo()
-        self.book_section_repo = BookSectionRepo()
-        self.web_search_result_repo = WebSearchResultRepo()
+        self.article_repo = None
+        self.book_section_repo = None
+        self.web_search_result_repo = None
+        if not self._local_worker_mode():
+            from db.repositories import ArticleRepo, BookSectionRepo, WebSearchResultRepo
+            self.article_repo = ArticleRepo()
+            self.book_section_repo = BookSectionRepo()
+            self.web_search_result_repo = WebSearchResultRepo()
 
         self._citation_lookup: dict[int, dict] = {}
         self._citation_lock = asyncio.Lock()
+        self._next_local_citation_num = 1
         self.source_warnings: list[str] = []
+
+    def _local_worker_mode(self) -> bool:
+        return os.getenv("IATREON_LOCAL_WORKER") == "1"
+
+    def _reserve_local_citation_numbers(self, count: int) -> int:
+        start = self._next_local_citation_num
+        self._next_local_citation_num += count
+        return start
 
     def _source_warning(self, provider: str, error: Exception) -> str:
         warning = f"{provider} unavailable: {error}"
@@ -141,7 +162,20 @@ class ResearchAgent:
             warning = self._source_warning("Web search", exc)
             return f"<source>\nWeb search results for query '{query}':\n{warning}\n</source>"
 
-        if results:
+        if results and self._local_worker_mode():
+            start = self._reserve_local_citation_numbers(len(results))
+            for citation_num, result in enumerate(results, start=start):
+                await self._record_local_citation(
+                    citation_num,
+                    "web_search_result",
+                    title=result.get("title") or "",
+                    query=query,
+                    url=result.get("url") or "",
+                    text="\n".join(result.get("highlights", [])),
+                )
+        elif results:
+            from db.db import unit_of_work
+
             async with unit_of_work() as db:
                 start = await self.research_repo.reserve_citation_numbers(db, self.session_id, len(results))
                 for citation_num, result in enumerate(results, start=start):
@@ -200,12 +234,40 @@ class ResearchAgent:
         
         content = f"Search results for query: '{query}'\n\nArticles:\n"
         source_count = len(articles) + len(books)
-        if source_count:
+        if source_count and self._local_worker_mode():
+            start = self._reserve_local_citation_numbers(source_count)
+            for i, article in enumerate(articles, start=start):
+                content += f"[{i}] {article['title']} ({article['journal']}, {article['year']}, Citations: {article['citation_count']})\nAuthors: {', '.join(article['authors'])}\nAbstract: {article['abstract']}\n\n"
+                await self._record_local_citation(
+                    i,
+                    "article",
+                    title=article.get("title") or "",
+                    query=query,
+                    doi=article.get("doi") or "",
+                    text="\n\n".join(part for part in [article.get("abstract"), article.get("full_text")] if part),
+                    quality_score=article.get("quality_score", 0.0) or 0.0,
+                )
+
+            if books:
+                content += f"Relevant Book Sections:\n"
+                for i, book in enumerate(books, start + len(articles)):
+                    content += f"[{i}] {book['title']}\nContent: {book['text']}\n\n"
+                    await self._record_local_citation(
+                        i,
+                        "book_section",
+                        title=book.get("title") or "",
+                        query=query,
+                        url=book.get("url") or "",
+                        text=book.get("text") or "",
+                    )
+        elif source_count:
+            from db.db import unit_of_work
+
             async with unit_of_work() as db:
                 start = await self.research_repo.reserve_citation_numbers(db, self.session_id, source_count)
                 for i, article in enumerate(articles, start=start):
                     content += f"[{i}] {article['title']} ({article['journal']}, {article['year']}, Citations: {article['citation_count']})\nAuthors: {', '.join(article['authors'])}\nAbstract: {article['abstract']}\n\n"
-                    db_article = await self.article_repo.upsert(db, ArticleData(**article))
+                    db_article = await self.article_repo.upsert(db, ArticleData(**_as_payload(article)))
                     await self._record_citation(
                         i,
                         "article",
@@ -218,7 +280,7 @@ class ResearchAgent:
                     content += f"Relevant Book Sections:\n"
                     for i, book in enumerate(books, start + len(articles)):
                         content += f"[{i}] {book['title']}\nContent: {book['text']}\n\n"
-                        db_section = await self.book_section_repo.upsert(db, BookSectionData(**book))
+                        db_section = await self.book_section_repo.upsert(db, BookSectionData(**_as_payload(book)))
                         await self._record_citation(i, "book_section", db_section, query=query)
 
         return "<source>\n" + content + "\n</source>"
@@ -240,11 +302,24 @@ class ResearchAgent:
             warning = self._source_warning("NCBI Bookshelf", exc)
             return f"<source>\nBook search results for query '{query}':\n{warning}\n</source>"
         
-        if books:
+        if books and self._local_worker_mode():
+            start = self._reserve_local_citation_numbers(len(books))
+            for i, book in enumerate(books, start=start):
+                await self._record_local_citation(
+                    i,
+                    "book_section",
+                    title=book.get("title") or "",
+                    query=query,
+                    url=book.get("url") or "",
+                    text=book.get("text") or "",
+                )
+        elif books:
+            from db.db import unit_of_work
+
             async with unit_of_work() as db:
                 start = await self.research_repo.reserve_citation_numbers(db, self.session_id, len(books))
                 for i, book in enumerate(books, start=start):
-                    db_section = await self.book_section_repo.upsert(db, BookSectionData(**book))
+                    db_section = await self.book_section_repo.upsert(db, BookSectionData(**_as_payload(book)))
                     await self._record_citation(i, "book_section", db_section, query=query)
         formatted_books = "\n\n".join(
             [
@@ -274,11 +349,25 @@ class ResearchAgent:
             warning = self._source_warning("OpenAlex", exc)
             return f"<source>\nOpenAlex search results for query '{query}':\n{warning}\n</source>"
         
-        if articles:
+        if articles and self._local_worker_mode():
+            start = self._reserve_local_citation_numbers(len(articles))
+            for i, article in enumerate(articles, start=start):
+                await self._record_local_citation(
+                    i,
+                    "article",
+                    title=article.title,
+                    query=query,
+                    doi=article.doi or "",
+                    text="\n\n".join(part for part in [article.abstract, article.full_text] if part),
+                    quality_score=article.quality_score or 0.0,
+                )
+        elif articles:
+            from db.db import unit_of_work
+
             async with unit_of_work() as db:
                 start = await self.research_repo.reserve_citation_numbers(db, self.session_id, len(articles))
                 for i, article in enumerate(articles, start=start):
-                    db_article = await self.article_repo.upsert(db, article)
+                    db_article = await self.article_repo.upsert(db, ArticleData(**_as_payload(article)))
                     await self._record_citation(
                         i,
                         "article",
@@ -331,14 +420,17 @@ class ResearchAgent:
 
         return ""
 
-    async def run(self, profile: IntakeSessionData | None = None, research_question: str | None = None, user_id: str=None) -> AsyncGenerator[dict | tuple[str, dict[int, dict]], None]:
+    async def run(self, profile: IntakeSessionData | None = None, research_question: str | None = None, user_id: str | None = None) -> AsyncGenerator[dict | tuple[str, dict[int, dict]], None]:
+        patient_profile = ""
+        patient_case = ""
+        inference_guidance = ""
+
         if profile:
             symptoms = ', '.join(s["name"] for s in profile.symptoms) if profile.symptoms else "None provided"
             red_flags = ', '.join(profile.red_flags) if profile.red_flags else "None provided"
             medical_summary = profile.medical_summary if profile.medical_summary else "None provided"
 
             patient_profile = await get_user_info(user_id=profile.user_id)
-            inference_guidance = ""
             inference_input = f"""Chief Complaint: {profile.chief_complaint}
 Symptoms: {symptoms}
 Red Flags: {red_flags}
@@ -359,7 +451,6 @@ Medical Summary: {medical_summary}"""
 
         elif user_id:
             patient_profile = await get_user_info(user_id=user_id)
-            patient_case=""
  
         source_instruction = (
             "Use only web search and fetched web pages for insights related to the patient's chief complaint, symptoms, and red flags."
@@ -430,7 +521,7 @@ Prioritize urgent/emergent causes first when red flags are present. Normalize la
         self,
         citation_num: int,
         source_type: str,
-        source: Article | BookSection | WebSearchResult,
+        source: Any,
         query: str,
         quality_score: float | None = None,
     ) -> None:
@@ -441,12 +532,38 @@ Prioritize urgent/emergent causes first when red flags are present. Normalize la
             "title": source.title,
             "query": query,
         }
-        if isinstance(source, Article):
-            citation["doi"] = source.doi
+        if source_type == "article":
+            citation["doi"] = getattr(source, "doi", "")
             citation["quality_score"] = quality_score
         else:
-            citation["url"] = source.url
+            citation["url"] = getattr(source, "url", "")
 
+        async with self._citation_lock:
+            self._citation_lookup[citation_num] = citation
+
+    async def _record_local_citation(
+        self,
+        citation_num: int,
+        source_type: str,
+        title: str,
+        query: str,
+        url: str = "",
+        doi: str = "",
+        text: str = "",
+        quality_score: float | None = None,
+    ) -> None:
+        citation = {
+            "citation_num": citation_num,
+            "type": source_type,
+            "id": f"local:{citation_num}",
+            "title": title,
+            "query": query,
+            "url": url,
+            "doi": doi,
+            "text": text,
+        }
+        if quality_score is not None:
+            citation["quality_score"] = quality_score
         async with self._citation_lock:
             self._citation_lookup[citation_num] = citation
 

@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from sshpubkeys import SSHKey
 
-from api.shared import clear_encryption_context, require_encryption_context
+from legacy_api.shared import clear_encryption_context, require_encryption_context
 from db.db import unit_of_work
 from db.repositories import UserRepo
 from db.schemas import UserProfileData

@@ -13,6 +13,10 @@ func testKey(name string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEnter}
 	case "esc":
 		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "up":
+		return tea.KeyMsg{Type: tea.KeyUp}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(name)}
 	}
@@ -83,7 +87,7 @@ func TestSetupViewAnchorDoesNotMove(t *testing.T) {
 	}
 }
 
-func TestDashboardEscStartsSetup(t *testing.T) {
+func TestDashboardEscStaysOnDashboard(t *testing.T) {
 	m := NewModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", true)
 
 	updated, _ := m.Update(testKey("esc"))
@@ -91,11 +95,8 @@ func TestDashboardEscStartsSetup(t *testing.T) {
 	if !ok {
 		t.Fatalf("updated model has type %T", updated)
 	}
-	if got.active != setupScreen {
-		t.Fatalf("esc should open setup from dashboard, active=%v", got.active)
-	}
-	if !got.setup.canCancel {
-		t.Fatal("dashboard-launched setup should be cancellable")
+	if got.active != dashboardScreen {
+		t.Fatalf("esc should stay on dashboard, active=%v", got.active)
 	}
 }
 

@@ -5,11 +5,28 @@ from exa_py.api import ContentsOptions, TextContentsOptions, HighlightsContentsO
 from dotenv import load_dotenv
 
 from context.errors import log_external_failure
+from local_worker.provider_config import provider_setup, search_config
 
 load_dotenv()
 
 exa = Exa(api_key=os.getenv("EXA_API_KEY", os.getenv("AI_API_KEY")), base_url=os.getenv("EXA_BASE_URL", "https://ai.hackclub.com/proxy/v1/exa"))
 exa.headers["Authorization"] = f"Bearer {exa.headers['x-api-key']}"
+
+
+def make_exa_client():
+    if not provider_setup():
+        return exa
+
+    config = search_config()
+
+    kwargs = {"api_key": config["api_key"]}
+    if config["base_url"]:
+        kwargs["base_url"] = config["base_url"]
+
+    client = Exa(**kwargs)
+    if client.headers.get("x-api-key"):
+        client.headers["Authorization"] = f"Bearer {client.headers['x-api-key']}"
+    return client
 
 
 def web_search(query: str, num_results: int = 5):
@@ -23,7 +40,7 @@ def web_search(query: str, num_results: int = 5):
         The search highlights.
     """
     try:
-        response = exa.search(
+        response = make_exa_client().search(
             query,
             num_results=num_results,
             type="deep",
@@ -76,7 +93,7 @@ def fetch_web_content(url: str) -> str:
     """
     
     try:
-        response = exa.get_contents(url, livecrawl="preferred", text=TextContentsOptions())
+        response = make_exa_client().get_contents(url, livecrawl="preferred", text=TextContentsOptions())
     except Exception as exc:
         log_external_failure("Exa", "content fetch", exc)
         return "Failed to fetch content."
