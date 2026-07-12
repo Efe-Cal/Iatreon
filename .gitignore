@@ -8,3 +8,5 @@ venv/
 data/
 landing/*.txt
 *.sqlite3
+dist/
+build-report.xml
