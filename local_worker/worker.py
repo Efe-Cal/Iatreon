@@ -1,3 +1,90 @@
+# nuitka-project: --standalone
+# nuitka-project: --output-dir=dist
+# nuitka-project: --lto=yes
+# nuitka-project: --assume-yes-for-downloads
+# nuitka-project: --report=build-report.xml
+
+# nuitka-project: --include-data-dir={MAIN_DIRECTORY}/../agents/prompts=agents/prompts
+
+# Langchain
+# nuitka-project: --include-module=langchain_core.callbacks.base
+# nuitka-project: --include-module=langchain_core.callbacks.manager
+
+# Chat models only; exclude legacy and fake LLM implementations
+# nuitka-project: --include-module=langchain_core.language_models.base
+# nuitka-project: --include-module=langchain_core.language_models.chat_models
+# nuitka-project: --include-module=langchain_core.language_models.model_profile
+
+# Messages are heavily lazy-loaded and dynamically deserialized.
+# Keep this small package complete.
+# nuitka-project: --include-package=langchain_core.messages
+
+# Only parsers used by ChatOpenAI structured output
+# nuitka-project: --include-module=langchain_core.output_parsers.json
+# nuitka-project: --include-module=langchain_core.output_parsers.pydantic
+# nuitka-project: --include-module=langchain_core.output_parsers.openai_tools
+
+# Only six modules; keeping the complete package safely covers LLMResult.
+# nuitka-project: --include-package=langchain_core.outputs
+
+# Runnable implementations used by ChatOpenAI and LangGraph
+# nuitka-project: --include-module=langchain_core.runnables.base
+# nuitka-project: --include-module=langchain_core.runnables.config
+# nuitka-project: --include-module=langchain_core.runnables.passthrough
+
+# Tool decorator, BaseTool, and StructuredTool
+# nuitka-project: --include-module=langchain_core.tools.base
+# nuitka-project: --include-module=langchain_core.tools.convert
+# nuitka-project: --include-module=langchain_core.tools.structured
+
+# Target for the lazy get_pydantic_field_names export
+# nuitka-project: --include-module=langchain_core.utils.utils
+
+# Unused fake language models of langchain_core
+# nuitka-project: --nofollow-import-to=langchain_core.language_models.fake
+# nuitka-project: --nofollow-import-to=langchain_core.language_models.fake_chat_models
+# nuitka-project: --nofollow-import-to=langchain_core.language_models.llms
+
+# Langgraph
+# nuitka-project: --include-module=langgraph.config
+# nuitka-project: --include-module=langgraph.checkpoint.memory
+# nuitka-project: --include-module=langgraph.graph.state
+# nuitka-project: --include-module=langchain.agents
+
+# Langchain graph renderers
+# nuitka-project: --nofollow-import-to=langchain_core.runnables.graph_ascii
+# nuitka-project: --nofollow-import-to=langchain_core.runnables.graph_mermaid
+# nuitka-project: --nofollow-import-to=langchain_core.runnables.graph_png
+
+# Langsmith
+# nuitka-project: --nofollow-import-to=langchain_core.tracers.evaluation
+# nuitka-project: --nofollow-import-to=langsmith.evaluation
+# nuitka-project: --nofollow-import-to=langsmith.testing
+# nuitka-project: --nofollow-import-to=langsmith._expect
+
+# nuitka-project: --include-module=sqlalchemy.dialects.sqlite.pysqlite
+# nuitka-project: --include-module=tiktoken_ext.openai_public
+
+# nuitka-project: --noinclude-pytest-mode=nofollow
+# nuitka-project: --noinclude-setuptools-mode=nofollow 
+# nuitka-project: --nofollow-import-to="*.tests"
+
+# nuitka-project: --nofollow-import-to=db.db
+# nuitka-project: --nofollow-import-to=db.repositories
+
+# HTTPX CLI and terminal presentation features are unused
+# nuitka-project: --nofollow-import-to=httpx._main
+# nuitka-project: --nofollow-import-to=rich
+# nuitka-project: --nofollow-import-to=pygments
+
+# Only the SQLite
+# nuitka-project: --nofollow-import-to=sqlalchemy.dialects.postgresql
+# nuitka-project: --nofollow-import-to=sqlalchemy.dialects.mysql
+# nuitka-project: --nofollow-import-to=sqlalchemy.dialects.mssql
+# nuitka-project: --nofollow-import-to=sqlalchemy.dialects.oracle
+# nuitka-project: --nofollow-import-to=sqlalchemy.ext.asyncio
+# nuitka-project: --include-module=sqlalchemy.dialects.sqlite.pysqlite
+
 import sys
 import json
 import asyncio
