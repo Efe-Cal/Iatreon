@@ -1,5 +1,3 @@
-import os
-
 from exa_py import Exa
 from exa_py.api import ContentsOptions, TextContentsOptions, HighlightsContentsOptions
 from dotenv import load_dotenv
@@ -9,13 +7,9 @@ from local_worker.provider_config import provider_setup, search_config
 
 load_dotenv()
 
-exa = Exa(api_key=os.getenv("EXA_API_KEY", os.getenv("AI_API_KEY")), base_url=os.getenv("EXA_BASE_URL", "https://ai.hackclub.com/proxy/v1/exa"))
-exa.headers["Authorization"] = f"Bearer {exa.headers['x-api-key']}"
-
-
 def make_exa_client():
     if not provider_setup():
-        return exa
+        raise RuntimeError("Exa provider is not set up. Please configure the provider first.")
 
     config = search_config()
 
@@ -26,6 +20,7 @@ def make_exa_client():
     client = Exa(**kwargs)
     if client.headers.get("x-api-key"):
         client.headers["Authorization"] = f"Bearer {client.headers['x-api-key']}"
+    client.headers["x-api-key"] = None # Remove the x-api-key header to avoid conflicts
     return client
 
 
