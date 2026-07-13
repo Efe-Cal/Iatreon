@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 
 from langchain_core.messages import AIMessageChunk
 from langchain.tools import tool
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import RunnableConfig
 
 from agents.shared import create_agent_by_type, get_model, get_user_info, _iter_stream_text
@@ -37,7 +36,8 @@ def get_intake_agent():
     global agent
     if agent is None:
         if os.getenv("IATREON_LOCAL_WORKER") == "1":
-            checkpointer = InMemorySaver()
+            from local_worker import store
+            checkpointer = store.get_checkpointer()
         else:
             from db.db import checkpointer_manager
             checkpointer = checkpointer_manager.get_checkpointer()

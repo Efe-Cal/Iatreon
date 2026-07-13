@@ -116,6 +116,7 @@ from local_worker.provider_config import reset_current_user_id, set_current_user
 @route("worker/init", WorkerInitRequest)
 async def init_worker(req: WorkerInitRequest):
     store.initialize(req.db_path, req.db_key)
+    await store.initialize_checkpointer()
     return {"status": "success"}
 
 

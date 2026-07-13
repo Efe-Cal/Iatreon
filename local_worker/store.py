@@ -16,12 +16,18 @@ except ImportError as exc:  # pragma: no cover - exercised only when dependency 
     _sqlcipher_import_error = exc
 else:
     _sqlcipher_import_error = None
+    
+import aiosqlite
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 
 _lock = threading.RLock()
 _engine: Engine | None = None
 _SessionLocal: Callable[[], Session] | None = None
 
+_connection_factory = None
+_checkpoint_connection = None
+_checkpointer = None
 
 class Base(DeclarativeBase):
     pass
@@ -87,7 +93,7 @@ class Diagnosis(Base):
 
 
 def initialize(db_path: str, db_key: str) -> None:
-    global _engine, _SessionLocal
+    global _engine, _SessionLocal, _connection_factory
 
     if sqlcipher is None:
         raise RuntimeError("sqlcipher3-binary is required for encrypted local storage") from _sqlcipher_import_error
@@ -117,6 +123,9 @@ def initialize(db_path: str, db_key: str) -> None:
             conn.close()
             raise
 
+    _connection_factory = connect
+
+
     with _lock:
         if _engine is not None:
             _engine.dispose()
@@ -124,6 +133,36 @@ def initialize(db_path: str, db_key: str) -> None:
         _SessionLocal = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
         Base.metadata.create_all(_engine)
 
+
+async def initialize_checkpointer():
+    global _checkpoint_connection, _checkpointer
+    
+    if _connection_factory is None:
+        raise RuntimeError("local worker store is not initialized")
+    
+    connection = aiosqlite.Connection(_connection_factory, iter_chunk_size=64)
+    await connection
+    
+    _checkpoint_connection = connection
+    _checkpointer = AsyncSqliteSaver(connection)
+    
+    await _checkpointer.setup()
+
+
+def get_checkpointer() -> AsyncSqliteSaver:
+    if _checkpointer is None:
+        raise RuntimeError("local checkpointer is not initialized")
+    return _checkpointer
+
+
+async def close_checkpointer() -> None:
+    global _checkpoint_connection, _checkpointer
+
+    if _checkpoint_connection is not None:
+        await _checkpoint_connection.close()
+
+    _checkpoint_connection = None
+    _checkpointer = None
 
 def _reset_for_tests() -> None:
     global _engine, _SessionLocal

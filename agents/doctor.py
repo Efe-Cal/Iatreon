@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 
 from langchain_core.messages import AIMessageChunk
 from langchain_core.tools import StructuredTool
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import RunnableConfig
 import os
 
@@ -28,7 +27,8 @@ class DoctorAgent:
             ),
         )
         if os.getenv("IATREON_LOCAL_WORKER") == "1":
-            checkpointer = InMemorySaver()
+            from local_worker import store
+            checkpointer = store.get_checkpointer()
         else:
             from db.db import checkpointer_manager
             checkpointer = checkpointer_manager.get_checkpointer()
