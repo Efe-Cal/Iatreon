@@ -1,7 +1,7 @@
 import uuid
 from typing import AsyncIterable
 
-from models import ChatRequest
+from local_worker.models import ChatRequest
 from agents.intake import run_intake_cli
 from local_worker import store
 

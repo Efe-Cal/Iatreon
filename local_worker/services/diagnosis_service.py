@@ -5,7 +5,7 @@ from local_worker.errors import NotFoundError
 from local_worker import store
 from db.schemas import IntakeSessionData, ResearchSessionData
 from agents.diagnosis import DiagnosisAgent
-from models import DiagnosisRequest
+from local_worker.models import DiagnosisRequest
 
 async def stream_diagnosis(req: DiagnosisRequest) -> AsyncIterable:
     intake_id = req.intake_id

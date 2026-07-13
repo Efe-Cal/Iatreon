@@ -1,55 +1,26 @@
 # nuitka-project: --standalone
 # nuitka-project: --output-dir=dist
-# nuitka-project: --lto=yes
 # nuitka-project: --assume-yes-for-downloads
 # nuitka-project: --report=build-report.xml
 
 # nuitka-project: --include-data-dir={MAIN_DIRECTORY}/../agents/prompts=agents/prompts
 
-# Langchain
-# nuitka-project: --include-module=langchain_core.callbacks.base
-# nuitka-project: --include-module=langchain_core.callbacks.manager
-
-# Chat models only; exclude legacy and fake LLM implementations
-# nuitka-project: --include-module=langchain_core.language_models.base
-# nuitka-project: --include-module=langchain_core.language_models.chat_models
-# nuitka-project: --include-module=langchain_core.language_models.model_profile
-
-# Messages are heavily lazy-loaded and dynamically deserialized.
-# Keep this small package complete.
-# nuitka-project: --include-package=langchain_core.messages
-
 # Only parsers used by ChatOpenAI structured output
 # nuitka-project: --include-module=langchain_core.output_parsers.json
 # nuitka-project: --include-module=langchain_core.output_parsers.pydantic
-# nuitka-project: --include-module=langchain_core.output_parsers.openai_tools
 
-# Only six modules; keeping the complete package safely covers LLMResult.
+# Only six modules; required lazy exports include LLMResult and ChatResult.
 # nuitka-project: --include-package=langchain_core.outputs
 
-# Runnable implementations used by ChatOpenAI and LangGraph
-# nuitka-project: --include-module=langchain_core.runnables.base
-# nuitka-project: --include-module=langchain_core.runnables.config
-# nuitka-project: --include-module=langchain_core.runnables.passthrough
+# nuitka-project: --include-package=langchain_core.load
 
-# Tool decorator, BaseTool, and StructuredTool
-# nuitka-project: --include-module=langchain_core.tools.base
+# The lazy tool export resolves to convert; convert statically imports BaseTool and StructuredTool.
 # nuitka-project: --include-module=langchain_core.tools.convert
-# nuitka-project: --include-module=langchain_core.tools.structured
-
-# Target for the lazy get_pydantic_field_names export
-# nuitka-project: --include-module=langchain_core.utils.utils
 
 # Unused fake language models of langchain_core
 # nuitka-project: --nofollow-import-to=langchain_core.language_models.fake
 # nuitka-project: --nofollow-import-to=langchain_core.language_models.fake_chat_models
 # nuitka-project: --nofollow-import-to=langchain_core.language_models.llms
-
-# Langgraph
-# nuitka-project: --include-module=langgraph.config
-# nuitka-project: --include-module=langgraph.checkpoint.memory
-# nuitka-project: --include-module=langgraph.graph.state
-# nuitka-project: --include-module=langchain.agents
 
 # Langchain graph renderers
 # nuitka-project: --nofollow-import-to=langchain_core.runnables.graph_ascii
@@ -62,7 +33,7 @@
 # nuitka-project: --nofollow-import-to=langsmith.testing
 # nuitka-project: --nofollow-import-to=langsmith._expect
 
-# nuitka-project: --include-module=sqlalchemy.dialects.sqlite.pysqlite
+# Runtime registries that Nuitka cannot infer from the URL/entry-point lookup.
 # nuitka-project: --include-module=tiktoken_ext.openai_public
 
 # nuitka-project: --noinclude-pytest-mode=nofollow
@@ -77,7 +48,7 @@
 # nuitka-project: --nofollow-import-to=rich
 # nuitka-project: --nofollow-import-to=pygments
 
-# Only the SQLite
+# Only SQLite is used
 # nuitka-project: --nofollow-import-to=sqlalchemy.dialects.postgresql
 # nuitka-project: --nofollow-import-to=sqlalchemy.dialects.mysql
 # nuitka-project: --nofollow-import-to=sqlalchemy.dialects.mssql
@@ -121,7 +92,7 @@ def route(name: str, request_model: type[BaseModel]):
         return fn
     return decorator
 
-from models import (
+from local_worker.models import (
     ChatRequest,
     CitationTextRequest,
     DiagnosisRequest,
@@ -135,10 +106,10 @@ from models import (
     WorkerInitRequest,
 )
 from local_worker import store
-from services.diagnosis_service import stream_diagnosis
-from services.intake_service import stream_intake_chat
-from services.doctor_service import stream_doctor_chat_service
-from services.research_service import get_citation_text, stream_research
+from local_worker.services.diagnosis_service import stream_diagnosis
+from local_worker.services.intake_service import stream_intake_chat
+from local_worker.services.doctor_service import stream_doctor_chat_service
+from local_worker.services.research_service import get_citation_text, stream_research
 from local_worker.provider_config import reset_current_user_id, set_current_user_id
 
 

@@ -9,4 +9,5 @@ data/
 landing/*.txt
 *.sqlite3
 dist/
+build/
 build-report.xml

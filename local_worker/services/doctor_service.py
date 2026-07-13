@@ -1,7 +1,7 @@
 import uuid
 from typing import AsyncIterable
 
-from models import ChatRequest
+from local_worker.models import ChatRequest
 
 from agents.doctor import DoctorAgent
 
