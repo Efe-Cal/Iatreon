@@ -1,3 +1,9 @@
+$count = (pip freeze | Measure-Object -Line).Lines
+
+if ($count -gt 80) {
+    Write-Host "Warning: venv is too large: $count packages. This may result in a large executable size."
+}
+
 Remove-Item release -Recurse -Force -ErrorAction Ignore
 
 New-Item release -ItemType Directory | Out-Null
