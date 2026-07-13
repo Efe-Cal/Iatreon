@@ -4,6 +4,7 @@ from PyInstaller.utils.hooks import collect_submodules
 hiddenimports = []
 hiddenimports += collect_submodules('langchain_core')
 hiddenimports += collect_submodules('langgraph')
+hiddenimports += collect_submodules('pydantic')
 
 
 a = Analysis(
