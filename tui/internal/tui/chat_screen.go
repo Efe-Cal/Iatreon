@@ -279,7 +279,7 @@ func getPhaseOffset(toolID string) float64 {
 }
 
 func (m *chatModel) renderToolMessage(toolMsg messageItem) string {
-	log.Printf("Rendering tool message: %+v\n", toolMsg)
+	// log.Printf("Rendering tool message: %+v\n", toolMsg)
 	rawText := "Tool: " + toolMsg.toolName + " " + toolMsg.text
 
 	if toolMsg.toolMessage.running {
@@ -292,7 +292,7 @@ func (m *chatModel) renderToolMessage(toolMsg messageItem) string {
 }
 
 func (m *chatModel) renderMessage(msg messageItem) string {
-	log.Printf("Rendering message: %+v\n", msg)
+	// log.Printf("Rendering message: %+v\n", msg)
 	switch msg.role {
 	case "user":
 		body := m.renderMarkdown(msg.text, true)
@@ -531,7 +531,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			}
 
 			found := false
-			log.Printf("Rendering tool message: %+v\n", msg.toolMessage)
+			// log.Printf("Rendering tool message: %+v\n", msg.toolMessage)
 			for i := range m.history {
 				if m.history[i].toolMessage.toolID == msg.toolMessage.toolID {
 					m.history[i].toolMessage = msg.toolMessage
@@ -541,7 +541,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 				}
 			}
 			if !found {
-				log.Printf("Adding new tool message: %+v\n", msg.toolMessage)
+				// log.Printf("Adding new tool message: %+v\n", msg.toolMessage)
 				m.history = append(m.history, messageItem{role: "tool", text: msg.content, toolMessage: msg.toolMessage})
 			}
 		}

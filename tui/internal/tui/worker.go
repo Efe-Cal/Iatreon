@@ -104,7 +104,7 @@ func workerCommand() (*exec.Cmd, error) {
 		name += ".exe"
 	}
 
-	workerPath := filepath.Join(dir, name)
+	workerPath := filepath.Join(dir, "python-worker", name)
 
 	cmd := exec.Command(workerPath)
 	cmd.Env = append(os.Environ(), "IATREON_LOCAL_WORKER=1")

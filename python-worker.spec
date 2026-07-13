@@ -10,7 +10,7 @@ a = Analysis(
     ['local_worker\\worker.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('agents/prompts', 'agents/prompts')],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

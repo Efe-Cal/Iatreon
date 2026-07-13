@@ -15,7 +15,12 @@ func main() {
 
 	flag.Parse()
 
-	f, err := tea.LogToFile("debug.log", "debug")
+	file_path, err := tui.GetLogPath()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	f, err := tea.LogToFile(file_path, "debug")
 	if err != nil {
 		log.Fatal(err)
 	}

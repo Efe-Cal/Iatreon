@@ -5,8 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/zalando/go-keyring"
 )
@@ -118,18 +116,6 @@ func isUUID(value string) bool {
 		}
 	}
 	return true
-}
-
-func localWorkerDBPath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	dir = filepath.Join(dir, "Iatreon")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "local_worker.sqlite3"), nil
 }
 
 func zeroBytes(b []byte) {

@@ -10,4 +10,6 @@ landing/*.txt
 *.sqlite3
 dist/
 build/
+release/
 build-report.xml
+installer-output/
