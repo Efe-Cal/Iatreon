@@ -68,6 +68,21 @@ type providerStatusResult struct {
 	HasProviderSetup bool `json:"has_provider_setup"`
 }
 
+type backendSessionInput struct {
+	UserID string `json:"user_id"`
+}
+
+type backendSession struct {
+	Username string `json:"username"`
+	JWT      string `json:"jwt"`
+}
+
+type backendSessionUpdateInput struct {
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+	JWT      string `json:"jwt"`
+}
+
 type providerSetupInput struct {
 	UserID         string `json:"user_id"`
 	LLMProvider    string `json:"llm_provider"`
@@ -324,6 +339,21 @@ func (w *Worker) HasProviderSetup(ctx context.Context, userid string) (bool, err
 
 func (w *Worker) UpdateProviderSetup(ctx context.Context, input providerSetupInput) error {
 	_, err := w.Call(ctx, "provider/update", input)
+	return err
+}
+
+func (w *Worker) BackendSession(ctx context.Context, userid string) (backendSession, error) {
+	resp, err := w.Call(ctx, "backend-session/get", backendSessionInput{UserID: userid})
+	if err != nil {
+		return backendSession{}, err
+	}
+	var result backendSession
+	err = decodeWorkerResult(resp, &result)
+	return result, err
+}
+
+func (w *Worker) UpdateBackendSession(ctx context.Context, input backendSessionUpdateInput) error {
+	_, err := w.Call(ctx, "backend-session/update", input)
 	return err
 }
 

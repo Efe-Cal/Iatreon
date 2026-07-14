@@ -52,6 +52,9 @@ def test_store_round_trips_worker_records(initialized_store):
     assert store.has_provider_setup(user_id)
     assert store.get_provider_setup(user_id) == provider_setup
 
+    store.update_backend_session(user_id, "alice", "jwt-test")
+    assert store.get_backend_session(user_id) == {"username": "alice", "jwt": "jwt-test"}
+
     intake_id = str(uuid.uuid4())
     store.link_intake_session(session_id, intake_id)
     store.save_intake(user_id, intake_id, session_id, profile, "transcript")
@@ -121,6 +124,29 @@ def test_iatreon_ai_defaults_use_proxy(monkeypatch):
 
     assert llm_config()["base_url"] == "https://iatreon.efecal.hackclub.app/v1"
     assert search_config()["base_url"] == "https://iatreon.efecal.hackclub.app/v1/exa"
+
+
+def test_iatreon_clients_reuse_dedicated_backend_session(initialized_store, monkeypatch):
+    monkeypatch.setenv("IATREON_LOCAL_WORKER", "1")
+    user_id = str(uuid.uuid4())
+    store.update_backend_session(user_id, "alice", "jwt-one-place")
+    store.update_provider_setup({
+        "user_id": user_id,
+        "llm_provider": "Iatreon AI",
+        "llm_api_key": "",
+        "llm_base_url": "",
+        "search_provider": "Iatreon AI",
+        "search_api_key": "",
+        "search_base_url": "",
+    })
+    from local_worker.provider_config import llm_config, reset_current_user_id, search_config, set_current_user_id
+
+    context_token = set_current_user_id(user_id)
+    try:
+        assert llm_config()["api_key"] == "jwt-one-place"
+        assert search_config()["api_key"] == "jwt-one-place"
+    finally:
+        reset_current_user_id(context_token)
 
 
 def test_store_reopens_with_same_key(initialized_store):

@@ -6,6 +6,7 @@ from urllib.parse import urlparse, urljoin, unquote
 import uuid
 from seleniumbase import sb_cdp
 import httpx
+from pdf_worker.security import validate_public_http_url
 
 WORKER_DIR = Path(__file__).resolve().parent
 REPO_DIR = WORKER_DIR.parent
@@ -64,6 +65,7 @@ class Scraper:
         self.sb = sb_cdp.Chrome(uc=True, external_pdf=True, user_data_dir=str(PROFILE_DIR), chromium_arg="--disable-pdf-viewer")
 
     def download_pdf(self, url: str) -> str:
+        validate_public_http_url(url)
         try:
             return self._download_pdf(url)
         except Exception as e:
@@ -88,7 +90,10 @@ class Scraper:
         return path
 
     def run_scraper(self, url):
+        validate_public_http_url(url)
         self.sb.open(url)
+        current_url = self.sb.get_current_url()
+        validate_public_http_url(current_url)
         self.sb.sleep(3)
         
         self.sb.solve_captcha()
@@ -101,6 +106,8 @@ class Scraper:
                     value = pdf_link.get_attribute(attr)
                     print(f"Checking attribute '{attr}': {value}")
                     if value and _is_probable_pdf_url(value):
+                        value = urljoin(current_url, value)
+                        validate_public_http_url(value)
                         print(f"Found PDF URL: {value}")
                         return value
                 except Exception as e:
@@ -114,6 +121,7 @@ class Scraper:
 
         current_url = self.sb.get_current_url()
         absolute_url = urljoin(current_url, url)
+        validate_public_http_url(absolute_url)
         user_agent = self.sb.evaluate("navigator.userAgent")
 
         headers = {
@@ -130,13 +138,20 @@ class Scraper:
         }
 
         print(f"Absolute URL to download: {absolute_url}")
-        response = httpx.get(
-            absolute_url,
-            cookies=httpx_cookies,
-            headers=headers,
-            follow_redirects=True,
-            timeout=60,
-        )
+        for _ in range(10):
+            validate_public_http_url(absolute_url)
+            response = httpx.get(
+                absolute_url,
+                cookies=httpx_cookies,
+                headers=headers,
+                follow_redirects=False,
+                timeout=60,
+            )
+            if not response.is_redirect:
+                break
+            absolute_url = urljoin(absolute_url, response.headers["location"])
+        else:
+            raise RuntimeError("Too many PDF redirects")
         response.raise_for_status()
 
         content_type = response.headers.get("content-type", "").lower()
@@ -163,6 +178,7 @@ class Scraper:
 
         current_url = self.sb.get_current_url()
         absolute_url = urljoin(current_url, url)
+        validate_public_http_url(absolute_url)
         filename = filename or unquote(os.path.basename(urlparse(absolute_url).path)) or f"{uuid.uuid4()}.pdf"
         filename = re.sub(r'[<>:"/\\|?*]+', "_", filename).strip(" .")
         if not filename.lower().endswith(".pdf"):
@@ -185,6 +201,7 @@ class Scraper:
 
         self.sb.loop.run_until_complete(self.sb.page.set_download_path(output_path))
         self.sb.open(absolute_url)
+        validate_public_http_url(self.sb.get_current_url())
 
         deadline = time.time() + timeout
         last_http_attempt = 0

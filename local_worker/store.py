@@ -47,6 +47,14 @@ class ProviderSetup(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
 
+class BackendSession(Base):
+    __tablename__ = "backend_session"
+
+    user_id: Mapped[str] = mapped_column(String, primary_key=True)
+    username: Mapped[str] = mapped_column(String, nullable=False)
+    jwt: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
@@ -233,6 +241,28 @@ def get_provider_setup(user_id: str) -> dict[str, Any]:
 def has_provider_setup(user_id: str) -> bool:
     with _lock, _session() as db:
         return db.get(ProviderSetup, str(user_id)) is not None
+
+
+def update_backend_session(user_id: str, username: str, jwt: str) -> None:
+    with _lock, _session() as db:
+        row = db.get(BackendSession, str(user_id))
+        if row is None:
+            db.add(BackendSession(user_id=str(user_id), username=username, jwt=jwt))
+        else:
+            row.username = username
+            row.jwt = jwt
+        db.commit()
+
+
+def get_backend_session(user_id: str) -> dict[str, str]:
+    with _lock, _session() as db:
+        row = db.get(BackendSession, str(user_id))
+        return {"username": row.username, "jwt": row.jwt} if row else {}
+
+
+def has_backend_session(user_id: str) -> bool:
+    with _lock, _session() as db:
+        return db.get(BackendSession, str(user_id)) is not None
 
 
 def profile_markdown(user_id: str) -> str:

@@ -24,6 +24,10 @@ SEARCH_BASE_URLS = {
 }
 
 
+def backend_api_url() -> str:
+    return os.getenv("IATREON_BACKEND_API_URL", "https://iatreon.efecal.hackclub.app").rstrip("/")
+
+
 def set_current_user_id(user_id: Any):
     return _current_user_id.set(str(user_id) if user_id else None)
 
@@ -48,17 +52,31 @@ def provider_setup() -> dict[str, Any]:
         return {}
 
 
+def backend_session() -> dict[str, str]:
+    if os.getenv("IATREON_LOCAL_WORKER") != "1":
+        return {"jwt": os.getenv("IATREON_BACKEND_API_TOKEN", "")}
+    user_id = _current_user_id.get()
+    if not user_id:
+        return {}
+    try:
+        from local_worker import store
+
+        return store.get_backend_session(user_id)
+    except Exception:
+        return {}
+
+
 def llm_config() -> dict[str, str | None]:
     setup = provider_setup()
     provider = setup.get("llm_provider") or "Iatreon AI"
     base_url = setup.get("llm_base_url")
     if not base_url and (provider == "Iatreon AI" or not setup):
-        base_url = os.getenv("AI_API_BASE_URL") or LLM_BASE_URLS["Iatreon AI"]
+        base_url = os.getenv("AI_API_BASE_URL") or backend_api_url() + "/v1"
     if not base_url:
         base_url = LLM_BASE_URLS.get(provider) or os.getenv("AI_API_BASE_URL")
     return {
         "provider": provider,
-        "api_key": setup.get("llm_api_key") or os.getenv("AI_API_KEY"),
+        "api_key": backend_session().get("jwt") if provider == "Iatreon AI" else setup.get("llm_api_key") or os.getenv("AI_API_KEY"),
         "base_url": base_url,
     }
 
@@ -68,9 +86,9 @@ def search_config() -> dict[str, str | None]:
     provider = setup.get("search_provider") or "Iatreon AI"
     base_url = setup.get("search_base_url")
     if not base_url and (provider == "Iatreon AI" or not setup):
-        base_url = os.getenv("EXA_BASE_URL") or SEARCH_BASE_URLS["Iatreon AI"]
+        base_url = os.getenv("EXA_BASE_URL") or backend_api_url() + "/v1/exa"
     return {
         "provider": provider,
-        "api_key": setup.get("search_api_key") or os.getenv("EXA_API_KEY") or os.getenv("AI_API_KEY"),
+        "api_key": backend_session().get("jwt") if provider == "Iatreon AI" else setup.get("search_api_key") or os.getenv("EXA_API_KEY") or os.getenv("AI_API_KEY"),
         "base_url": base_url,
     }

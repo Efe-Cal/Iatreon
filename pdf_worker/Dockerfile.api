@@ -10,7 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY pdf_worker/requirements-api.txt /app/pdf_worker/requirements-api.txt
 RUN pip install --no-cache-dir -r /app/pdf_worker/requirements-api.txt
 
-COPY pdf_worker/api.py /app/pdf_worker/api.py
+COPY pdf_worker/api.py pdf_worker/security.py /app/pdf_worker/
 
 EXPOSE 8000
 

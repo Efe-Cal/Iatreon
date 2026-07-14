@@ -7,6 +7,7 @@ from urllib.parse import unquote, urlparse
 from pypdf import PdfReader
 import httpx
 from liteparse import LiteParse
+from local_worker.provider_config import backend_api_url, backend_session
 
 
 DOI_PATTERN = re.compile(r"10\.\d{4,9}/[-._;()/:A-Z0-9]+", re.IGNORECASE)
@@ -69,9 +70,11 @@ class PDFClient:
         print(f"[PDFClient] PDF worker unavailable for {url}: {reason}")
 
     async def download_pdf(self, url: str, client: httpx.AsyncClient) -> bytes | None:
-        base_url = os.getenv("PDF_SCRAPER_BASE_URL", "http://localhost:8000")
+        base_url = backend_api_url()
+        token = backend_session().get("jwt", "")
+        headers = {"Authorization": f"Bearer {token}"}
         try:
-            response = await client.post(f"{base_url}/scrape_pdf/", json={"pdf_url": url})
+            response = await client.post(f"{base_url}/api/v1/pdf/jobs", json={"pdf_url": url}, headers=headers)
             if response.status_code != 202:
                 self._pdf_worker_failed(url, f"enqueue returned {response.status_code}")
                 return None
@@ -82,17 +85,14 @@ class PDFClient:
                 return None
 
             for _ in range(60):
-                status_response = await client.get(f"{base_url}/get_pdf/{job_id}")
+                status_response = await client.get(f"{base_url}/api/v1/pdf/jobs/{job_id}", headers=headers)
                 if status_response.status_code != 200:
                     self._pdf_worker_failed(url, f"status returned {status_response.status_code}")
                     return None
 
                 status_data = status_response.json()
                 if status_data.get("status") == "finished":
-                    download = status_data.get("result")
-                    if not download:
-                        self._pdf_worker_failed(url, "finished job did not include a file path")
-                        return None
+                    pass
                 elif status_data.get("status") == "failed":
                     self._pdf_worker_failed(url, "job failed")
                     return None
@@ -100,7 +100,7 @@ class PDFClient:
                     await asyncio.sleep(2)
                     continue
 
-                pdf = await client.get(f"{base_url}/download/", params={"file_path": download})
+                pdf = await client.get(f"{base_url}/api/v1/pdf/jobs/{job_id}/content", headers=headers)
                 if pdf.status_code != 200:
                     self._pdf_worker_failed(url, f"download returned {pdf.status_code}")
                     return None

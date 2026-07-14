@@ -13,7 +13,8 @@ import (
 type screen int
 
 const (
-	dashboardScreen screen = iota
+	backendAccountScreen screen = iota
+	dashboardScreen
 	providerSetupScreen
 	setupScreen
 	chatScreen
@@ -22,19 +23,21 @@ const (
 )
 
 type model struct {
-	active           screen
-	hasProfile       bool
-	hasProviderSetup bool
-	dashboard        dashboardModel
-	providerSetup    providerSetupModel
-	setup            setupModel
-	chat             chatModel
-	report           reportModel
-	history          historyModel
-	width            int
-	height           int
-	userid           string
-	worker           *Worker
+	active            screen
+	hasBackendSession bool
+	hasProfile        bool
+	hasProviderSetup  bool
+	dashboard         dashboardModel
+	providerSetup     providerSetupModel
+	backendAccount    backendAccountModel
+	setup             setupModel
+	chat              chatModel
+	report            reportModel
+	history           historyModel
+	width             int
+	height            int
+	userid            string
+	worker            *Worker
 }
 
 var (
@@ -48,14 +51,14 @@ func NewModel(userid string, hasProfile bool) model {
 	if err != nil {
 		log.Printf("python worker unavailable: %v", err)
 	}
-	return newModel(userid, hasProfile, hasProfile, worker)
+	return newModel(userid, hasProfile, hasProfile, hasProfile, worker)
 }
 
 func NewLocalModel(userid string) model {
 	worker, err := StartPythonWorker()
 	if err != nil {
 		log.Printf("python worker unavailable: %v", err)
-		return newModel(userid, false, false, nil)
+		return newModel(userid, false, false, false, nil)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -69,16 +72,24 @@ func NewLocalModel(userid string) model {
 	if err != nil {
 		log.Printf("could not load local provider status: %v", err)
 	}
-	return newModel(userid, hasProfile, hasProviderSetup, worker)
+	session, err := worker.BackendSession(ctx, userid)
+	if err != nil {
+		log.Printf("could not load backend session: %v", err)
+	}
+	hasBackendSession := session.JWT != "" && validateBackendSession(ctx, session.JWT)
+	return newModel(userid, hasProfile, hasProviderSetup, hasBackendSession, worker)
 }
 
-func newModel(userid string, hasProfile bool, hasProviderSetup bool, worker *Worker) model {
+func newModel(userid string, hasProfile bool, hasProviderSetup bool, hasBackendSession bool, worker *Worker) model {
 	dash := newDashboardModel(userid)
+	backendAccount := newBackendAccountModel(userid, worker)
 	providerSetup := newProviderSetupModel(userid, worker)
 	setup := newSetupModel(userid, worker, hasProfile)
 
 	var active screen
-	if !hasProviderSetup {
+	if !hasBackendSession {
+		active = backendAccountScreen
+	} else if !hasProviderSetup {
 		active = providerSetupScreen
 	} else if !hasProfile {
 		active = setupScreen
@@ -87,20 +98,25 @@ func newModel(userid string, hasProfile bool, hasProviderSetup bool, worker *Wor
 	}
 
 	m := model{
-		active:           active,
-		hasProfile:       hasProfile,
-		hasProviderSetup: hasProviderSetup,
-		dashboard:        dash,
-		providerSetup:    providerSetup,
-		setup:            setup,
-		userid:           userid,
-		worker:           worker,
+		active:            active,
+		hasBackendSession: hasBackendSession,
+		hasProfile:        hasProfile,
+		hasProviderSetup:  hasProviderSetup,
+		dashboard:         dash,
+		providerSetup:     providerSetup,
+		backendAccount:    backendAccount,
+		setup:             setup,
+		userid:            userid,
+		worker:            worker,
 	}
 
 	return m
 }
 
 func (m model) Init() tea.Cmd {
+	if m.active == backendAccountScreen {
+		return m.backendAccount.Init()
+	}
 	if m.active == providerSetupScreen {
 		return m.providerSetup.Init()
 	}
@@ -115,6 +131,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = wsm.Width
 		m.height = wsm.Height
 		m.dashboard.SetSize(wsm.Width, m.bodyHeightFor(dashboardScreen))
+		m.backendAccount.SetSize(wsm.Width, m.bodyHeightFor(backendAccountScreen))
 		m.providerSetup.SetSize(wsm.Width, m.bodyHeightFor(providerSetupScreen))
 		m.setup.SetSize(wsm.Width, m.bodyHeightFor(setupScreen))
 		m.chat.SetSize(wsm.Width, m.bodyHeightFor(chatScreen))
@@ -128,6 +145,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.active {
+	case backendAccountScreen:
+		return m.updateBackendAccount(msg)
 	case dashboardScreen:
 		return m.updateDashboard(msg)
 	case providerSetupScreen:
@@ -143,6 +162,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+}
+
+func (m model) updateBackendAccount(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.backendAccount.Update(msg)
+	m.backendAccount = updated
+	if m.backendAccount.submitted {
+		m.hasBackendSession = true
+		m.backendAccount = newBackendAccountModel(m.userid, m.worker)
+		if !m.hasProviderSetup {
+			m.active = providerSetupScreen
+			return m, m.providerSetup.Init()
+		}
+		if !m.hasProfile {
+			m.active = setupScreen
+			return m, m.setup.Init()
+		}
+		m.active = dashboardScreen
+	}
+	return m, cmd
 }
 
 func (m *model) initChat(cm chatModel) chatModel {
@@ -308,6 +346,8 @@ func (m model) View() string {
 
 	var body string
 	switch m.active {
+	case backendAccountScreen:
+		body = m.backendAccount.View()
 	case dashboardScreen:
 		body = m.dashboard.View()
 	case providerSetupScreen:
@@ -337,6 +377,8 @@ func (m model) chrome() (string, []string) {
 
 func (m model) chromeFor(active screen) (string, []string) {
 	switch active {
+	case backendAccountScreen:
+		return "Iatreon - Account", m.backendAccount.footer()
 	case providerSetupScreen:
 		return "Iatreon - Provider Setup", m.providerSetup.footer()
 	case setupScreen:

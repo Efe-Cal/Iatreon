@@ -93,6 +93,8 @@ def route(name: str, request_model: type[BaseModel]):
     return decorator
 
 from local_worker.models import (
+    BackendSessionRequest,
+    BackendSessionUpdateRequest,
     ChatRequest,
     CitationTextRequest,
     DiagnosisRequest,
@@ -145,6 +147,17 @@ async def update_provider_setup(req: ProviderSetupUpdateRequest):
 @route("provider/status", ProviderSetupStatusRequest)
 async def provider_status(req: ProviderSetupStatusRequest):
     return {"has_provider_setup": store.has_provider_setup(str(req.user_id))}
+
+
+@route("backend-session/update", BackendSessionUpdateRequest)
+async def update_backend_session(req: BackendSessionUpdateRequest):
+    store.update_backend_session(str(req.user_id), req.username, req.jwt)
+    return {"status": "success"}
+
+
+@route("backend-session/get", BackendSessionRequest)
+async def get_backend_session(req: BackendSessionRequest):
+    return store.get_backend_session(str(req.user_id))
 
 
 @route("history/list", HistoryRequest)

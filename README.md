@@ -71,10 +71,10 @@ Copy the `.env.example` file to `.env` and fill in your AI API key and other con
 cp .env.example .env
 ```
 
-### Running the PDF Worker in Docker
-Build and start the Redis service, FastAPI app, and RQ worker together:
+### Running the Backend and PDF Worker in Docker
+Build and start the authenticated backend, private PDF API, Redis, and RQ worker together:
 ```bash
-docker compose up --build redis pdf-api pdf-worker
+docker compose up --build backend-api pdf-api pdf-worker
 ```
 
-The API listens on port `8000`, Redis listens on port `6379`, and the worker writes downloaded files to the shared `downloads` volume. The API uses a slim Python image, while the RQ worker uses a browser-capable image for SeleniumBase/Chrome.
+The backend listens on port `8787` and uses a private PostgreSQL service. The PDF API is bound to `127.0.0.1:8000` for local debugging, Redis has no host port, and the worker writes downloaded files to the shared `downloads` volume.

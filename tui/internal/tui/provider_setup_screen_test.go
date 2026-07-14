@@ -5,26 +5,17 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
 func TestProviderSetupDefaultPathSubmits(t *testing.T) {
-	t.Setenv("IATREON_PROXY_BASE_URL", "http://proxy.local/")
+	t.Setenv("IATREON_BACKEND_API_URL", "http://backend.local/")
 	m := newProviderSetupModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", nil)
 
 	m, _ = m.Update(testKey("enter"))
-	if m.step != providerStepProxyUsername {
-		t.Fatalf("default AI provider should ask for proxy username, got step %v", m.step)
-	}
-	m, _ = m.Update(testKey("alice"))
-	m, _ = m.Update(testKey("enter"))
-	if m.step != providerStepProxyPassword {
-		t.Fatalf("proxy username should advance to password, got step %v", m.step)
-	}
-	m, _ = m.Update(testKey("password123"))
-	m, _ = m.Update(testKey("enter"))
 	if m.step != providerStepSearch {
-		t.Fatalf("proxy password should advance to search, got step %v", m.step)
+		t.Fatalf("default AI provider should advance to search, got step %v", m.step)
 	}
 
 	m, _ = m.Update(testKey("enter"))
@@ -39,11 +30,14 @@ func TestProviderSetupDefaultPathSubmits(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected submit command")
 	}
-	if got := m.llmBaseURLValue(); got != "http://proxy.local/v1" {
-		t.Fatalf("llm proxy base URL = %q", got)
+	if got := m.llmBaseURLValue(); got != "http://backend.local/v1" {
+		t.Fatalf("llm backend base URL = %q", got)
 	}
-	if got := m.searchBaseURLValue(); got != "http://proxy.local/v1/exa" {
-		t.Fatalf("search proxy base URL = %q", got)
+	if got := m.searchBaseURLValue(); got != "http://backend.local/v1/exa" {
+		t.Fatalf("search backend base URL = %q", got)
+	}
+	if m.llmAPIKeyValue() != "" || m.searchAPIKeyValue() != "" {
+		t.Fatal("Iatreon JWT must not be copied into provider API-key fields")
 	}
 }
 
@@ -89,12 +83,12 @@ func TestProviderSetupCustomProviderDefaultsBaseURL(t *testing.T) {
 
 func TestFirstRunStartsWithProviderSetup(t *testing.T) {
 	m := NewModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", false)
-	if m.active != providerSetupScreen {
-		t.Fatalf("new user should start at provider setup, active=%v", m.active)
+	if m.active != backendAccountScreen {
+		t.Fatalf("new user should start at backend account setup, active=%v", m.active)
 	}
 }
 
-func TestAuthenticateIatreonProxyReadsToken(t *testing.T) {
+func TestAuthenticateBackendAccountReadsToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/auth/token" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
@@ -107,7 +101,7 @@ func TestAuthenticateIatreonProxyReadsToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	token, err := authenticateIatreonProxy(context.Background(), server.URL, "alice", "password123")
+	token, err := authenticateBackendAccount(context.Background(), server.URL, "token", "alice", "password123")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,10 +110,44 @@ func TestAuthenticateIatreonProxyReadsToken(t *testing.T) {
 	}
 }
 
-func TestIatreonProxyBaseURLDefaultsToHostedProxy(t *testing.T) {
-	t.Setenv("IATREON_PROXY_BASE_URL", "")
+func TestBackendAPIURLDefaultsToHostedBackend(t *testing.T) {
+	t.Setenv("IATREON_BACKEND_API_URL", "")
 
-	if got := iatreonProxyBaseURL(); got != "https://iatreon.efecal.hackclub.app" {
-		t.Fatalf("proxy base URL = %q", got)
+	if got := backendAPIURL(); got != "https://iatreon.efecal.hackclub.app" {
+		t.Fatalf("backend base URL = %q", got)
+	}
+}
+
+func TestBackendAccountOffersExplicitChoices(t *testing.T) {
+	m := newBackendAccountModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", nil)
+	view := m.View()
+	if !strings.Contains(view, "Sign in") || !strings.Contains(view, "Create account") {
+		t.Fatalf("account choices missing from view: %q", view)
+	}
+}
+
+func TestExpiredBackendSessionRequiresAuthentication(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	t.Setenv("IATREON_BACKEND_API_URL", server.URL)
+	if validateBackendSession(context.Background(), "expired") {
+		t.Fatal("expired backend session should not validate")
+	}
+}
+
+func TestCreateAccountUsesRegisterEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/auth/register" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprint(w, `{"access_token":"jwt-created"}`)
+	}))
+	defer server.Close()
+	token, err := authenticateBackendAccount(context.Background(), server.URL, "register", "alice", "password123")
+	if err != nil || token != "jwt-created" {
+		t.Fatalf("create account token=%q err=%v", token, err)
 	}
 }

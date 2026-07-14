@@ -1,8 +1,6 @@
 services:
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
 
   pdf-api:
     build:
@@ -14,7 +12,7 @@ services:
     depends_on:
       - redis
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - downloads:/app/downloads
     command: ["uvicorn", "pdf_worker.api:app", "--host", "0.0.0.0", "--port", "8000"]
@@ -32,56 +30,39 @@ services:
       - downloads:/app/downloads
       - worker-profile:/app/pdf_worker/chrome_profile
 
-  hcai-proxy:
+  backend-api:
     build:
       context: .
-      dockerfile: hcai_proxy/Dockerfile
+      dockerfile: backend_api/Dockerfile
     environment:
       HCAI_API_KEY: ${HCAI_API_KEY}
       JWT_SECRET: ${JWT_SECRET}
-      HCAI_PROXY_DB_URL: sqlite:////data/hcai_proxy.sqlite3
-    ports:
-      - "8787:8787"
-    volumes:
-      - hcai-proxy-data:/data
-    command: ["uvicorn", "hcai_proxy.main:app", "--host", "0.0.0.0", "--port", "8787", "--no-access-log"]
-
-  api:
-    build:
-      context: .
-      dockerfile: api/Dockerfile
-    environment:
-      DATABASE_URL: postgresql+asyncpg://app:app@db:5432/app
-      PDF_SCRAPER_BASE_URL: http://pdf-api:8000
+      JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-2592000}
+      BACKEND_API_DB_URL: postgresql+asyncpg://backend_api:backend_api@backend-db:5432/backend_api
+      PDF_WORKER_BASE_URL: http://pdf-api:8000
     depends_on:
-      db:
+      backend-db:
         condition: service_healthy
       pdf-api:
         condition: service_started
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
     ports:
-      - "8001:8000"
+      - "8787:8787"
+    command: ["uvicorn", "backend_api.main:app", "--host", "0.0.0.0", "--port", "8787", "--no-access-log"]
 
-  db:
+  backend-db:
     image: postgres:16
     environment:
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-      POSTGRES_DB: app
+      POSTGRES_USER: backend_api
+      POSTGRES_PASSWORD: backend_api
+      POSTGRES_DB: backend_api
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      test: ["CMD-SHELL", "pg_isready -U backend_api -d backend_api"]
       interval: 30s
       timeout: 5s
       retries: 5
-    ports: ["5432:5432"]
-    volumes: [pgdata:/var/lib/postgresql/data]
+    volumes: [backend-api-data:/var/lib/postgresql/data]
 
 volumes:
   downloads:
   worker-profile:
-  hcai-proxy-data:
-  pgdata:
+  backend-api-data:

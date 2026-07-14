@@ -19,6 +19,16 @@ class ProviderSetupStatusRequest(BaseModel):
     user_id: UUID
 
 
+class BackendSessionRequest(BaseModel):
+    user_id: UUID
+
+
+class BackendSessionUpdateRequest(BaseModel):
+    user_id: UUID
+    username: str
+    jwt: str
+
+
 class DiagnosisRequest(BaseModel):
     user_id: UUID
     intake_id: UUID
