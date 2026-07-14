@@ -16,6 +16,9 @@ from sqlalchemy.exc import IntegrityError
 
 from .database import User, db_session
 
+from dotenv import load_dotenv
+
+load_dotenv()
 
 JWT_ALG = "HS256"
 PBKDF2_ITERATIONS = 210_000

@@ -7,6 +7,9 @@ from starlette.responses import StreamingResponse
 
 from .auth import current_user
 
+from dotenv import load_dotenv
+
+load_dotenv()
 
 UPSTREAM_BASE_URL = "https://ai.hackclub.com/proxy/v1"
 HOP_BY_HOP_HEADERS = {
@@ -66,7 +69,7 @@ async def proxy(path: str, request: Request) -> StreamingResponse:
         await client.aclose()
 
     return StreamingResponse(
-        upstream_response.aiter_raw(),
+        upstream_response.aiter_bytes(),
         status_code=upstream_response.status_code,
         headers=_filtered_response_headers(upstream_response.headers),
         background=BackgroundTask(close_upstream),
