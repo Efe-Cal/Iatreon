@@ -11,7 +11,9 @@ import (
 )
 
 type Pmodel struct {
-	frame float64
+	frame            float64
+	shimmerStartedAt time.Time
+	now              time.Time
 }
 
 func (m Pmodel) Init() tea.Cmd {
@@ -30,6 +32,7 @@ func (m Pmodel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg.(type) {
 	case tickMsg:
 		m.frame += 1
+		m.now = time.Now()
 		return m, tick()
 	case tea.KeyMsg:
 		return m, tea.Quit
@@ -39,68 +42,89 @@ func (m Pmodel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Pmodel) View() string {
-	offset := getPhaseOffset2("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9")
-	offset2 := getPhaseOffset2("asfasfasf-bee0-4565-ad42-sdaasdasdasd")
+	offset := getPhaseOffset("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9")
+	offset2 := getPhaseOffset("asfasfasf-bee0-4565-ad42-sdaasdasdasd")
 
-	return fmt.Sprintf("Offset 1: %.2f\nOffset 2: %.2f\n", offset, offset2) + m.shimmer("Loading response from assistant...", offset) + "\n" + m.shimmer("Loading response...", offset2) + "\n\npress any key to quit\n"
+	return fmt.Sprintf("Offset 1: %d\nOffset 2: %d\n", offset, offset2) + m.shimmer("Loading response from assistant...Loading response from assistant...", 0.0) + "\n" + m.shimmer("Loading response...", 0.0) + "\n\npress any key to quit\n"
 }
 
-func getPhaseOffset2(toolID string) float64 {
-	if toolID == "" {
-		return 0
-	}
-	var sum int
-	for _, r := range toolID {
-		sum += int(r)
-	}
-	return float64(sum%100) / 5.0
-}
+// const (
+// 	shimmerCycle = 4 * time.Second
+// 	shimmerSweep = 1200 * time.Millisecond
+// )
 
-func (m *Pmodel) shimmer(text string, offset float64) string {
+func (m *Pmodel) shimmer(text string, delay time.Duration) string {
 	runes := []rune(text)
+	if len(runes) == 0 {
+		return ""
+	}
+
+	const (
+		baseBrightness = 118.0
+		peakBrightness = 250.0
+
+		sigma = 7.0
+	)
+
+	baseStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#767676"))
+
+	elapsed := m.now.Sub(m.shimmerStartedAt) - delay
+	if elapsed < 0 {
+		return baseStyle.Render(text)
+	}
+
+	cyclePosition := elapsed % shimmerCycle
+
+	if cyclePosition >= shimmerSweep {
+		return baseStyle.Render(text)
+	}
+
+	progress := float64(cyclePosition) / float64(shimmerSweep)
+
+	startPosition := -3 * sigma
+	endPosition := float64(len(runes)-1) + 3*sigma
+
+	center := startPosition +
+		progress*(endPosition-startPosition)
 
 	var builder strings.Builder
 
-	cycleFrames := 80.0 + offset
-	activeFrames := 0.65 * cycleFrames //65.0
-	bandWidth := 5.0
-
-	cyclePos := math.Mod(m.frame, cycleFrames)
-
-	if cyclePos > activeFrames {
-		style := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#787878"))
-
-		return style.Render(text)
-	}
-
-	progress := cyclePos / activeFrames
-
-	center := -bandWidth + progress*(float64(len(runes))+bandWidth*2)
-
 	for i, r := range runes {
-		dist := math.Abs(float64(i) - center)
+		distance := (float64(i) - center) / sigma
 
-		intensity := 0.0
+		intensity := math.Exp(-0.5 * distance * distance)
 
-		if dist < bandWidth {
-			x := 1.0 - dist/bandWidth
-			intensity = math.Sin(x * math.Pi / 2)
-		}
+		brightness := baseBrightness +
+			(peakBrightness-baseBrightness)*intensity
 
-		brightness := int(120 + 120*intensity)
+		channel := int(math.Round(brightness))
+		channel = max(0, min(255, channel))
 
-		hexColor := fmt.Sprintf("#%02x%02x%02x", brightness, brightness, brightness)
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color(hexColor))
+		color := fmt.Sprintf(
+			"#%02x%02x%02x",
+			channel,
+			channel,
+			channel,
+		)
 
-		builder.WriteString(style.Render(string(r)))
+		builder.WriteString(
+			lipgloss.NewStyle().
+				Foreground(lipgloss.Color(color)).
+				Render(string(r)),
+		)
 	}
 
 	return builder.String()
 }
 
 func NewPreviewModel() Pmodel {
-	return Pmodel{}
+	now := time.Now()
+
+	return Pmodel{
+		shimmerStartedAt: now,
+		now:              now,
+	}
 }
 
 func main() {

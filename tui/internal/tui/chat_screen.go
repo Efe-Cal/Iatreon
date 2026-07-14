@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"math"
 	"slices"
@@ -38,8 +39,10 @@ type chatModel struct {
 	viewport viewport.Model
 	spinner  spinner.Model
 
-	toolSpinner  spinner.Model
-	shimmerFrame float64
+	toolSpinner      spinner.Model
+	shimmerFrame     float64
+	now              time.Time
+	shimmerStartedAt time.Time
 
 	history          []messageItem
 	streamingMessage string
@@ -214,45 +217,73 @@ func (m *chatModel) renderHistory() string {
 	return sb.String()
 }
 
-func (m *chatModel) shimmer(text string, offset float64) string {
+const (
+	shimmerCycle = 4 * time.Second
+	shimmerSweep = 1500 * time.Millisecond
+)
+
+func (m *chatModel) shimmer(text string, delay time.Duration) string {
 	runes := []rune(text)
+	if len(runes) == 0 {
+		return ""
+	}
+
+	const (
+		baseBrightness = 118.0
+		peakBrightness = 250.0
+
+		sigma = 7.0
+	)
+
+	baseStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#767676"))
+
+	elapsed := m.now.Sub(m.shimmerStartedAt) - delay
+	if elapsed < 0 {
+		return baseStyle.Render(text)
+	}
+
+	cyclePosition := elapsed % shimmerCycle
+
+	if cyclePosition >= shimmerSweep {
+		return baseStyle.Render(text)
+	}
+
+	progress := float64(cyclePosition) / float64(shimmerSweep)
+
+	startPosition := -3 * sigma
+	endPosition := float64(len(runes)-1) + 3*sigma
+
+	center := startPosition +
+		progress*(endPosition-startPosition)
 
 	var builder strings.Builder
 
-	cycleFrames := 80.0 + offset
-	activeFrames := 0.65 * cycleFrames //65.0
-	bandWidth := 5.0
-
-	cyclePos := math.Mod(m.shimmerFrame, cycleFrames)
-
-	if cyclePos > activeFrames {
-		style := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#787878"))
-
-		return style.Render(text)
-	}
-
-	progress := cyclePos / activeFrames
-
-	center := -bandWidth + progress*(float64(len(runes))+bandWidth*2)
-
 	for i, r := range runes {
-		dist := math.Abs(float64(i) - center)
+		distance := (float64(i) - center) / sigma
 
-		intensity := 0.0
+		intensity := math.Exp(-0.5 * distance * distance)
 
-		if dist < bandWidth {
-			x := 1.0 - dist/bandWidth
-			intensity = math.Sin(x * math.Pi / 2)
-		}
+		brightness := baseBrightness +
+			(peakBrightness-baseBrightness)*intensity
 
-		brightness := int(150 + 120*intensity)
+		channel := int(math.Round(brightness))
+		channel = max(0, min(255, channel))
 
-		hexColor := fmt.Sprintf("#%02x%02x%02x", brightness, brightness, brightness)
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color(hexColor))
+		color := fmt.Sprintf(
+			"#%02x%02x%02x",
+			channel,
+			channel,
+			channel,
+		)
 
-		builder.WriteString(style.Render(string(r)))
+		builder.WriteString(
+			lipgloss.NewStyle().
+				Foreground(lipgloss.Color(color)).
+				Render(string(r)),
+		)
 	}
+
 	return builder.String()
 }
 
@@ -266,16 +297,14 @@ func (m *chatModel) renderAgentSeperator(agent string) string {
 	)
 }
 
-func getPhaseOffset(toolID string) float64 {
+func getPhaseOffset(toolID string) int {
 	if toolID == "" {
 		return 0
 	}
-	var sum int
-	for _, r := range toolID {
-		sum += int(r)
-	}
-	return 0.0
-	// return float64(sum%100) / 5.0
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(toolID))
+
+	return int(hash.Sum32() % 501)
 }
 
 func (m *chatModel) renderToolMessage(toolMsg messageItem) string {
@@ -284,7 +313,7 @@ func (m *chatModel) renderToolMessage(toolMsg messageItem) string {
 
 	if toolMsg.toolMessage.running {
 		offset := getPhaseOffset(toolMsg.toolMessage.toolID)
-		shimmeringText := m.shimmer(rawText, offset)
+		shimmeringText := m.shimmer(rawText, time.Duration(offset)*time.Millisecond)
 		return lipgloss.JoinHorizontal(lipgloss.Left, m.toolSpinner.View(), " ", shimmeringText)
 	}
 	completedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
