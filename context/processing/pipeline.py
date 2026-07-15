@@ -142,7 +142,7 @@ class MedicalKnowledgePipeline:
             if text:
                 section += f"\n\n{text[:2000]}..."
             context_parts.append(section)
-            print(book)
+            # print(book)
         return "\n\n" + ("─" * 60 + "\n\n").join(context_parts)
 
 

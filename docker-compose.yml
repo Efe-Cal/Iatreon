@@ -37,7 +37,8 @@ services:
     environment:
       HCAI_API_KEY: ${HCAI_API_KEY}
       JWT_SECRET: ${JWT_SECRET}
-      JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-2592000}
+      ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-604800}
+      REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-2592000}
       BACKEND_API_DB_URL: postgresql+asyncpg://backend_api:backend_api@backend-db:5432/backend_api
       PDF_WORKER_BASE_URL: http://pdf-api:8000
     depends_on:

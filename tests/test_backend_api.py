@@ -1,7 +1,10 @@
 import importlib
+import hashlib
 import sqlite3
 import sys
+from datetime import datetime, timezone
 
+import jwt
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -19,9 +22,13 @@ def load_backend(monkeypatch, tmp_path):
 
 
 def register(client, username="alice", password="password123"):
+    return register_pair(client, username, password)["access_token"]
+
+
+def register_pair(client, username="alice", password="password123"):
     response = client.post("/auth/register", json={"username": username, "password": password})
     assert response.status_code == 201
-    return response.json()["access_token"]
+    return response.json()
 
 
 def test_auth_lifecycle_failures_and_route_protection(monkeypatch, tmp_path):
@@ -37,9 +44,16 @@ def test_auth_lifecycle_failures_and_route_protection(monkeypatch, tmp_path):
         assert client.post("/v1/chat/completions", json={}).status_code == 401
         assert client.post("/api/v1/pdf/jobs", json={"pdf_url": "https://example.com/a.pdf"}).status_code == 401
 
-        monkeypatch.setenv("JWT_TTL_SECONDS", "-1")
+        monkeypatch.setenv("ACCESS_TOKEN_TTL_SECONDS", "-1")
         expired = client.post("/auth/token", json={"username": "alice", "password": "password123"}).json()["access_token"]
         assert client.get("/auth/me", headers={"Authorization": f"Bearer {expired}"}).status_code == 401
+
+        legacy = jwt.encode(
+            {"sub": me.json()["id"], "exp": datetime.now(timezone.utc).timestamp() + 60},
+            "test-secret",
+            algorithm="HS256",
+        )
+        assert client.get("/auth/me", headers={"Authorization": f"Bearer {legacy}"}).status_code == 401
 
         with sqlite3.connect(tmp_path / "backend.sqlite3") as db:
             db.execute("delete from users where id = ?", (me.json()["id"],))
@@ -53,6 +67,47 @@ def test_auth_lifecycle_failures_and_route_protection(monkeypatch, tmp_path):
     assert me.json()["username"] == "alice"
 
 
+def test_refresh_tokens_rotate_roll_and_reject_replay(monkeypatch, tmp_path):
+    main = load_backend(monkeypatch, tmp_path)
+    with TestClient(main.app) as client:
+        pair = register_pair(client)
+        access_payload = jwt.decode(pair["access_token"], "test-secret", algorithms=["HS256"])
+        assert access_payload["typ"] == "access"
+        assert 6.9 * 24 * 60 * 60 < access_payload["exp"] - access_payload["iat"] <= 7 * 24 * 60 * 60
+
+        first = client.post("/auth/refresh", json={"refresh_token": pair["refresh_token"]})
+        assert first.status_code == 200
+        replacement = first.json()
+        assert replacement["access_token"] != pair["access_token"]
+        assert replacement["refresh_token"] != pair["refresh_token"]
+
+        replay = client.post("/auth/refresh", json={"refresh_token": pair["refresh_token"]})
+        assert replay.status_code == 401
+        assert client.post("/auth/refresh", json={"refresh_token": replacement["refresh_token"]}).status_code == 401
+        assert client.post("/auth/refresh", json={"refresh_token": "malformed"}).status_code == 401
+
+    with sqlite3.connect(tmp_path / "backend.sqlite3") as db:
+        rows = db.execute("select token_hash, expires_at from refresh_tokens").fetchall()
+    assert pair["refresh_token"] not in repr(rows)
+    assert hashlib.sha256(pair["refresh_token"].encode()).hexdigest() in {row[0] for row in rows}
+    expires = datetime.fromisoformat(rows[1][1])
+    now = datetime.now(timezone.utc)
+    if expires.tzinfo is None:
+        now = now.replace(tzinfo=None)
+    remaining = (expires - now).total_seconds()
+    assert 29.9 * 24 * 60 * 60 < remaining <= 30 * 24 * 60 * 60
+
+
+def test_expired_refresh_token_requires_login(monkeypatch, tmp_path):
+    main = load_backend(monkeypatch, tmp_path)
+    with TestClient(main.app) as client:
+        monkeypatch.setenv("REFRESH_TOKEN_TTL_SECONDS", "-1")
+        pair = register_pair(client)
+        response = client.post("/auth/refresh", json={"refresh_token": pair["refresh_token"]})
+    assert response.status_code == 401
+    assert response.json() == {"detail": "invalid refresh token"}
+
+
 def test_hcai_streams_query_headers_and_body_without_storage(monkeypatch, tmp_path):
     main = load_backend(monkeypatch, tmp_path)
     hcai = importlib.import_module("backend_api.hcai")
@@ -61,7 +116,7 @@ def test_hcai_streams_query_headers_and_body_without_storage(monkeypatch, tmp_pa
     class FakeResponse:
         status_code = 200
         headers = {"content-type": "application/json", "content-length": "999", "connection": "close"}
-        async def aiter_raw(self):
+        async def aiter_bytes(self):
             yield b'{"ok":true}'
         async def aclose(self):
             pass

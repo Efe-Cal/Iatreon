@@ -97,16 +97,16 @@ func TestAuthenticateBackendAccountReadsToken(t *testing.T) {
 			t.Fatalf("unexpected method: %s", r.Method)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"access_token":"jwt-test"}`)
+		fmt.Fprint(w, `{"access_token":"jwt-test","refresh_token":"refresh-test"}`)
 	}))
 	defer server.Close()
 
-	token, err := authenticateBackendAccount(context.Background(), server.URL, "token", "alice", "password123")
+	tokens, err := authenticateBackendAccount(context.Background(), server.URL, "token", "alice", "password123")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if token != "jwt-test" {
-		t.Fatalf("token = %q", token)
+	if tokens.AccessToken != "jwt-test" || tokens.RefreshToken != "refresh-test" {
+		t.Fatalf("tokens = %+v", tokens)
 	}
 }
 
@@ -126,14 +126,14 @@ func TestBackendAccountOffersExplicitChoices(t *testing.T) {
 	}
 }
 
-func TestExpiredBackendSessionRequiresAuthentication(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer server.Close()
-	t.Setenv("IATREON_BACKEND_API_URL", server.URL)
-	if validateBackendSession(context.Background(), "expired") {
-		t.Fatal("expired backend session should not validate")
+func TestBackendAccountCanExplainRequiredSignIn(t *testing.T) {
+	m := newBackendAccountModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", nil)
+	m.requireSignIn("alice", "Session expired.")
+	if m.step != backendAccountPassword || m.username.Value() != "alice" {
+		t.Fatalf("reauth state = step %v username %q", m.step, m.username.Value())
+	}
+	if !strings.Contains(m.View(), "Session expired.") {
+		t.Fatal("reauth reason missing")
 	}
 }
 
@@ -143,11 +143,11 @@ func TestCreateAccountUsesRegisterEndpoint(t *testing.T) {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		w.WriteHeader(http.StatusCreated)
-		fmt.Fprint(w, `{"access_token":"jwt-created"}`)
+		fmt.Fprint(w, `{"access_token":"jwt-created","refresh_token":"refresh-created"}`)
 	}))
 	defer server.Close()
-	token, err := authenticateBackendAccount(context.Background(), server.URL, "register", "alice", "password123")
-	if err != nil || token != "jwt-created" {
-		t.Fatalf("create account token=%q err=%v", token, err)
+	tokens, err := authenticateBackendAccount(context.Background(), server.URL, "register", "alice", "password123")
+	if err != nil || tokens.AccessToken != "jwt-created" || tokens.RefreshToken != "refresh-created" {
+		t.Fatalf("create account tokens=%+v err=%v", tokens, err)
 	}
 }

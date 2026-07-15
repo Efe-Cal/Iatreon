@@ -30,6 +30,7 @@ type backendAccountModel struct {
 	width, height, cursor int
 	username, password    textinput.Model
 	err                   error
+	reason                string
 	submitting, submitted bool
 }
 
@@ -44,6 +45,15 @@ func newBackendAccountModel(userid string, worker *Worker) backendAccountModel {
 	password.CharLimit = 1024
 	password.EchoMode = textinput.EchoPassword
 	return backendAccountModel{userid: userid, worker: worker, username: username, password: password}
+}
+
+func (m *backendAccountModel) requireSignIn(username, reason string) {
+	m.reason = reason
+	m.step = backendAccountPassword
+	m.cursor = 0
+	m.username.SetValue(username)
+	m.username.Blur()
+	m.password.Focus()
 }
 
 func (m *backendAccountModel) SetSize(w, h int) {
@@ -140,12 +150,15 @@ func submitBackendAccount(m backendAccountModel) tea.Cmd {
 		if m.cursor == 1 {
 			action = "register"
 		}
-		token, err := authenticateBackendAccount(ctx, backendAPIURL(), action, strings.TrimSpace(m.username.Value()), m.password.Value())
+		tokens, err := authenticateBackendAccount(ctx, backendAPIURL(), action, strings.TrimSpace(m.username.Value()), m.password.Value())
 		if err == nil {
 			if m.worker == nil {
 				err = fmt.Errorf("encrypted local storage is unavailable")
 			} else {
-				err = m.worker.UpdateBackendSession(ctx, backendSessionUpdateInput{UserID: m.userid, Username: strings.TrimSpace(m.username.Value()), JWT: token})
+				err = m.worker.UpdateBackendSession(ctx, backendSessionUpdateInput{
+					UserID: m.userid, Username: strings.TrimSpace(m.username.Value()),
+					AccessToken: tokens.AccessToken, RefreshToken: tokens.RefreshToken,
+				})
 			}
 		}
 		return backendAccountSubmittedMsg{err: err}
@@ -160,45 +173,29 @@ func backendAPIURL() string {
 	return strings.TrimRight(value, "/")
 }
 
-func authenticateBackendAccount(ctx context.Context, baseURL, action, username, password string) (string, error) {
+func authenticateBackendAccount(ctx context.Context, baseURL, action, username, password string) (backendSession, error) {
 	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/auth/"+action, bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return backendSession{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", err
+		return backendSession{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("account request failed: %s", resp.Status)
+		return backendSession{}, fmt.Errorf("account request failed: %s", resp.Status)
 	}
-	var payload struct {
-		AccessToken string `json:"access_token"`
-	}
+	var payload backendSession
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return "", err
+		return backendSession{}, err
 	}
-	if payload.AccessToken == "" {
-		return "", fmt.Errorf("account request did not return a token")
+	if payload.AccessToken == "" || payload.RefreshToken == "" {
+		return backendSession{}, fmt.Errorf("account request did not return a token pair")
 	}
-	return payload.AccessToken, nil
-}
-
-func validateBackendSession(ctx context.Context, token string) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, backendAPIURL()+"/auth/me", nil)
-	if err != nil {
-		return false
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	return payload, nil
 }
 
 func (m backendAccountModel) View() string {
@@ -225,6 +222,9 @@ func (m backendAccountModel) View() string {
 	}
 	if m.err != nil {
 		content += "\n\n" + errorStyle.Render("Error: "+m.err.Error())
+	}
+	if m.reason != "" {
+		content = systemStyle.Render(m.reason) + "\n\n" + content
 	}
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }

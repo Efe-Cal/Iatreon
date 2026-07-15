@@ -155,7 +155,7 @@ class ResearchAgent:
         return warning
     
     async def _web_search(self, query: str) -> str:
-        print(f"Performing web search for query: {query}")
+        # print(f"Performing web search for query: {query}")
         try:
             results = await asyncio.to_thread(web_search, query, self.effort_settings["web_results"])
         except Exception as exc:
@@ -477,11 +477,11 @@ Prioritize urgent/emergent causes first when red flags are present. Normalize la
         fallback_report = ""
         try:
             async for event in self.agent.astream_events({"messages": messages}, config=self.config, version="v2"):
-                print(f"Received event: {event['event']}")
+                # print(f"Received event: {event['event']}")
                 if event["event"] == "on_chat_model_stream":
                     chunk: AIMessageChunk = event["data"]["chunk"]
                     for text in _iter_stream_text(chunk.content):
-                        print(text, end="", flush=True)
+                        # print(text, end="", flush=True)
                         parts.append(text)
                         yield {"type": "message", "content": text}
 
@@ -491,13 +491,13 @@ Prioritize urgent/emergent causes first when red flags are present. Normalize la
                         fallback_report = fallback_text
 
                 if event["event"] in ["on_tool_start", "on_tool_end"]:
-                    print(event["run_id"])
+                    # print(event["run_id"])
                     # content = event["data"]["input"]["query"] if "query" in event["data"]["input"] else event["data"]["input"]["url"] if "url" in event["data"]["input"] else str(event["data"]["input"])
                     inp = event["data"].get("input", {})
                     content = inp.get("query") or inp.get("url") or str(inp)
                     yield {"type": event["event"].replace("on_", ""), "name": event["name"], "content": content, "tool_call_id": event["run_id"]}
         except Exception as exc:
-            logging.exception("Research agent failed.")
+            logging.exception("Research agent failed: %s", exc)
             yield {
                 "type": "error",
                 "content": f"Research failed because the AI provider is temporarily unavailable: {exc}",

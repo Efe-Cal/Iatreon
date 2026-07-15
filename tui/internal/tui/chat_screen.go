@@ -64,6 +64,7 @@ type chatModel struct {
 	report               string
 	citations            []citation
 	researchSessionID    string
+	authRequired         bool
 }
 
 func (m chatModel) UpdateFooter(a string, idx int) {
@@ -396,6 +397,7 @@ type chunkMsg struct {
 	sessionID         string
 	conversationID    string
 	recoverable       bool
+	authRequired      bool
 	ch                chan chunkMsg
 	toolMessage
 }
@@ -446,7 +448,11 @@ func (m *chatModel) streamMessage(agent AgentHandler, conversationID, userid, ms
 
 			for resp := range responses {
 				if !resp.OK {
-					ch <- chunkMsg{err: fmt.Errorf("%s", resp.Error)}
+					ch <- chunkMsg{
+						err:          fmt.Errorf("%s", resp.Error),
+						authRequired: resp.ErrorCode == "backend_auth_required",
+						recoverable:  resp.ErrorCode == "backend_auth_unavailable",
+					}
 					return
 				}
 				if len(resp.Event) == 0 {
@@ -515,7 +521,13 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		}
 		if msg.err != nil {
 			m.addStreamingMsgToHistory()
-			m.history = append(m.history, messageItem{role: "system", text: "❌ **Error:** " + msg.err.Error()})
+			if msg.authRequired {
+				m.authRequired = true
+				m.retryWithEnter = true
+				m.history = append(m.history, messageItem{role: "system", text: "Your session expired. Sign in to continue."})
+			} else {
+				m.history = append(m.history, messageItem{role: "system", text: "Error: " + msg.err.Error()})
+			}
 			if msg.recoverable {
 				m.addRecoverableRetryPrompt()
 			}
@@ -646,6 +658,12 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 	m.input, cmd = m.input.Update(msg)
 	cmds = append(cmds, cmd)
 	return *m, tea.Batch(cmds...)
+}
+
+func (m *chatModel) reauthenticated() {
+	m.authRequired = false
+	m.history = append(m.history, messageItem{role: "system", text: "Signed in. Press Enter to retry."})
+	m.refreshViewport(true)
 }
 
 func (m *chatModel) View() string {

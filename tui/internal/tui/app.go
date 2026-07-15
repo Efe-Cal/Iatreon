@@ -38,6 +38,9 @@ type model struct {
 	height            int
 	userid            string
 	worker            *Worker
+	backendUsername   string
+	reauthPending     bool
+	reauthReturn      screen
 }
 
 var (
@@ -76,8 +79,20 @@ func NewLocalModel(userid string) model {
 	if err != nil {
 		log.Printf("could not load backend session: %v", err)
 	}
-	hasBackendSession := session.JWT != "" && validateBackendSession(ctx, session.JWT)
-	return newModel(userid, hasProfile, hasProviderSetup, hasBackendSession, worker)
+	hasBackendSession := false
+	if session.AccessToken != "" && session.RefreshToken != "" {
+		hasBackendSession, err = worker.EnsureBackendSession(ctx, userid)
+		if err != nil {
+			log.Printf("could not refresh backend session: %v", err)
+			hasBackendSession = true
+		}
+	}
+	m := newModel(userid, hasProfile, hasProviderSetup, hasBackendSession, worker)
+	m.backendUsername = session.Username
+	if !hasBackendSession && session.Username != "" {
+		m.backendAccount.requireSignIn(session.Username, "Your saved session has expired. Please sign in again.")
+	}
+	return m
 }
 
 func newModel(userid string, hasProfile bool, hasProviderSetup bool, hasBackendSession bool, worker *Worker) model {
@@ -169,7 +184,16 @@ func (m model) updateBackendAccount(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.backendAccount = updated
 	if m.backendAccount.submitted {
 		m.hasBackendSession = true
+		m.backendUsername = strings.TrimSpace(m.backendAccount.username.Value())
 		m.backendAccount = newBackendAccountModel(m.userid, m.worker)
+		if m.reauthPending {
+			m.reauthPending = false
+			m.active = m.reauthReturn
+			if m.active == chatScreen {
+				m.chat.reauthenticated()
+			}
+			return m, nil
+		}
 		if !m.hasProviderSetup {
 			m.active = providerSetupScreen
 			return m, m.providerSetup.Init()
@@ -285,6 +309,14 @@ func (m model) updateSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 	updated, cmd := m.chat.Update(msg)
 	m.chat = updated
+	if m.chat.authRequired {
+		m.reauthPending = true
+		m.reauthReturn = chatScreen
+		m.backendAccount = newBackendAccountModel(m.userid, m.worker)
+		m.backendAccount.requireSignIn(m.backendUsername, "Your session expired. Sign in to return to this chat.")
+		m.active = backendAccountScreen
+		return m, m.backendAccount.Init()
+	}
 
 	if m.chat.logout {
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))

@@ -130,7 +130,7 @@ class OpenAlexClient:
                     a.full_text = await self.pdf_client.get_pdf_content(a.pdf_url)
                     a.full_text_available = bool(a.full_text)
                 except Exception as e:
-                    print(f"[OpenAlex] PDF fetch failed for {a.pdf_url}: {e}")
+                    # print(f"[OpenAlex] PDF fetch failed for {a.pdf_url}: {e}")
                     a.full_text = None
                     a.full_text_available = False
 

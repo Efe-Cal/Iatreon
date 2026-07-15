@@ -1,8 +1,10 @@
 import base64
+import asyncio
 import uuid
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy import text
 
 pytest.importorskip("sqlcipher3")
 
@@ -52,8 +54,17 @@ def test_store_round_trips_worker_records(initialized_store):
     assert store.has_provider_setup(user_id)
     assert store.get_provider_setup(user_id) == provider_setup
 
-    store.update_backend_session(user_id, "alice", "jwt-test")
-    assert store.get_backend_session(user_id) == {"username": "alice", "jwt": "jwt-test"}
+    store.update_backend_session(user_id, "alice", "jwt-test", "refresh-test")
+    assert store.get_backend_session(user_id) == {
+        "username": "alice",
+        "access_token": "jwt-test",
+        "refresh_token": "refresh-test",
+    }
+    with store._engine.connect() as db:
+        tables = {row[0] for row in db.execute(text("select name from sqlite_master where type='table'"))}
+        columns = {row[1] for row in db.execute(text("pragma table_info(backend_session)"))}
+    assert "backend_refresh_session" not in tables
+    assert columns == {"user_id", "username", "access_token", "refresh_token"}
 
     intake_id = str(uuid.uuid4())
     store.link_intake_session(session_id, intake_id)
@@ -129,7 +140,7 @@ def test_iatreon_ai_defaults_use_proxy(monkeypatch):
 def test_iatreon_clients_reuse_dedicated_backend_session(initialized_store, monkeypatch):
     monkeypatch.setenv("IATREON_LOCAL_WORKER", "1")
     user_id = str(uuid.uuid4())
-    store.update_backend_session(user_id, "alice", "jwt-one-place")
+    store.update_backend_session(user_id, "alice", "jwt-one-place", "refresh-one-place")
     store.update_provider_setup({
         "user_id": user_id,
         "llm_provider": "Iatreon AI",
@@ -147,6 +158,66 @@ def test_iatreon_clients_reuse_dedicated_backend_session(initialized_store, monk
         assert search_config()["api_key"] == "jwt-one-place"
     finally:
         reset_current_user_id(context_token)
+
+
+def test_expired_access_token_refreshes_and_rotates_local_pair(initialized_store, monkeypatch):
+    monkeypatch.setenv("IATREON_LOCAL_WORKER", "1")
+    user_id = str(uuid.uuid4())
+    store.update_backend_session(user_id, "alice", "expired", "refresh-old")
+
+    from local_worker import provider_config
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"access_token": "access-new", "refresh_token": "refresh-new"}
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def post(self, url, json):
+            assert url.endswith("/auth/refresh")
+            assert json == {"refresh_token": "refresh-old"}
+            return Response()
+
+    monkeypatch.setattr(provider_config.httpx, "AsyncClient", lambda **kwargs: Client())
+    session = asyncio.run(provider_config.ensure_backend_session(user_id))
+    assert session == {
+        "username": "alice",
+        "access_token": "access-new",
+        "refresh_token": "refresh-new",
+    }
+
+
+def test_refresh_outage_does_not_become_reauthentication(initialized_store, monkeypatch):
+    monkeypatch.setenv("IATREON_LOCAL_WORKER", "1")
+    user_id = str(uuid.uuid4())
+    store.update_backend_session(user_id, "alice", "expired", "refresh-old")
+
+    from local_worker import provider_config
+
+    class Response:
+        status_code = 503
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def post(self, url, json):
+            return Response()
+
+    monkeypatch.setattr(provider_config.httpx, "AsyncClient", lambda **kwargs: Client())
+    with pytest.raises(provider_config.BackendAuthUnavailable):
+        asyncio.run(provider_config.ensure_backend_session(user_id))
+    assert store.get_backend_session(user_id)["refresh_token"] == "refresh-old"
 
 
 def test_store_reopens_with_same_key(initialized_store):

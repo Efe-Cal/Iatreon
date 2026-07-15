@@ -71,7 +71,7 @@ class PDFClient:
 
     async def download_pdf(self, url: str, client: httpx.AsyncClient) -> bytes | None:
         base_url = backend_api_url()
-        token = backend_session().get("jwt", "")
+        token = backend_session().get("access_token", "")
         headers = {"Authorization": f"Bearer {token}"}
         try:
             response = await client.post(f"{base_url}/api/v1/pdf/jobs", json={"pdf_url": url}, headers=headers)

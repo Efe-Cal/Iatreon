@@ -26,7 +26,8 @@ class BackendSessionRequest(BaseModel):
 class BackendSessionUpdateRequest(BaseModel):
     user_id: UUID
     username: str
-    jwt: str
+    access_token: str
+    refresh_token: str
 
 
 class DiagnosisRequest(BaseModel):

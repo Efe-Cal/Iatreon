@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
@@ -10,11 +11,11 @@ import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from jwt import InvalidTokenError
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
-from .database import User, db_session
+from .database import RefreshToken, User, db_session
 
 from dotenv import load_dotenv
 
@@ -32,7 +33,12 @@ class Credentials(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(min_length=1, max_length=1024)
 
 
 class UserResponse(BaseModel):
@@ -68,14 +74,54 @@ def verify_password(password: str, password_hash: str, salt: str) -> bool:
 
 def create_jwt(user: User) -> str:
     now = datetime.now(timezone.utc)
-    ttl = int(os.getenv("JWT_TTL_SECONDS", str(30 * 24 * 60 * 60)))
+    ttl = int(os.getenv("ACCESS_TOKEN_TTL_SECONDS", str(7 * 24 * 60 * 60)))
     payload = {
         "sub": user.id,
         "username": user.username,
         "iat": now,
         "exp": now + timedelta(seconds=ttl),
+        "typ": "access",
+        "jti": str(uuid.uuid4()),
     }
     return jwt.encode(payload, _jwt_secret(), algorithm=JWT_ALG)
+
+
+def _refresh_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _refresh_ttl() -> timedelta:
+    return timedelta(seconds=int(os.getenv("REFRESH_TOKEN_TTL_SECONDS", str(30 * 24 * 60 * 60))))
+
+
+
+
+def _token_pair(user: User, family_id: str | None = None) -> tuple[TokenResponse, RefreshToken]:
+    now = datetime.now(timezone.utc)
+    refresh_token = secrets.token_urlsafe(48)
+    row = RefreshToken(
+        token_hash=_refresh_token_hash(refresh_token),
+        family_id=family_id or str(uuid.uuid4()),
+        user_id=user.id,
+        expires_at=now + _refresh_ttl(),
+    )
+    return TokenResponse(access_token=create_jwt(user), refresh_token=refresh_token), row
+
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+async def _invalid_refresh(db: AsyncSession, row: RefreshToken | None = None) -> None:
+    if row is not None and row.revoked_at is not None:
+        await db.execute(
+            update(RefreshToken)
+            .where(RefreshToken.family_id == row.family_id, RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(timezone.utc))
+        )
+        await db.commit()
+    raise HTTPException(status_code=401, detail="invalid refresh token")
 
 
 def verify_jwt(token: str) -> dict:
@@ -84,9 +130,13 @@ def verify_jwt(token: str) -> dict:
             token,
             _jwt_secret(),
             algorithms=[JWT_ALG],
-            options={"require": ["exp", "sub"]},
+            options={"require": ["exp", "sub", "typ"]},
         )
-        if not isinstance(payload.get("sub"), str) or not payload["sub"]:
+        if (
+            not isinstance(payload.get("sub"), str)
+            or not payload["sub"]
+            or payload.get("typ") != "access"
+        ):
             raise InvalidTokenError("invalid subject")
         return payload
     except (InvalidTokenError, RuntimeError) as exc:
@@ -118,12 +168,14 @@ async def register(credentials: Credentials, db: AsyncSession = Depends(db_sessi
     user = User(username=username, password_hash=password_hash, password_salt=salt)
     db.add(user)
     try:
+        await db.flush()
+        response, refresh_row = _token_pair(user)
+        db.add(refresh_row)
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
         raise HTTPException(status_code=409, detail="username already exists") from exc
-    await db.refresh(user)
-    return TokenResponse(access_token=create_jwt(user))
+    return response
 
 
 @router.post("/token", response_model=TokenResponse)
@@ -135,7 +187,35 @@ async def token(credentials: Credentials, db: AsyncSession = Depends(db_session)
         raise HTTPException(status_code=401, detail="invalid username or password")
     if not verify_password(credentials.password, user.password_hash, user.password_salt):
         raise HTTPException(status_code=401, detail="invalid username or password")
-    return TokenResponse(access_token=create_jwt(user))
+
+
+    response, refresh_row = _token_pair(user)
+    db.add(refresh_row)
+    await db.commit()
+    return response
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh(request: RefreshRequest, db: AsyncSession = Depends(db_session)) -> TokenResponse:
+    token_hash = _refresh_token_hash(request.refresh_token)
+    row = await db.scalar(
+        select(RefreshToken).where(RefreshToken.token_hash == token_hash).with_for_update()
+    )
+    if row is None or row.revoked_at is not None or _as_utc(row.expires_at) <= datetime.now(timezone.utc):
+        await _invalid_refresh(db, row)
+
+    user = await db.get(User, row.user_id)
+    if user is None:
+        row.revoked_at = datetime.now(timezone.utc)
+        await db.commit()
+        await _invalid_refresh(db)
+
+    response, replacement = _token_pair(user, row.family_id)
+    row.revoked_at = datetime.now(timezone.utc)
+
+    db.add(replacement)
+    await db.commit()
+    return response
 
 
 @router.get("/me", response_model=UserResponse)

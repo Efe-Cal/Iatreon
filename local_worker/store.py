@@ -52,7 +52,8 @@ class BackendSession(Base):
 
     user_id: Mapped[str] = mapped_column(String, primary_key=True)
     username: Mapped[str] = mapped_column(String, nullable=False)
-    jwt: Mapped[str] = mapped_column(Text, nullable=False)
+    access_token: Mapped[str] = mapped_column(Text, nullable=False)
+    refresh_token: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class ChatSession(Base):
@@ -243,21 +244,33 @@ def has_provider_setup(user_id: str) -> bool:
         return db.get(ProviderSetup, str(user_id)) is not None
 
 
-def update_backend_session(user_id: str, username: str, jwt: str) -> None:
+def update_backend_session(user_id: str, username: str, access_token: str, refresh_token: str) -> None:
     with _lock, _session() as db:
         row = db.get(BackendSession, str(user_id))
         if row is None:
-            db.add(BackendSession(user_id=str(user_id), username=username, jwt=jwt))
+            db.add(BackendSession(
+                user_id=str(user_id),
+                username=username,
+                access_token=access_token,
+                refresh_token=refresh_token,
+            ))
         else:
             row.username = username
-            row.jwt = jwt
+            row.access_token = access_token
+            row.refresh_token = refresh_token
         db.commit()
 
 
 def get_backend_session(user_id: str) -> dict[str, str]:
     with _lock, _session() as db:
         row = db.get(BackendSession, str(user_id))
-        return {"username": row.username, "jwt": row.jwt} if row else {}
+        if row is None:
+            return {}
+        return {
+            "username": row.username,
+            "access_token": row.access_token,
+            "refresh_token": row.refresh_token,
+        }
 
 
 def has_backend_session(user_id: str) -> bool:

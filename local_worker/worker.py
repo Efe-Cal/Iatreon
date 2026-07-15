@@ -112,7 +112,16 @@ from local_worker.services.diagnosis_service import stream_diagnosis
 from local_worker.services.intake_service import stream_intake_chat
 from local_worker.services.doctor_service import stream_doctor_chat_service
 from local_worker.services.research_service import get_citation_text, stream_research
-from local_worker.provider_config import reset_current_user_id, set_current_user_id
+from local_worker.provider_config import (
+    BackendAuthRequired,
+    BackendAuthUnavailable,
+    ensure_backend_session,
+    reset_current_user_id,
+    set_current_user_id,
+)
+
+
+BACKEND_AUTH_ROUTES = {"chat/intake", "chat/doctor", "research", "diagnose"}
 
 
 @route("worker/init", WorkerInitRequest)
@@ -151,13 +160,21 @@ async def provider_status(req: ProviderSetupStatusRequest):
 
 @route("backend-session/update", BackendSessionUpdateRequest)
 async def update_backend_session(req: BackendSessionUpdateRequest):
-    store.update_backend_session(str(req.user_id), req.username, req.jwt)
+    store.update_backend_session(
+        str(req.user_id), req.username, req.access_token, req.refresh_token
+    )
     return {"status": "success"}
 
 
 @route("backend-session/get", BackendSessionRequest)
 async def get_backend_session(req: BackendSessionRequest):
     return store.get_backend_session(str(req.user_id))
+
+
+@route("backend-session/ensure", BackendSessionRequest)
+async def ensure_session(req: BackendSessionRequest):
+    session = await ensure_backend_session(str(req.user_id), validate=True)
+    return {"authenticated": True, "username": session.get("username", "")}
 
 
 @route("history/list", HistoryRequest)
@@ -214,6 +231,8 @@ async def handle_message(msg: dict) -> None:
         token = set_current_user_id(getattr(req, "user_id", None))
         try:
             with contextlib.redirect_stdout(route_stdout):
+                if action in BACKEND_AUTH_ROUTES:
+                    await ensure_backend_session()
                 result = await fn(req)
                 if inspect.isasyncgen(result):
                     async for event in result:
@@ -235,6 +254,22 @@ async def handle_message(msg: dict) -> None:
             "done": True,
         })
 
+    except BackendAuthRequired as exc:
+        emit({
+            "id": request_id,
+            "ok": False,
+            "error": str(exc),
+            "error_code": "backend_auth_required",
+            "done": True,
+        })
+    except BackendAuthUnavailable as exc:
+        emit({
+            "id": request_id,
+            "ok": False,
+            "error": str(exc),
+            "error_code": "backend_auth_unavailable",
+            "done": True,
+        })
     except Exception:
         emit({
             "id": request_id,

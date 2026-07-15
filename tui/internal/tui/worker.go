@@ -25,12 +25,13 @@ type Request struct {
 }
 
 type Response struct {
-	ID     string          `json:"id"`
-	OK     bool            `json:"ok"`
-	Event  json.RawMessage `json:"event,omitempty"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  string          `json:"error,omitempty"`
-	Done   bool            `json:"done,omitempty"`
+	ID        string          `json:"id"`
+	OK        bool            `json:"ok"`
+	Event     json.RawMessage `json:"event,omitempty"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Error     string          `json:"error,omitempty"`
+	ErrorCode string          `json:"error_code,omitempty"`
+	Done      bool            `json:"done,omitempty"`
 }
 
 type Worker struct {
@@ -73,14 +74,16 @@ type backendSessionInput struct {
 }
 
 type backendSession struct {
-	Username string `json:"username"`
-	JWT      string `json:"jwt"`
+	Username     string `json:"username"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 type backendSessionUpdateInput struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	JWT      string `json:"jwt"`
+	UserID       string `json:"user_id"`
+	Username     string `json:"username"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 type providerSetupInput struct {
@@ -355,6 +358,17 @@ func (w *Worker) BackendSession(ctx context.Context, userid string) (backendSess
 func (w *Worker) UpdateBackendSession(ctx context.Context, input backendSessionUpdateInput) error {
 	_, err := w.Call(ctx, "backend-session/update", input)
 	return err
+}
+
+func (w *Worker) EnsureBackendSession(ctx context.Context, userid string) (bool, error) {
+	resp, err := w.Call(ctx, "backend-session/ensure", backendSessionInput{UserID: userid})
+	if err != nil {
+		if resp.ErrorCode == "backend_auth_required" {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func (w *Worker) removePending(id string) {
