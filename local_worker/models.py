@@ -80,3 +80,10 @@ class ProviderSetupUpdateRequest(BaseModel):
     search_provider: str
     search_api_key: str = ""
     search_base_url: str = ""
+
+
+class BackupRequest(BaseModel):
+    user_id: UUID
+    source_path: str
+    backup_path: str
+    db_key: str

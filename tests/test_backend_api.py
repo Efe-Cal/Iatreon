@@ -244,3 +244,41 @@ def test_pdf_content_streaming_conflicts_and_unavailable_service(monkeypatch, tm
     assert content.status_code == 200 and content.content == b"%PDF streamed"
     assert conflict.status_code == 409
     assert unavailable_response.status_code == 503
+
+
+def test_backup_upload_completion_and_download(monkeypatch, tmp_path):
+    main = load_backend(monkeypatch, tmp_path)
+    backup = importlib.import_module("backend_api.backup")
+    calls = []
+
+    class R2Client:
+        def generate_presigned_url(self, ClientMethod, Params, ExpiresIn):
+            calls.append((ClientMethod, Params, ExpiresIn))
+            return f"https://r2.test/{ClientMethod}"
+
+    monkeypatch.setattr(backup, "create_r2_client", R2Client)
+    monkeypatch.setenv("R2_BUCKET_NAME", "backups")
+
+    with TestClient(main.app) as client:
+        headers = {"Authorization": f"Bearer {register(client)}"}
+        upload = client.post("/backup/upload", headers=headers)
+        backup_id = upload.json()["backup_id"]
+        pending = client.get(f"/backup/download/{backup_id}", headers=headers)
+        invalid = client.post(
+            f"/backup/upload/{backup_id}/complete",
+            json={"checksum": "invalid"},
+            headers=headers,
+        )
+        complete = client.post(
+            f"/backup/upload/{backup_id}/complete",
+            json={"checksum": "a" * 64},
+            headers=headers,
+        )
+        download = client.get(f"/backup/download/{backup_id}", headers=headers)
+
+    assert upload.status_code == complete.status_code == download.status_code == 200
+    assert pending.status_code == 409
+    assert invalid.status_code == 422
+    assert download.json()["checksum"] == "a" * 64
+    assert [call[0] for call in calls] == ["put_object", "get_object"]
+    assert all(call[1]["Bucket"] == "backups" for call in calls)

@@ -93,6 +93,7 @@ def route(name: str, request_model: type[BaseModel]):
     return decorator
 
 from local_worker.models import (
+    BackupRequest,
     BackendSessionRequest,
     BackendSessionUpdateRequest,
     ChatRequest,
@@ -121,13 +122,25 @@ from local_worker.provider_config import (
 )
 
 
-BACKEND_AUTH_ROUTES = {"chat/intake", "chat/doctor", "research", "diagnose"}
+BACKEND_AUTH_ROUTES = {"chat/intake", "chat/doctor", "research", "diagnose", "data/backup"}
 
 
 @route("worker/init", WorkerInitRequest)
 async def init_worker(req: WorkerInitRequest):
     store.initialize(req.db_path, req.db_key)
     await store.initialize_checkpointer()
+    return {"status": "success"}
+
+
+@route("data/backup", BackupRequest)
+async def backup_data(req: BackupRequest):
+    checksum = await store.create_encrypted_backup(
+        source_path=Path(req.source_path),
+        backup_path=Path(req.backup_path),
+        db_key=req.db_key,
+    )
+
+    await store.upload_backup(Path(req.backup_path), str(req.user_id), checksum)
     return {"status": "success"}
 
 

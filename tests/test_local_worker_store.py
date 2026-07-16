@@ -242,3 +242,97 @@ def test_store_requires_init():
     store._reset_for_tests()
     with pytest.raises(RuntimeError, match="not initialized"):
         store.create_session(str(uuid.uuid4()))
+
+
+def test_backup_transfer_uses_configured_backend_and_private_auth(
+    initialized_store, monkeypatch, tmp_path
+):
+    import httpx
+
+    user_id = str(uuid.uuid4())
+    store.update_backend_session(user_id, "alice", "jwt-test", "refresh-test")
+    backup_path = tmp_path / "backup.db"
+    backup_path.write_bytes(b"encrypted backup")
+    checksum = store.calculate_sha256(backup_path)
+    destination_path = tmp_path / "downloaded.db"
+    calls = []
+
+    class Response:
+        def __init__(self, status_code=200, payload=None, content=b""):
+            self.status_code = status_code
+            self._payload = payload
+            self.content = content
+            self.text = ""
+
+        def json(self):
+            return self._payload
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def post(self, url, **kwargs):
+            calls.append(("POST", url, kwargs))
+            if url.endswith("/backup/upload"):
+                return Response(payload={"upload_url": "https://r2.test/upload", "backup_id": "one"})
+            return Response(payload={"status": "success"})
+
+        async def put(self, url, **kwargs):
+            calls.append(("PUT", url, {**kwargs, "body": kwargs["data"].read()}))
+            return Response()
+
+        async def get(self, url, **kwargs):
+            calls.append(("GET", url, kwargs))
+            if url.startswith("https://backend.test"):
+                return Response(
+                    payload={"download_url": "https://r2.test/download", "checksum": checksum}
+                )
+            return Response(content=b"encrypted backup")
+
+    monkeypatch.setenv("IATREON_BACKEND_API_URL", "https://backend.test/")
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+
+    asyncio.run(store.upload_backup(backup_path, user_id, checksum))
+    asyncio.run(store.download_backup("one", user_id, destination_path))
+
+    assert calls[0][1] == "https://backend.test/backup/upload"
+    assert calls[1][2]["headers"] == {"Content-Type": "application/octet-stream"}
+    assert calls[1][2]["body"] == b"encrypted backup"
+    assert calls[2][2]["json"] == {"checksum": checksum}
+    assert calls[3][1] == "https://backend.test/backup/download/one"
+    assert "headers" not in calls[4][2]
+    assert destination_path.read_bytes() == b"encrypted backup"
+
+
+def test_backup_route_converts_paths_and_refreshes_auth(monkeypatch, tmp_path):
+    from local_worker import worker
+
+    source_path = tmp_path / "source.db"
+    backup_path = tmp_path / "backup.db"
+    seen = {}
+
+    async def create_encrypted_backup(source_path, backup_path, db_key):
+        seen["create"] = (source_path, backup_path, db_key)
+        return "a" * 64
+
+    async def upload_backup(path, user_id, checksum):
+        seen["upload"] = (path, user_id, checksum)
+
+    monkeypatch.setattr(worker.store, "create_encrypted_backup", create_encrypted_backup)
+    monkeypatch.setattr(worker.store, "upload_backup", upload_backup)
+    request = worker.BackupRequest(
+        user_id=uuid.uuid4(),
+        source_path=str(source_path),
+        backup_path=str(backup_path),
+        db_key="key",
+    )
+
+    result = asyncio.run(worker.backup_data(request))
+
+    assert result == {"status": "success"}
+    assert seen["create"] == (source_path, backup_path, "key")
+    assert seen["upload"][0] == backup_path
+    assert "data/backup" in worker.BACKEND_AUTH_ROUTES

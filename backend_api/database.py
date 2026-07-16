@@ -45,6 +45,18 @@ class PDFJob(Base):
     )
 
 
+class BackupMetadata(Base):
+    __tablename__ = "backup_metadata"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    object_name: Mapped[str] = mapped_column(String, nullable=False)
+    checksum: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
 def database_url() -> str:
     return os.getenv(
         "BACKEND_API_DB_URL",
