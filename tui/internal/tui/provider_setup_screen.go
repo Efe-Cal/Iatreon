@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -114,12 +115,7 @@ func newProviderEditor(userid string, worker *Worker, values providerSetupInput)
 	m.llmBaseURL.SetValue(values.LLMBaseURL)
 	m.searchAPIKey.SetValue(values.SearchAPIKey)
 	m.searchBaseURL.SetValue(values.SearchBaseURL)
-	for i, provider := range llmProviders {
-		if provider == m.llmProvider {
-			m.cursor = i
-			break
-		}
-	}
+	m.cursor = max(0, slices.Index(llmProviders, m.llmProvider))
 	return m
 }
 
@@ -282,7 +278,7 @@ func (m providerSetupModel) advance() (providerSetupModel, tea.Cmd) {
 			m.llmBaseURL.SetValue("")
 		}
 		m.llmProvider = selected
-		m.cursor = 0
+		m.cursor = max(0, slices.Index(searchProviders, m.searchProvider))
 		if isIatreonProvider(m.llmProvider) {
 			m.step = providerStepSearch
 			return m, nil
@@ -299,7 +295,7 @@ func (m providerSetupModel) advance() (providerSetupModel, tea.Cmd) {
 		m.step = providerStepLLMBaseURL
 	case providerStepLLMBaseURL:
 		m.step = providerStepSearch
-		m.cursor = 0
+		m.cursor = max(0, slices.Index(searchProviders, m.searchProvider))
 	case providerStepSearch:
 		selected := searchProviders[m.cursor]
 		if selected != m.searchProvider {
@@ -340,6 +336,7 @@ func (m providerSetupModel) goBack() (providerSetupModel, tea.Cmd) {
 		return m, nil
 	case providerStepLLMKey:
 		m.step = providerStepLLM
+		m.cursor = max(0, slices.Index(llmProviders, m.llmProvider))
 	case providerStepLLMBaseURL:
 		m.step = providerStepLLMKey
 	case providerStepSearch:
@@ -350,11 +347,13 @@ func (m providerSetupModel) goBack() (providerSetupModel, tea.Cmd) {
 		}
 	case providerStepSearchKey:
 		m.step = providerStepSearch
+		m.cursor = max(0, slices.Index(searchProviders, m.searchProvider))
 	case providerStepSearchBaseURL:
 		m.step = providerStepSearchKey
 	case providerStepConfirm:
 		if isIatreonProvider(m.searchProvider) {
 			m.step = providerStepSearch
+			m.cursor = max(0, slices.Index(searchProviders, m.searchProvider))
 		} else {
 			m.step = providerStepSearchBaseURL
 		}

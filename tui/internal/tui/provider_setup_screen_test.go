@@ -81,6 +81,31 @@ func TestProviderSetupCustomProviderDefaultsBaseURL(t *testing.T) {
 	}
 }
 
+func TestProviderEditorPreservesSearchProviderAndCredentials(t *testing.T) {
+	m := newProviderEditor("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", nil, providerSetupInput{
+		LLMProvider:    "OpenRouter",
+		LLMAPIKey:      "llm-secret",
+		LLMBaseURL:     "https://openrouter.ai/api/v1",
+		SearchProvider: "Exa",
+		SearchAPIKey:   "search-secret",
+	})
+
+	m, _ = m.Update(testKey("enter"))
+	m, _ = m.Update(testKey("enter"))
+	m, _ = m.Update(testKey("enter"))
+	if m.step != providerStepSearch || searchProviders[m.cursor] != "Exa" {
+		t.Fatalf("search step = %v cursor=%d provider=%q", m.step, m.cursor, searchProviders[m.cursor])
+	}
+	m, _ = m.Update(testKey("enter"))
+	if m.searchProvider != "Exa" || m.searchAPIKey.Value() != "search-secret" {
+		t.Fatalf("search config changed to provider=%q key=%q", m.searchProvider, m.searchAPIKey.Value())
+	}
+	m, _ = m.Update(testKey("esc"))
+	if m.step != providerStepSearch || searchProviders[m.cursor] != "Exa" {
+		t.Fatalf("back navigation lost search provider: step=%v cursor=%d", m.step, m.cursor)
+	}
+}
+
 func TestFirstRunStartsWithProviderSetup(t *testing.T) {
 	m := NewModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", false)
 	if m.active != backendAccountScreen {

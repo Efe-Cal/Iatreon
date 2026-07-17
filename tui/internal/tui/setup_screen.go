@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -46,13 +47,14 @@ type setupField struct {
 }
 
 type setupModel struct {
-	step      setupStep
-	userid    string
-	worker    *Worker
-	canCancel bool
-	editing   bool
-	width     int
-	height    int
+	step       setupStep
+	userid     string
+	worker     *Worker
+	canCancel  bool
+	editing    bool
+	width      int
+	height     int
+	listCursor int
 
 	// Form fields
 	age         textinput.Model
@@ -70,6 +72,7 @@ type setupModel struct {
 	medicationsLines []string
 	allergiesLines   []string
 	familyHistLines  []string
+	medicalSummary   string
 
 	err        error
 	cancelled  bool
@@ -162,6 +165,7 @@ func newProfileEditor(userid string, worker *Worker, profile profileSettings) se
 	m.smoking.SetValue(profile.Social["smoking"])
 	m.alcohol.SetValue(profile.Social["alcohol"])
 	m.exercise.SetValue(profile.Social["exercise"])
+	m.medicalSummary = profile.MedicalSummary
 	m.focusCurrentField()
 	return m
 }
@@ -207,7 +211,11 @@ func (m setupModel) footer() []string {
 		return []string{"Enter Submit", "Esc Back", "Ctrl+C Quit"}
 	}
 	if ok && field.kind == setupMultiLine {
-		return []string{"Enter Add Item", "Enter(empty) Next", "Esc Back", "Ctrl+C Quit"}
+		actions := []string{"Enter Add Item", "Enter(empty) Next"}
+		if len(*field.lines) > 0 {
+			actions = append(actions, "Up/Down Select", "Delete Remove")
+		}
+		return append(actions, "Esc Back", "Ctrl+C Quit")
 	}
 	return setupFooter
 }
@@ -251,22 +259,7 @@ func submitProfile(userid string, m setupModel) tea.Cmd {
 		if m.worker == nil {
 			return profileSubmittedMsg{}
 		}
-		body := map[string]interface{}{
-			"user_id": userid,
-			"demographics": map[string]string{
-				"age":    m.age.Value(),
-				"gender": m.gender.Value(),
-			},
-			"pmh":            m.pmhLines,
-			"medications":    m.medicationsLines,
-			"allergies":      m.allergiesLines,
-			"family_history": m.familyHistLines,
-			"social": map[string]string{
-				"smoking":  m.smoking.Value(),
-				"alcohol":  m.alcohol.Value(),
-				"exercise": m.exercise.Value(),
-			},
-		}
+		body := m.profileUpdateBody(userid)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -277,6 +270,29 @@ func submitProfile(userid string, m setupModel) tea.Cmd {
 
 		return profileSubmittedMsg{}
 	}
+}
+
+func (m setupModel) profileUpdateBody(userid string) map[string]interface{} {
+	body := map[string]interface{}{
+		"user_id": userid,
+		"demographics": map[string]string{
+			"age":    m.age.Value(),
+			"gender": m.gender.Value(),
+		},
+		"pmh":            m.pmhLines,
+		"medications":    m.medicationsLines,
+		"allergies":      m.allergiesLines,
+		"family_history": m.familyHistLines,
+		"social": map[string]string{
+			"smoking":  m.smoking.Value(),
+			"alcohol":  m.alcohol.Value(),
+			"exercise": m.exercise.Value(),
+		},
+	}
+	if m.medicalSummary != "" {
+		body["medical_summary"] = m.medicalSummary
+	}
+	return body
 }
 
 func (m setupModel) Update(msg tea.Msg) (setupModel, tea.Cmd) {
@@ -360,6 +376,28 @@ func (m *setupModel) updateMultiLineStep(msg tea.KeyMsg) (setupModel, tea.Cmd) {
 		field.input.SetValue("")
 		return m.goBack()
 	}
+	if key == "up" || key == "down" {
+		if len(*field.lines) > 0 {
+			delta := 1
+			if key == "up" {
+				delta = -1
+			}
+			m.listCursor = (m.listCursor + delta + len(*field.lines)) % len(*field.lines)
+		}
+		return *m, nil
+	}
+	if key == "delete" {
+		if len(*field.lines) > 0 {
+			m.listCursor = min(m.listCursor, len(*field.lines)-1)
+			*field.lines = slices.Delete(*field.lines, m.listCursor, m.listCursor+1)
+			if len(*field.lines) == 0 {
+				m.listCursor = 0
+			} else {
+				m.listCursor = min(m.listCursor, len(*field.lines)-1)
+			}
+		}
+		return *m, nil
+	}
 
 	if key == "enter" {
 		value := strings.TrimSpace(field.input.Value())
@@ -370,6 +408,7 @@ func (m *setupModel) updateMultiLineStep(msg tea.KeyMsg) (setupModel, tea.Cmd) {
 		}
 		// Append to list and clear input.
 		*field.lines = append(*field.lines, value)
+		m.listCursor = len(*field.lines) - 1
 		field.input.SetValue("")
 		return *m, nil
 	}
@@ -392,6 +431,7 @@ func (m setupModel) advanceStep() (setupModel, tea.Cmd) {
 		return m, nil
 	}
 	m.step = next
+	m.listCursor = 0
 
 	// Focus the appropriate input for the new step.
 	m.focusCurrentField()
@@ -414,6 +454,7 @@ func (m setupModel) goBack() (setupModel, tea.Cmd) {
 		prev = stepLanding
 	}
 	m.step = prev
+	m.listCursor = 0
 
 	if m.step != stepLanding {
 		m.focusCurrentField()
@@ -552,8 +593,14 @@ func (m setupModel) renderMultiLineField(title string, lines []string, inputView
 	sb.WriteString("\n")
 
 	if len(lines) > 0 {
-		for _, line := range lines {
-			sb.WriteString(itemStyle.Render("• " + line))
+		for i, line := range lines {
+			marker := "• "
+			style := itemStyle
+			if i == min(m.listCursor, len(lines)-1) {
+				marker = "> "
+				style = style.Bold(true).Foreground(colorPrimary)
+			}
+			sb.WriteString(style.Render(marker + line))
 			sb.WriteString("\n")
 		}
 		sb.WriteString("\n")

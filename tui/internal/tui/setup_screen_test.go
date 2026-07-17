@@ -25,8 +25,48 @@ func testKey(name string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyTab}
 	case "shift+tab":
 		return tea.KeyMsg{Type: tea.KeyShiftTab}
+	case "delete":
+		return tea.KeyMsg{Type: tea.KeyDelete}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(name)}
+	}
+}
+
+func TestProfileEditorPreservesMedicalSummary(t *testing.T) {
+	profile := profileSettings{
+		Demographics:   map[string]string{"age": "35"},
+		Social:         map[string]string{},
+		MedicalSummary: "Clinically important summary",
+	}
+	m := newProfileEditor("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", nil, profile)
+
+	if got := m.profileUpdateBody(m.userid)["medical_summary"]; got != profile.MedicalSummary {
+		t.Fatalf("medical_summary = %q, want %q", got, profile.MedicalSummary)
+	}
+}
+
+func TestProfileEditorCanDeleteSelectedListEntries(t *testing.T) {
+	for _, step := range []setupStep{stepPMH, stepMedications, stepAllergies, stepFamilyHistory} {
+		m := newSetupModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", nil, true)
+		m.step = step
+		field, _ := m.currentField()
+		*field.lines = []string{"first", "second", "third"}
+
+		m, _ = m.Update(testKey("down"))
+		m, _ = m.Update(testKey("delete"))
+		field, _ = m.currentField()
+		if got := strings.Join(*field.lines, ","); got != "first,third" {
+			t.Fatalf("step %v lines = %q, want first,third", step, got)
+		}
+
+		m.listCursor = len(*field.lines) - 1
+		m, _ = m.Update(testKey("delete"))
+		m, _ = m.Update(testKey("delete"))
+		m, _ = m.Update(testKey("delete"))
+		field, _ = m.currentField()
+		if len(*field.lines) != 0 || m.listCursor != 0 {
+			t.Fatalf("step %v empty state = lines:%v cursor:%d", step, *field.lines, m.listCursor)
+		}
 	}
 }
 
