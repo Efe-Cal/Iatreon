@@ -50,6 +50,7 @@ type setupModel struct {
 	userid    string
 	worker    *Worker
 	canCancel bool
+	editing   bool
 	width     int
 	height    int
 
@@ -148,6 +149,23 @@ func newSetupModel(userid string, worker *Worker, canCancel bool) setupModel {
 	}
 }
 
+func newProfileEditor(userid string, worker *Worker, profile profileSettings) setupModel {
+	m := newSetupModel(userid, worker, true)
+	m.editing = true
+	m.step = stepAge
+	m.age.SetValue(profile.Demographics["age"])
+	m.gender.SetValue(profile.Demographics["gender"])
+	m.pmhLines = append([]string(nil), profile.PMH...)
+	m.medicationsLines = append([]string(nil), profile.Medications...)
+	m.allergiesLines = append([]string(nil), profile.Allergies...)
+	m.familyHistLines = append([]string(nil), profile.FamilyHistory...)
+	m.smoking.SetValue(profile.Social["smoking"])
+	m.alcohol.SetValue(profile.Social["alcohol"])
+	m.exercise.SetValue(profile.Social["exercise"])
+	m.focusCurrentField()
+	return m
+}
+
 func (m *setupModel) SetSize(w, h int) {
 	m.width = w
 	m.height = h
@@ -182,6 +200,9 @@ func (m setupModel) footer() []string {
 		return []string{"Enter Start", "Ctrl+C Quit"}
 	}
 	field, ok := m.currentField()
+	if m.editing && m.step == stepAge {
+		return []string{"Enter Continue", "Esc Settings", "Ctrl+C Quit"}
+	}
 	if ok && field.kind == setupConfirm {
 		return []string{"Enter Submit", "Esc Back", "Ctrl+C Quit"}
 	}
@@ -378,6 +399,10 @@ func (m setupModel) advanceStep() (setupModel, tea.Cmd) {
 }
 
 func (m setupModel) goBack() (setupModel, tea.Cmd) {
+	if m.editing && m.step == stepAge {
+		m.cancelled = true
+		return m, nil
+	}
 	if m.step == stepLanding {
 		if m.canCancel {
 			m.cancelled = true

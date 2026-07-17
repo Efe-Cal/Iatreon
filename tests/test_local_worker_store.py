@@ -93,6 +93,32 @@ def test_store_round_trips_worker_records(initialized_store):
     assert [section["type"] for section in history[0]["sections"]] == ["intake", "research", "diagnosis"]
 
 
+def test_settings_route_returns_profile_and_provider_setup(initialized_store):
+    from local_worker import worker
+
+    user_id = uuid.uuid4()
+    profile = {
+        "user_id": str(user_id),
+        "demographics": {"age": "35", "gender": "Female"},
+        "allergies": ["penicillin"],
+    }
+    providers = {
+        "user_id": str(user_id),
+        "llm_provider": "OpenRouter",
+        "llm_api_key": "sk-test",
+        "llm_base_url": "https://openrouter.ai/api/v1",
+        "search_provider": "Exa",
+        "search_api_key": "exa-test",
+        "search_base_url": "",
+    }
+    store.update_profile(profile)
+    store.update_provider_setup(providers)
+
+    result = asyncio.run(worker.get_settings(worker.SettingsRequest(user_id=user_id)))
+
+    assert result == {"profile": profile, "provider_setup": providers}
+
+
 def test_local_provider_setup_drives_model_and_search_clients(initialized_store, monkeypatch):
     monkeypatch.setenv("IATREON_LOCAL_WORKER", "1")
     user_id = str(uuid.uuid4())

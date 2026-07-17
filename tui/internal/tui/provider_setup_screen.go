@@ -57,6 +57,8 @@ type providerSetupModel struct {
 	err        error
 	submitted  bool
 	submitting bool
+	editing    bool
+	cancelled  bool
 }
 
 type providerSubmittedMsg struct {
@@ -99,6 +101,28 @@ func newProviderSetupModel(userid string, worker *Worker) providerSetupModel {
 	}
 }
 
+func newProviderEditor(userid string, worker *Worker, values providerSetupInput) providerSetupModel {
+	m := newProviderSetupModel(userid, worker)
+	m.editing = true
+	if values.LLMProvider != "" {
+		m.llmProvider = values.LLMProvider
+	}
+	if values.SearchProvider != "" {
+		m.searchProvider = values.SearchProvider
+	}
+	m.llmAPIKey.SetValue(values.LLMAPIKey)
+	m.llmBaseURL.SetValue(values.LLMBaseURL)
+	m.searchAPIKey.SetValue(values.SearchAPIKey)
+	m.searchBaseURL.SetValue(values.SearchBaseURL)
+	for i, provider := range llmProviders {
+		if provider == m.llmProvider {
+			m.cursor = i
+			break
+		}
+	}
+	return m
+}
+
 func (m *providerSetupModel) SetSize(w, h int) {
 	m.width = w
 	m.height = h
@@ -124,6 +148,9 @@ func (m providerSetupModel) footer() []string {
 		return []string{"Ctrl+C Quit"}
 	}
 	if m.step == providerStepLLM || m.step == providerStepSearch {
+		if m.editing && m.step == providerStepLLM {
+			return []string{"Up/Down Choose", "Enter Continue", "Esc Settings", "Ctrl+C Quit"}
+		}
 		return []string{"Up/Down Choose", "Enter Continue", "Ctrl+C Quit"}
 	}
 	if m.step == providerStepConfirm {
@@ -249,7 +276,12 @@ func (m providerSetupModel) advance() (providerSetupModel, tea.Cmd) {
 
 	switch m.step {
 	case providerStepLLM:
-		m.llmProvider = llmProviders[m.cursor]
+		selected := llmProviders[m.cursor]
+		if selected != m.llmProvider {
+			m.llmAPIKey.SetValue("")
+			m.llmBaseURL.SetValue("")
+		}
+		m.llmProvider = selected
 		m.cursor = 0
 		if isIatreonProvider(m.llmProvider) {
 			m.step = providerStepSearch
@@ -269,7 +301,12 @@ func (m providerSetupModel) advance() (providerSetupModel, tea.Cmd) {
 		m.step = providerStepSearch
 		m.cursor = 0
 	case providerStepSearch:
-		m.searchProvider = searchProviders[m.cursor]
+		selected := searchProviders[m.cursor]
+		if selected != m.searchProvider {
+			m.searchAPIKey.SetValue("")
+			m.searchBaseURL.SetValue("")
+		}
+		m.searchProvider = selected
 		m.cursor = 0
 		if isIatreonProvider(m.searchProvider) {
 			m.step = providerStepConfirm
@@ -297,6 +334,9 @@ func (m providerSetupModel) goBack() (providerSetupModel, tea.Cmd) {
 	m.err = nil
 	switch m.step {
 	case providerStepLLM:
+		if m.editing {
+			m.cancelled = true
+		}
 		return m, nil
 	case providerStepLLMKey:
 		m.step = providerStepLLM

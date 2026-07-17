@@ -6,6 +6,23 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+func TestDashboardSettingsNavigation(t *testing.T) {
+	m := NewModel("user-1", true)
+	m.dashboard.cursor = 3
+
+	updated, _ := m.Update(testKey("enter"))
+	m = updated.(model)
+	if m.active != settingsScreen {
+		t.Fatalf("settings card should open settings screen, active=%v", m.active)
+	}
+
+	updated, _ = m.Update(testKey("esc"))
+	m = updated.(model)
+	if m.active != dashboardScreen {
+		t.Fatalf("esc should return to dashboard, active=%v", m.active)
+	}
+}
+
 func TestDashboardDescriptionDoesNotMoveLayout(t *testing.T) {
 	m := newDashboardModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9")
 	m.SetSize(100, 30)

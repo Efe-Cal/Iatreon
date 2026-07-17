@@ -345,6 +345,58 @@ func (w *Worker) UpdateProviderSetup(ctx context.Context, input providerSetupInp
 	return err
 }
 
+func (w *Worker) LoadSettings(ctx context.Context, userid string) (settingsData, error) {
+	resp, err := w.Call(ctx, "settings/get", struct {
+		UserID string `json:"user_id"`
+	}{UserID: userid})
+	if err != nil {
+		return settingsData{}, err
+	}
+	var result settingsData
+	err = decodeWorkerResult(resp, &result)
+	return result, err
+}
+
+func (w *Worker) BackupData(ctx context.Context, userid string) (Response, error) {
+	if w == nil {
+		return Response{}, errors.New("encrypted local storage is unavailable")
+	}
+
+	sourcePath, err := localWorkerDBPath()
+	if err != nil {
+		return Response{}, err
+	}
+	key, err := loadOrCreateWorkerKey(osCredentialStore{})
+	if err != nil {
+		return Response{}, err
+	}
+	defer zeroBytes(key)
+
+	temporary, err := os.CreateTemp("", "iatreon-backup-*.sqlite3")
+	if err != nil {
+		return Response{}, err
+	}
+	backupPath := temporary.Name()
+	if err := temporary.Close(); err != nil {
+		_ = os.Remove(backupPath)
+		return Response{}, err
+	}
+	_ = os.Remove(backupPath)
+	defer os.Remove(backupPath)
+
+	return w.Call(ctx, "data/backup", struct {
+		UserID     string `json:"user_id"`
+		SourcePath string `json:"source_path"`
+		BackupPath string `json:"backup_path"`
+		DBKey      string `json:"db_key"`
+	}{
+		UserID:     userid,
+		SourcePath: sourcePath,
+		BackupPath: backupPath,
+		DBKey:      base64.StdEncoding.EncodeToString(key),
+	})
+}
+
 func (w *Worker) BackendSession(ctx context.Context, userid string) (backendSession, error) {
 	resp, err := w.Call(ctx, "backend-session/get", backendSessionInput{UserID: userid})
 	if err != nil {

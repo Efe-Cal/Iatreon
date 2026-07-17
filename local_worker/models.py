@@ -19,6 +19,10 @@ class ProviderSetupStatusRequest(BaseModel):
     user_id: UUID
 
 
+class SettingsRequest(BaseModel):
+    user_id: UUID
+
+
 class BackendSessionRequest(BaseModel):
     user_id: UUID
 

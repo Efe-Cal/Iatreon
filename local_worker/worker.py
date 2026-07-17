@@ -104,6 +104,7 @@ from local_worker.models import (
     ProviderSetupUpdateRequest,
     ResearchRequest,
     SessionCreateRequest,
+    SettingsRequest,
     UserProfileStatusRequest,
     UserProfileUpdateRequest,
     WorkerInitRequest,
@@ -169,6 +170,15 @@ async def update_provider_setup(req: ProviderSetupUpdateRequest):
 @route("provider/status", ProviderSetupStatusRequest)
 async def provider_status(req: ProviderSetupStatusRequest):
     return {"has_provider_setup": store.has_provider_setup(str(req.user_id))}
+
+
+@route("settings/get", SettingsRequest)
+async def get_settings(req: SettingsRequest):
+    user_id = str(req.user_id)
+    return {
+        "profile": store.get_profile(user_id),
+        "provider_setup": store.get_provider_setup(user_id),
+    }
 
 
 @route("backend-session/update", BackendSessionUpdateRequest)

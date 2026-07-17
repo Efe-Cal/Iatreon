@@ -8,12 +8,11 @@ import (
 )
 
 type dashboardModel struct {
-	userid         string
-	width          int
-	height         int
-	cursor         int
-	action         dashboardAction
-	placeholderMsg string
+	userid string
+	width  int
+	height int
+	cursor int
+	action dashboardAction
 }
 
 type dashboardAction int
@@ -23,6 +22,7 @@ const (
 	dashboardActionStartIntake
 	dashboardActionStartDoctor
 	dashboardActionHistory
+	dashboardActionSettings
 )
 
 type dashboardCard struct {
@@ -53,9 +53,6 @@ func (m *dashboardModel) SetSize(w, h int) {
 func (m dashboardModel) Init() tea.Cmd { return nil }
 
 func (m dashboardModel) footer() []string {
-	if m.placeholderMsg != "" {
-		return []string{"Enter Dismiss", "Ctrl+C Quit"}
-	}
 	return dashboardFooter
 }
 
@@ -66,26 +63,14 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		if m.placeholderMsg != "" {
-			switch msg.String() {
-			case "ctrl+c":
-				return m, tea.Quit
-			case "enter", "esc":
-				m.placeholderMsg = ""
-				return m, nil
-			}
-		}
-
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "tab", "right", "down":
 			m.cursor = (m.cursor + 1) % len(dashboardCards)
-			m.placeholderMsg = ""
 			return m, nil
 		case "shift+tab", "left", "up":
 			m.cursor = (m.cursor - 1 + len(dashboardCards)) % len(dashboardCards)
-			m.placeholderMsg = ""
 			return m, nil
 		case "enter":
 			switch m.cursor {
@@ -99,7 +84,7 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 				m.action = dashboardActionHistory
 				return m, nil
 			case 3:
-				m.placeholderMsg = "🚧 Settings are not yet available.\n\nFuture settings will include notification preferences,\ntheme options, and API configuration."
+				m.action = dashboardActionSettings
 				return m, nil
 			}
 		}
@@ -114,21 +99,6 @@ func (m dashboardModel) View() string {
 	}
 
 	cards := m.renderCards()
-
-	if m.placeholderMsg != "" {
-		body := lipgloss.JoinVertical(lipgloss.Center,
-			m.renderPlaceholder(),
-		)
-		body = lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(body)
-		pad := m.height - lipgloss.Height(body)
-		if pad < 0 {
-			pad = 0
-		}
-		return lipgloss.JoinVertical(lipgloss.Top,
-			strings.Repeat("\n", pad/2),
-			body,
-		)
-	}
 
 	// Compute the maximum possible info height so the layout never shifts.
 	maxInfoH := m.maxInfoHeight()
@@ -239,21 +209,4 @@ func (m dashboardModel) renderCard(card dashboardCard, index int, width int) str
 	}
 
 	return title
-}
-
-func (m dashboardModel) renderPlaceholder() string {
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorAccent).
-		Padding(2, 4).
-		Width(m.width - 8).
-		Align(lipgloss.Center)
-
-	content := lipgloss.JoinVertical(lipgloss.Center,
-		boxStyle.Render(m.placeholderMsg),
-		"",
-		hintStyle.Render("Press Enter to dismiss · Esc to go back"),
-	)
-
-	return content
 }

@@ -20,6 +20,7 @@ const (
 	chatScreen
 	reportScreen
 	historyScreen
+	settingsScreen
 )
 
 type model struct {
@@ -34,6 +35,7 @@ type model struct {
 	chat              chatModel
 	report            reportModel
 	history           historyModel
+	settings          settingsModel
 	width             int
 	height            int
 	userid            string
@@ -41,6 +43,7 @@ type model struct {
 	backendUsername   string
 	reauthPending     bool
 	reauthReturn      screen
+	returnToSettings  bool
 }
 
 var (
@@ -89,6 +92,7 @@ func NewLocalModel(userid string) model {
 	}
 	m := newModel(userid, hasProfile, hasProviderSetup, hasBackendSession, worker)
 	m.backendUsername = session.Username
+	m.settings.username = session.Username
 	if !hasBackendSession && session.Username != "" {
 		m.backendAccount.requireSignIn(session.Username, "Your saved session has expired. Please sign in again.")
 	}
@@ -100,6 +104,7 @@ func newModel(userid string, hasProfile bool, hasProviderSetup bool, hasBackendS
 	backendAccount := newBackendAccountModel(userid, worker)
 	providerSetup := newProviderSetupModel(userid, worker)
 	setup := newSetupModel(userid, worker, hasProfile)
+	settings := newSettingsModel(userid, "", worker)
 
 	var active screen
 	if !hasBackendSession {
@@ -121,6 +126,7 @@ func newModel(userid string, hasProfile bool, hasProviderSetup bool, hasBackendS
 		providerSetup:     providerSetup,
 		backendAccount:    backendAccount,
 		setup:             setup,
+		settings:          settings,
 		userid:            userid,
 		worker:            worker,
 	}
@@ -152,6 +158,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat.SetSize(wsm.Width, m.bodyHeightFor(chatScreen))
 		m.report.SetSize(wsm.Width, m.bodyHeightFor(reportScreen))
 		m.history.SetSize(wsm.Width, m.bodyHeightFor(historyScreen))
+		m.settings.SetSize(wsm.Width, m.bodyHeightFor(settingsScreen))
 		return m, nil
 	}
 
@@ -174,6 +181,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateReport(msg)
 	case historyScreen:
 		return m.updateHistory(msg)
+	case settingsScreen:
+		return m.updateSettings(msg)
 	default:
 		return m, nil
 	}
@@ -185,12 +194,16 @@ func (m model) updateBackendAccount(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.backendAccount.submitted {
 		m.hasBackendSession = true
 		m.backendUsername = strings.TrimSpace(m.backendAccount.username.Value())
+		m.settings.username = m.backendUsername
 		m.backendAccount = newBackendAccountModel(m.userid, m.worker)
 		if m.reauthPending {
 			m.reauthPending = false
 			m.active = m.reauthReturn
 			if m.active == chatScreen {
 				m.chat.reauthenticated()
+			} else if m.active == settingsScreen {
+				m.settings.backupErr = ""
+				m.settings.backupStatus = "Signed in. Run Back Up Now again."
 			}
 			return m, nil
 		}
@@ -237,6 +250,27 @@ func (m *model) initHistory(hm historyModel) historyModel {
 	return hm
 }
 
+func (m *model) initSettings(sm settingsModel) settingsModel {
+	sm.SetSize(m.width, m.bodyHeightFor(settingsScreen))
+	return sm
+}
+
+func (m *model) reopenSettings(category settingsCategory, reload bool) tea.Cmd {
+	if reload {
+		m.settings = newSettingsModel(m.userid, m.backendUsername, m.worker)
+	}
+	m.settings.categoryCursor = int(category)
+	m.settings.focus = settingsContentFocus
+	m.settings.action = settingsActionNone
+	m.settings.close = false
+	m.settings = m.initSettings(m.settings)
+	m.active = settingsScreen
+	if reload {
+		return m.settings.Init()
+	}
+	return nil
+}
+
 func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 	updated, cmd := m.dashboard.Update(msg)
 	m.dashboard = updated
@@ -257,6 +291,11 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.active = historyScreen
 		return m, m.history.Init()
+	case dashboardActionSettings:
+		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
+		m.settings = m.initSettings(newSettingsModel(m.userid, m.backendUsername, m.worker))
+		m.active = settingsScreen
+		return m, m.settings.Init()
 	}
 
 	return m, cmd
@@ -265,8 +304,21 @@ func (m model) updateDashboard(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) updateProviderSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
 	updated, cmd := m.providerSetup.Update(msg)
 	m.providerSetup = updated
+	if m.providerSetup.cancelled && m.returnToSettings {
+		m.returnToSettings = false
+		m.providerSetup = m.initProviderSetup(newProviderSetupModel(m.userid, m.worker))
+		cmd := m.reopenSettings(settingsProviders, false)
+		return m, cmd
+	}
 
 	if m.providerSetup.submitted {
+		if m.returnToSettings {
+			m.returnToSettings = false
+			m.hasProviderSetup = true
+			m.providerSetup = m.initProviderSetup(newProviderSetupModel(m.userid, m.worker))
+			cmd := m.reopenSettings(settingsProviders, true)
+			return m, cmd
+		}
 		m.hasProviderSetup = true
 		m.providerSetup = m.initProviderSetup(newProviderSetupModel(m.userid, m.worker))
 		if m.hasProfile {
@@ -287,6 +339,12 @@ func (m model) updateSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.setup = updated
 
 	if m.setup.cancelled {
+		if m.returnToSettings {
+			m.returnToSettings = false
+			m.setup = m.initSetup(newSetupModel(m.userid, m.worker, true))
+			cmd := m.reopenSettings(settingsProfile, false)
+			return m, cmd
+		}
 		m.setup = m.initSetup(newSetupModel(m.userid, m.worker, m.hasProfile))
 		if m.hasProfile {
 			m.dashboard = m.initDashboard(newDashboardModel(m.userid))
@@ -296,6 +354,13 @@ func (m model) updateSetup(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.setup.submitted {
+		if m.returnToSettings {
+			m.returnToSettings = false
+			m.hasProfile = true
+			m.setup = m.initSetup(newSetupModel(m.userid, m.worker, true))
+			cmd := m.reopenSettings(settingsProfile, true)
+			return m, cmd
+		}
 		m.hasProfile = true
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		m.setup = m.initSetup(newSetupModel(m.userid, m.worker, true))
@@ -371,6 +436,44 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.settings.Update(msg)
+	m.settings = updated
+	m.settings.SetSize(m.width, m.bodyHeightFor(settingsScreen))
+
+	if m.settings.authRequired {
+		m.settings.authRequired = false
+		m.reauthPending = true
+		m.reauthReturn = settingsScreen
+		m.backendAccount = newBackendAccountModel(m.userid, m.worker)
+		m.backendAccount.requireSignIn(m.backendUsername, "Your session expired. Sign in to retry the backup.")
+		m.active = backendAccountScreen
+		return m, m.backendAccount.Init()
+	}
+
+	switch m.settings.action {
+	case settingsActionEditProfile:
+		m.settings.action = settingsActionNone
+		m.returnToSettings = true
+		m.setup = m.initSetup(newProfileEditor(m.userid, m.worker, m.settings.data.Profile))
+		m.active = setupScreen
+		return m, m.setup.Init()
+	case settingsActionEditProviders:
+		m.settings.action = settingsActionNone
+		m.returnToSettings = true
+		m.providerSetup = m.initProviderSetup(newProviderEditor(m.userid, m.worker, m.settings.data.ProviderSetup))
+		m.active = providerSetupScreen
+		return m, m.providerSetup.Init()
+	}
+
+	if m.settings.close {
+		m.settings.close = false
+		m.active = dashboardScreen
+		return m, nil
+	}
+	return m, cmd
+}
+
 func (m model) View() string {
 	headerText, footerActions := m.chrome()
 	header := renderHeader(headerText, m.width)
@@ -392,6 +495,8 @@ func (m model) View() string {
 		body = m.report.View()
 	case historyScreen:
 		body = m.history.View()
+	case settingsScreen:
+		body = m.settings.View()
 	default:
 		body = "Unknown screen"
 	}
@@ -424,6 +529,8 @@ func (m model) chromeFor(active screen) (string, []string) {
 		return "Iatreon - Research Report", []string{"↑/↓ Scroll", "c Citations", "Tab Focus", "j/k Citation", "Esc Continue", "Ctrl+C Quit"}
 	case historyScreen:
 		return "Iatreon - History", m.history.footer()
+	case settingsScreen:
+		return "Iatreon - Settings", m.settings.footer()
 	default:
 		return "Iatreon - Dashboard", m.dashboard.footer()
 	}
