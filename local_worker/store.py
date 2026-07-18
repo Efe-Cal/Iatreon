@@ -67,6 +67,7 @@ class ChatSession(Base):
     created_at: Mapped[str] = mapped_column(String, nullable=False)
     sections: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
     intake_session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    doctor_session_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class Intake(Base):
@@ -456,6 +457,16 @@ def link_intake_session(chat_session_id: str | None, intake_id: str) -> None:
             db.commit()
 
 
+def link_doctor_session(chat_session_id: str | None, doctor_session_id: str) -> None:
+    if not chat_session_id:
+        return
+    with _lock, _session() as db:
+        session = db.get(ChatSession, str(chat_session_id))
+        if session is not None:
+            session.doctor_session_id = str(doctor_session_id)
+            db.commit()
+
+
 def save_intake(user_id: str, intake_id: str, chat_session_id: str | None, profile: dict[str, Any], transcript: str) -> None:
     completed_at = now()
     with _lock, _session() as db:
@@ -642,11 +653,20 @@ def list_history(user_id: str) -> list[dict[str, Any]]:
             .order_by(desc(ChatSession.created_at))
         )
         sessions = db.scalars(stmt).all()
-        return [
-            {
+        history = []
+        for session in sessions:
+            sections = list(session.sections or [])
+            if session.doctor_session_id:
+                sections.append({
+                    "id": session.doctor_session_id,
+                    "type": "doctor",
+                    "title": "Doctor",
+                    "created_at": None,
+                    "content": f"## Doctor\n\n**Thread ID:** {session.doctor_session_id}\n\n_Full doctor transcripts are not saved yet._",
+                })
+            history.append({
                 "id": session.id,
                 "created_at": session.created_at,
-                "sections": session.sections or [],
-            }
-            for session in sessions
-        ]
+                "sections": sections,
+            })
+        return history

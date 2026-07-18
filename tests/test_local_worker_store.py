@@ -72,6 +72,9 @@ def test_store_round_trips_worker_records(initialized_store):
     assert store.get_intake(intake_id)["profile"] == profile
     assert store.get_intake_by_chat_session(session_id)["id"] == intake_id
 
+    doctor_session_id = str(uuid.uuid4())
+    store.link_doctor_session(session_id, doctor_session_id)
+
     research_id = str(uuid.uuid4())
     store.save_research(
         user_id,
@@ -90,7 +93,8 @@ def test_store_round_trips_worker_records(initialized_store):
 
     history = store.list_history(user_id)
     assert history[0]["id"] == session_id
-    assert [section["type"] for section in history[0]["sections"]] == ["intake", "research", "diagnosis"]
+    assert [section["type"] for section in history[0]["sections"]] == ["intake", "research", "diagnosis", "doctor"]
+    assert history[0]["sections"][-1]["id"] == doctor_session_id
 
 
 def test_settings_route_returns_profile_and_provider_setup(initialized_store):
@@ -254,6 +258,27 @@ def test_store_reopens_with_same_key(initialized_store):
     store.initialize(str(initialized_store), _key(b"a"))
 
     assert store.list_history(user_id)[0]["id"] == session_id
+
+
+def test_store_adds_doctor_session_column_to_existing_database(tmp_path):
+    store._reset_for_tests()
+    db_path = tmp_path / "old.sqlite3"
+    key = b"c" * 32
+    with store.sqlcipher.connect(str(db_path)) as db:
+        db.execute(f'PRAGMA key = "x\'{key.hex()}\'"')
+        db.execute(
+            "CREATE TABLE chat_sessions ("
+            "id VARCHAR PRIMARY KEY, user_id VARCHAR NOT NULL, created_at VARCHAR NOT NULL, "
+            "sections JSON NOT NULL, intake_session_id VARCHAR)"
+        )
+
+    store.initialize(str(db_path), base64.b64encode(key).decode("ascii"))
+    try:
+        with store._engine.connect() as db:
+            columns = {row[1] for row in db.execute(text("pragma table_info(chat_sessions)"))}
+        assert "doctor_session_id" in columns
+    finally:
+        store._reset_for_tests()
 
 
 def test_store_rejects_wrong_key(initialized_store):
