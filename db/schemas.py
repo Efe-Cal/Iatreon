@@ -113,3 +113,11 @@ class UserProfileData(BaseModel):
     family_history: list[str] = Field(..., description="The family history of the user")
     social: dict[str, str] = Field(..., description="The social history of the user (e.g., smoking, alcohol use, exercise, etc.)")
     medical_summary: Optional[str] = Field(None, description="A summary of the user's medical information")
+
+class ChatSessionData(BaseModel):
+    id: UUID
+    user_id: UUID
+    intake_session: IntakeSessionData | None = None
+    research_sessions: list[ResearchSessionData] | None = None
+    diagnosis_session: DiagnosisSessionData | None = None
+    doctor_session_id: UUID | None = None

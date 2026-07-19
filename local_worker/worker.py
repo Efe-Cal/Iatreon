@@ -114,6 +114,7 @@ from local_worker.services.diagnosis_service import stream_diagnosis
 from local_worker.services.intake_service import stream_intake_chat
 from local_worker.services.doctor_service import stream_doctor_chat_service
 from local_worker.services.research_service import get_citation_text, stream_research
+from local_worker.services.profiler_service import update_profile_from_chat_session
 from local_worker.provider_config import (
     BackendAuthRequired,
     BackendAuthUnavailable,
@@ -225,6 +226,18 @@ async def chat_doctor(req: ChatRequest):
 @route("research", ResearchRequest)
 async def research(req: ResearchRequest):
     return stream_research(req)
+
+class ProfilerRequest(BaseModel):
+    user_id: str
+    chat_session_id: str
+
+@route("profiler/run", ProfilerRequest)
+async def run_profiler(req: ProfilerRequest):
+
+    result = await update_profile_from_chat_session(
+        user_id=str(req.user_id),
+        chat_session_id=str(req.chat_session_id)
+    )
 
 
 def serialize(value):

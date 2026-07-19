@@ -97,6 +97,101 @@ def test_store_round_trips_worker_records(initialized_store):
     assert history[0]["sections"][-1]["id"] == doctor_session_id
 
 
+def test_profiler_service_updates_only_medical_summary(initialized_store, monkeypatch):
+    from local_worker.services import profiler_service
+
+    user_id = str(uuid.uuid4())
+    session_id = store.create_session(user_id)
+    profile = {
+        "user_id": user_id,
+        "demographics": {"age": "35"},
+        "allergies": ["penicillin"],
+        "medical_summary": "Old summary",
+    }
+    store.update_profile(profile)
+    intake_id = str(uuid.uuid4())
+    store.save_intake(
+        user_id,
+        intake_id,
+        session_id,
+        {"chief_complaint": "Headache", "medical_summary": "Acute headache"},
+        "intake transcript",
+    )
+    store.save_research(user_id, str(uuid.uuid4()), session_id, "standard", "Evidence", {})
+    store.save_diagnosis(user_id, str(uuid.uuid4()), intake_id, session_id, {"primary_diagnosis": "Migraine"})
+    doctor_session_id = str(uuid.uuid4())
+    store.link_doctor_session(session_id, doctor_session_id)
+    seen = {}
+
+    async def update(chat_session, current_summary):
+        seen["chat_session"] = chat_session
+        seen["current_summary"] = current_summary
+        return "Updated summary"
+
+    monkeypatch.setattr(profiler_service, "update_user_profile_with_chat_session", update)
+    result = asyncio.run(profiler_service.update_profile_from_chat_session(user_id, session_id))
+
+    assert result == "Updated summary"
+    assert seen["current_summary"] == "Old summary"
+    assert str(seen["chat_session"].doctor_session_id) == doctor_session_id
+    assert seen["chat_session"].intake_session.chief_complaint == "Headache"
+    assert seen["chat_session"].research_sessions[0].research_report == "Evidence"
+    assert seen["chat_session"].diagnosis_session.report["primary_diagnosis"] == "Migraine"
+    assert store.get_profile(user_id) == {**profile, "medical_summary": "Updated summary"}
+
+
+def test_profiler_service_rejects_another_users_session(initialized_store):
+    from local_worker.errors import NotFoundError
+    from local_worker.services.profiler_service import update_profile_from_chat_session
+
+    owner_id = str(uuid.uuid4())
+    other_user_id = str(uuid.uuid4())
+    session_id = store.create_session(owner_id)
+    store.update_profile({"user_id": other_user_id, "medical_summary": "Keep me"})
+
+    with pytest.raises(NotFoundError, match="Chat session not found"):
+        asyncio.run(update_profile_from_chat_session(other_user_id, session_id))
+
+    assert store.get_profile(other_user_id)["medical_summary"] == "Keep me"
+
+
+def test_profiler_agent_reads_structured_response(monkeypatch):
+    from agents import profiler
+    from db.schemas import ChatSessionData, IntakeSessionData
+
+    user_id = uuid.uuid4()
+    chat_session = ChatSessionData(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        intake_session=IntakeSessionData(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            chief_complaint="Headache",
+        ),
+    )
+    seen = {}
+
+    class Agent:
+        async def ainvoke(self, value, config):
+            seen["prompt"] = value["messages"][0]["content"]
+            return {"structured_response": profiler.UserProfileUpdate(user_profile="New summary")}
+
+    def create_agent(agent_type, **kwargs):
+        seen["agent_type"] = agent_type
+        seen["tools"] = kwargs["tools"]
+        return Agent()
+
+    monkeypatch.setattr(profiler, "create_agent_by_type", create_agent)
+
+    result = asyncio.run(profiler.update_user_profile_with_chat_session(chat_session, "Old summary"))
+
+    assert result == "New summary"
+    assert seen["agent_type"] == "profiler"
+    assert seen["tools"] == []
+    assert "Chief Complaint: Headache" in seen["prompt"]
+    assert "User Profile:\n Old summary" in seen["prompt"]
+
+
 def test_settings_route_returns_profile_and_provider_setup(initialized_store):
     from local_worker import worker
 

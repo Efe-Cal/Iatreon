@@ -13,7 +13,7 @@ from local_worker.provider_config import llm_config
 
 load_dotenv()
 
-Agent = Literal["intake", "research", "diagnosis", "inference"]
+Agent = Literal["intake", "research", "diagnosis", "inference", "profiler"]
 
 def get_model(agent_type: Agent, temperature: float = 0.7, model_name: str | None = None) -> ChatOpenAI:
     provider = llm_config()

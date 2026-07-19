@@ -354,6 +354,15 @@ def get_profile(user_id: str) -> dict[str, Any]:
         return row.payload if row else {}
 
 
+def update_profile_medical_summary(user_id: str, medical_summary: str) -> None:
+    with _lock, _session() as db:
+        row = db.get(Profile, str(user_id))
+        if row is None:
+            raise ValueError("User profile not found.")
+        row.payload = {**row.payload, "medical_summary": medical_summary}
+        db.commit()
+
+
 def has_profile(user_id: str) -> bool:
     with _lock, _session() as db:
         return db.get(Profile, str(user_id)) is not None
@@ -444,6 +453,10 @@ def profile_markdown(user_id: str) -> str:
         for key, value in social.items():
             lines.append(f"{key.capitalize()}: {value}")
 
+    medical_summary = profile.get("medical_summary")
+    if medical_summary:
+        lines.extend(["", "## Medical Summary", "", medical_summary])
+
     return "\n".join(lines)
 
 
@@ -531,6 +544,66 @@ def get_intake_by_chat_session(chat_session_id: str) -> dict[str, Any] | None:
             "profile": row.profile,
             "transcript": row.transcript,
             "completed_at": row.completed_at,
+        }
+
+
+def get_chat_session_data(user_id: str, chat_session_id: str) -> dict[str, Any] | None:
+    with _lock, _session() as db:
+        session = db.get(ChatSession, str(chat_session_id))
+
+        intake = db.get(Intake, session.intake_session_id) if session.intake_session_id else None
+        research_sessions = db.scalars(
+            select(Research)
+            .where(
+                Research.user_id == str(user_id),
+                Research.chat_session_id == str(chat_session_id),
+            )
+            .order_by(Research.created_at)
+        ).all()
+        diagnosis = db.scalars(
+            select(Diagnosis)
+            .where(
+                Diagnosis.user_id == str(user_id),
+                Diagnosis.chat_session_id == str(chat_session_id),
+            )
+            .order_by(desc(Diagnosis.created_at))
+            .limit(1)
+        ).first()
+
+        return {
+            "id": session.id,
+            "user_id": session.user_id,
+            "intake_session": {
+                "id": intake.id,
+                "user_id": intake.user_id,
+                "chief_complaint": intake.profile.get("chief_complaint"),
+                "symptoms": intake.profile.get("symptoms", []),
+                "red_flags": intake.profile.get("red_flags", []),
+                "medical_summary": intake.profile.get("medical_summary"),
+                "thread_id": intake.transcript,
+                "status": "complete",
+                "completed_at": intake.completed_at,
+            } if intake else None,
+            "research_sessions": [
+                {
+                    "id": row.id,
+                    "user_id": row.user_id,
+                    "chat_session_id": row.chat_session_id,
+                    "triggered_by": row.triggered_by,
+                    "research_effort": row.research_effort,
+                    "research_report": row.research_report,
+                    "citations": row.citations,
+                }
+                for row in research_sessions
+            ],
+            "diagnosis_session": {
+                "id": diagnosis.id,
+                "user_id": diagnosis.user_id,
+                "intake_session_id": diagnosis.intake_session_id,
+                "chat_session_id": diagnosis.chat_session_id,
+                "report": diagnosis.report,
+            } if diagnosis else None,
+            "doctor_session_id": session.doctor_session_id,
         }
 
 

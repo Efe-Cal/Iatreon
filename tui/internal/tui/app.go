@@ -383,7 +383,7 @@ func (m model) updateChat(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.backendAccount.Init()
 	}
 
-	if m.chat.logout {
+	if m.chat.exit_chat {
 		m.dashboard = m.initDashboard(newDashboardModel(m.userid))
 		kind := AgentIntake
 		if m.chat.agent != nil {

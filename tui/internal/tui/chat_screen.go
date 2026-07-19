@@ -48,9 +48,9 @@ type chatModel struct {
 	streamingMessage string
 	isStreaming      bool
 
-	logout bool
-	width  int
-	height int
+	exit_chat bool
+	width     int
+	height    int
 
 	aiRenderer   *glamour.TermRenderer
 	userRenderer *glamour.TermRenderer
@@ -645,7 +645,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			cmds = append(cmds, m.spinner.Tick)
 			return *m, tea.Batch(cmds...)
 		case "esc":
-			m.logout = true
+			m.exit_chat = true
 			return *m, nil
 		}
 	}
