@@ -424,7 +424,7 @@ func (w *Worker) EnsureBackendSession(ctx context.Context, userid string) (bool,
 }
 
 func (w *Worker) RunProfilerForChatSession(ctx context.Context, userid string, chatSessionID string) error {
-	_, err := w.Call(ctx, "profiler/run", struct {
+	_, err := w.Call(ctx, "medical-profile/upsert", struct {
 		UserID        string `json:"user_id"`
 		ChatSessionID string `json:"chat_session_id"`
 	}{UserID: userid, ChatSessionID: chatSessionID})

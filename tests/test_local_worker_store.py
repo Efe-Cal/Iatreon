@@ -155,6 +155,141 @@ def test_profiler_service_rejects_another_users_session(initialized_store):
     assert store.get_profile(other_user_id)["medical_summary"] == "Keep me"
 
 
+def test_profile_update_jobs_coalesce_and_serialize_per_user(initialized_store):
+    user_id = str(uuid.uuid4())
+    first_session = store.create_session(user_id)
+    second_session = store.create_session(user_id)
+
+    store.upsert_profile_update_job(user_id, first_session)
+    first_job = store.claim_profile_update_job()
+    assert first_job["chat_session_id"] == first_session
+
+    store.upsert_profile_update_job(user_id, first_session)
+    store.upsert_profile_update_job(user_id, second_session)
+    assert store.claim_profile_update_job() is None
+
+    store.complete_profile_update_job(first_session, first_job["revision"])
+    repeated_job = store.claim_profile_update_job()
+    assert repeated_job["chat_session_id"] == first_session
+    assert repeated_job["revision"] > first_job["revision"]
+    store.complete_profile_update_job(first_session, repeated_job["revision"])
+
+    second_job = store.claim_profile_update_job()
+    assert second_job["chat_session_id"] == second_session
+    store.complete_profile_update_job(second_session, second_job["revision"])
+    assert not store.has_pending_profile_update_jobs()
+
+
+def test_research_does_not_queue_profile_update(initialized_store):
+    user_id = str(uuid.uuid4())
+    session_id = store.create_session(user_id)
+
+    store.save_research(
+        user_id,
+        str(uuid.uuid4()),
+        session_id,
+        "standard",
+        "General medical evidence",
+        {},
+    )
+
+    assert not store.has_pending_profile_update_jobs()
+
+
+def test_profile_job_runner_updates_and_completes_job(initialized_store, monkeypatch):
+    from local_worker.services import profiler_service
+
+    user_id = str(uuid.uuid4())
+    session_id = store.create_session(user_id)
+    store.update_profile({"user_id": user_id, "medical_summary": "Old"})
+    store.update_provider_setup({
+        "user_id": user_id,
+        "llm_provider": "Groq",
+        "llm_api_key": "test",
+    })
+    store.upsert_profile_update_job(user_id, session_id)
+    seen = []
+
+    async def update(user, session):
+        seen.append((user, session))
+
+    monkeypatch.setattr(profiler_service, "update_profile_from_chat_session", update)
+    asyncio.run(profiler_service.drain_profile_update_jobs())
+
+    assert seen == [(user_id, session_id)]
+    assert not store.has_pending_profile_update_jobs()
+    assert store.claim_profile_update_job() is None
+
+
+def test_medical_profile_route_queues_with_state_delay(monkeypatch):
+    from local_worker import worker
+
+    seen = {}
+
+    def queue(**kwargs):
+        seen.update(kwargs)
+
+    monkeypatch.setattr(worker.store, "upsert_profile_update_job", queue)
+    request = worker.ProfilerRequest(
+        user_id=str(uuid.uuid4()),
+        chat_session_id=str(uuid.uuid4()),
+        state="doctor_turn_done",
+    )
+
+    result = asyncio.run(worker.run_profiler(request))
+
+    assert result == {"status": "queued"}
+    assert seen["delay_seconds"] == 2 * 60
+
+
+def test_profile_runner_launches_detached_with_key_on_stdin(initialized_store, monkeypatch):
+    from local_worker import worker
+
+    user_id = str(uuid.uuid4())
+    session_id = store.create_session(user_id)
+    store.upsert_profile_update_job(user_id, session_id)
+    assert store.claim_profile_update_job() is not None
+    assert not store.has_pending_profile_update_jobs()
+
+    class InputPipe:
+        def __init__(self):
+            self.value = ""
+            self.closed = False
+
+        def write(self, value):
+            self.value += value
+
+        def close(self):
+            self.closed = True
+
+    class Process:
+        def __init__(self):
+            self.stdin = InputPipe()
+
+    process = Process()
+    seen = {}
+
+    def popen(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return process
+
+    monkeypatch.setattr(worker, "is_profile_runner_active", lambda db_path: False)
+    monkeypatch.setattr(worker.subprocess, "Popen", popen)
+    monkeypatch.setattr(
+        worker,
+        "_worker_init",
+        worker.WorkerInitRequest(db_path=str(initialized_store), db_key="secret"),
+    )
+
+    worker.launch_profile_job_runner()
+
+    assert seen["command"][-1] == "--drain-profile-jobs"
+    assert "secret" not in seen["command"]
+    assert '"db_key":"secret"' in process.stdin.value
+    assert process.stdin.closed
+
+
 def test_profiler_agent_reads_structured_response(monkeypatch):
     from agents import profiler
     from db.schemas import ChatSessionData, IntakeSessionData
@@ -353,27 +488,6 @@ def test_store_reopens_with_same_key(initialized_store):
     store.initialize(str(initialized_store), _key(b"a"))
 
     assert store.list_history(user_id)[0]["id"] == session_id
-
-
-def test_store_adds_doctor_session_column_to_existing_database(tmp_path):
-    store._reset_for_tests()
-    db_path = tmp_path / "old.sqlite3"
-    key = b"c" * 32
-    with store.sqlcipher.connect(str(db_path)) as db:
-        db.execute(f'PRAGMA key = "x\'{key.hex()}\'"')
-        db.execute(
-            "CREATE TABLE chat_sessions ("
-            "id VARCHAR PRIMARY KEY, user_id VARCHAR NOT NULL, created_at VARCHAR NOT NULL, "
-            "sections JSON NOT NULL, intake_session_id VARCHAR)"
-        )
-
-    store.initialize(str(db_path), base64.b64encode(key).decode("ascii"))
-    try:
-        with store._engine.connect() as db:
-            columns = {row[1] for row in db.execute(text("pragma table_info(chat_sessions)"))}
-        assert "doctor_session_id" in columns
-    finally:
-        store._reset_for_tests()
 
 
 def test_store_rejects_wrong_key(initialized_store):

@@ -21,5 +21,15 @@ async def stream_doctor_chat_service(chat_request: ChatRequest) -> AsyncIterable
     
     yield {"type": "session_started", "session_id": chat_request.session_id, "conversation_id": chat_request.conversation_id}
 
+    failed = False
     async for event in doctor_agent.run_doctor(chat_request.message, chat_request.conversation_id):
+        if isinstance(event, dict) and event.get("type") == "error":
+            failed = True
         yield event
+
+    if not failed:
+        store.upsert_profile_update_job(
+            user_id,
+            str(chat_request.session_id) if chat_request.session_id else None,
+            delay_seconds=2 * 60,
+        )

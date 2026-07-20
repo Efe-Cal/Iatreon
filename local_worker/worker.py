@@ -63,6 +63,7 @@ import contextlib
 import inspect
 import os
 from pathlib import Path
+import subprocess
 import traceback
 from pydantic import BaseModel
 
@@ -73,7 +74,7 @@ os.environ.setdefault("IATREON_LOCAL_WORKER", "1")
 
 routes = {}
 protocol_stdout = sys.stdout
-
+_worker_init: "WorkerInitRequest | None" = None
 
 class _NullWriter:
     def write(self, value: str) -> int:
@@ -114,7 +115,7 @@ from local_worker.services.diagnosis_service import stream_diagnosis
 from local_worker.services.intake_service import stream_intake_chat
 from local_worker.services.doctor_service import stream_doctor_chat_service
 from local_worker.services.research_service import get_citation_text, stream_research
-from local_worker.services.profiler_service import update_profile_from_chat_session
+from local_worker.services.profiler_service import drain_profile_update_jobs
 from local_worker.provider_config import (
     BackendAuthRequired,
     BackendAuthUnavailable,
@@ -129,8 +130,11 @@ BACKEND_AUTH_ROUTES = {"chat/intake", "chat/doctor", "research", "diagnose", "da
 
 @route("worker/init", WorkerInitRequest)
 async def init_worker(req: WorkerInitRequest):
+    global _worker_init
     store.initialize(req.db_path, req.db_key)
     await store.initialize_checkpointer()
+    _worker_init = req
+    launch_profile_job_runner()
     return {"status": "success"}
 
 
@@ -230,14 +234,129 @@ async def research(req: ResearchRequest):
 class ProfilerRequest(BaseModel):
     user_id: str
     chat_session_id: str
+    state: str | None = None
+    run_now: bool = False
 
-@route("profiler/run", ProfilerRequest)
+@route("medical-profile/upsert", ProfilerRequest)
 async def run_profiler(req: ProfilerRequest):
-
-    result = await update_profile_from_chat_session(
+    delay_seconds = 0 if req.run_now else {
+        "intake_done": 7 * 60,
+        "doctor_turn_done": 2 * 60,
+    }.get(req.state, 0)
+    store.upsert_profile_update_job(
         user_id=str(req.user_id),
-        chat_session_id=str(req.chat_session_id)
+        chat_session_id=str(req.chat_session_id),
+        delay_seconds=delay_seconds,
     )
+    return {"status": "queued"}
+
+
+PROFILE_JOB_ACTIONS = {
+    "chat/intake",
+    "chat/doctor",
+    "diagnose",
+    "medical-profile/upsert",
+}
+
+
+def build_profile_runner_command() -> list[str]:
+    if getattr(sys, "frozen", False) or "__compiled__" in globals():
+        return [sys.executable, "--drain-profile-jobs"]
+    return [sys.executable, str(Path(__file__).resolve()), "--drain-profile-jobs"]
+
+
+def _acquire_profiler_lock(db_path: str):
+    lock = open(f"{db_path}.profile-runner.lock", "a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            lock.seek(0, os.SEEK_END)
+            if lock.tell() == 0:
+                lock.write(b"\0")
+                lock.flush()
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock.close()
+        return None
+    return lock
+
+
+def _release_profiler_lock(lock) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    finally:
+        lock.close()
+
+
+def is_profile_runner_active(db_path: str) -> bool:
+    lock = _acquire_profiler_lock(db_path)
+    if lock is None:
+        return True
+    _release_profiler_lock(lock)
+    return False
+
+
+def launch_profile_job_runner() -> None:
+    if (
+        _worker_init is None
+        or store.next_profile_update_delay() is None
+        or is_profile_runner_active(_worker_init.db_path)
+    ):
+        return
+
+    kwargs = {
+        "stdin": subprocess.PIPE,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "text": True,
+        "close_fds": True,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = (
+            subprocess.DETACHED_PROCESS
+            | subprocess.CREATE_NEW_PROCESS_GROUP
+            | subprocess.CREATE_NO_WINDOW
+        )
+    else:
+        kwargs["start_new_session"] = True
+
+    try:
+        process = subprocess.Popen(build_profile_runner_command(), **kwargs)
+        if process.stdin is not None:
+            process.stdin.write(_worker_init.model_dump_json())
+            process.stdin.close()
+    except OSError:
+        return
+
+
+async def run_profile_job_runner() -> None:
+    req = WorkerInitRequest.model_validate_json(await asyncio.to_thread(sys.stdin.read))
+    runner_lock = _acquire_profiler_lock(req.db_path)
+    if runner_lock is None:
+        return
+    try:
+        store.initialize(req.db_path, req.db_key)
+        await store.initialize_checkpointer()
+        try:
+            await drain_profile_update_jobs()
+        finally:
+            await store.close_checkpointer()
+    finally:
+        _release_profiler_lock(runner_lock)
 
 
 def serialize(value):
@@ -262,6 +381,7 @@ async def handle_message(msg: dict) -> None:
         entry = routes[action]
         model = entry["request_model"]
         fn = entry["fn"]
+        should_launch_profiler = action in PROFILE_JOB_ACTIONS
 
         req = model.model_validate(msg.get("input", {}))
         token = set_current_user_id(getattr(req, "user_id", None))
@@ -278,10 +398,15 @@ async def handle_message(msg: dict) -> None:
                             "event": serialize(event),
                             "done": False,
                         })
+                    if should_launch_profiler:
+                        launch_profile_job_runner()
+                        should_launch_profiler = False
                     emit({"id": request_id, "ok": True, "result": None, "done": True})
                     return
         finally:
             reset_current_user_id(token)
+            if should_launch_profiler:
+                launch_profile_job_runner()
 
         emit({
             "id": request_id,
@@ -339,4 +464,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    if "--drain-profile-jobs" in sys.argv[1:]:
+        asyncio.run(run_profile_job_runner())
+    else:
+        asyncio.run(main())

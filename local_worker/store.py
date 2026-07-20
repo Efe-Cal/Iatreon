@@ -1,12 +1,13 @@
 import base64
 import hashlib
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from sqlalchemy import JSON, NullPool, String, Text, create_engine, desc, select
+from sqlalchemy import Float, Integer, JSON, NullPool, String, Text, create_engine, desc, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -31,6 +32,7 @@ _SessionLocal: Callable[[], Session] | None = None
 _connection_factory = None
 _checkpoint_connection = None
 _checkpointer = None
+PROFILE_JOB_LEASE_SECONDS = 15 * 60
 
 class Base(DeclarativeBase):
     pass
@@ -104,6 +106,19 @@ class Diagnosis(Base):
     report: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
+class ProfileUpdateJob(Base):
+    __tablename__ = "profile_update_jobs"
+
+    chat_session_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    dirty_at: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_attempt_at: Mapped[float] = mapped_column(Float, nullable=False)
+    claimed_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
 
 def initialize(db_path: str, db_key: str) -> None:
     global _engine, _SessionLocal, _connection_factory
@@ -126,7 +141,7 @@ def initialize(db_path: str, db_key: str) -> None:
             
             try:
                 cursor.execute(f"PRAGMA key = \"x'{key_hex}'\"")
-                
+                cursor.execute("PRAGMA busy_timeout = 5000")
                 cursor.execute("SELECT count(*) FROM sqlite_master")
             finally:
                 cursor.close()
@@ -509,6 +524,7 @@ def save_intake(user_id: str, intake_id: str, chat_session_id: str | None, profi
             })
             session.sections = sections
             session.intake_session_id = str(intake_id)
+        _queue_profile_update(db, user_id, chat_session_id, delay_seconds=7 * 60)
         db.commit()
 
 
@@ -550,6 +566,8 @@ def get_intake_by_chat_session(chat_session_id: str) -> dict[str, Any] | None:
 def get_chat_session_data(user_id: str, chat_session_id: str) -> dict[str, Any] | None:
     with _lock, _session() as db:
         session = db.get(ChatSession, str(chat_session_id))
+        if session is None or session.user_id != str(user_id):
+            return None
 
         intake = db.get(Intake, session.intake_session_id) if session.intake_session_id else None
         research_sessions = db.scalars(
@@ -707,6 +725,7 @@ def save_diagnosis(user_id: str, diagnosis_id: str, intake_id: str, chat_session
                 "content": report,
             })
             session.sections = sections
+        _queue_profile_update(db, user_id, chat_session_id)
         db.commit()
 
 
@@ -743,3 +762,142 @@ def list_history(user_id: str) -> list[dict[str, Any]]:
                 "sections": sections,
             })
         return history
+
+
+def upsert_profile_update_job(
+    user_id: str,
+    chat_session_id: str | None,
+    delay_seconds: float = 0,
+) -> None:
+    if not chat_session_id:
+        return
+
+    with _lock, _session() as db:
+        _queue_profile_update(db, user_id, chat_session_id, delay_seconds)
+        db.commit()
+
+
+def _queue_profile_update(
+    db: Session,
+    user_id: str,
+    chat_session_id: str | None,
+    delay_seconds: float = 0,
+) -> None:
+    if not chat_session_id:
+        return
+    timestamp = time.time()
+    row = db.get(ProfileUpdateJob, str(chat_session_id))
+    if row is None:
+        db.add(ProfileUpdateJob(
+            chat_session_id=str(chat_session_id),
+            user_id=str(user_id),
+            dirty_at=timestamp,
+            next_attempt_at=timestamp + delay_seconds,
+        ))
+        return
+    if row.user_id != str(user_id):
+        raise ValueError("Chat session belongs to another user.")
+    row.dirty_at = timestamp
+    row.next_attempt_at = timestamp + delay_seconds
+    row.revision += 1
+    row.attempts = 0
+    row.last_error = None
+    if row.status != "running":
+        row.status = "pending"
+        row.claimed_at = None
+
+
+def claim_profile_update_job(lease_seconds: float = PROFILE_JOB_LEASE_SECONDS) -> dict[str, Any] | None:
+    timestamp = time.time()
+    with _lock, _session() as db:
+        db.execute(text("BEGIN IMMEDIATE"))
+        for stale in db.scalars(select(ProfileUpdateJob).where(
+            ProfileUpdateJob.status == "running",
+            ProfileUpdateJob.claimed_at <= timestamp - lease_seconds,
+        )):
+            stale.status = "pending"
+            stale.claimed_at = None
+
+        running_users = select(ProfileUpdateJob.user_id).where(ProfileUpdateJob.status == "running")
+        row = db.scalars(
+            select(ProfileUpdateJob)
+            .where(
+                ProfileUpdateJob.status == "pending",
+                ProfileUpdateJob.next_attempt_at <= timestamp,
+                ProfileUpdateJob.user_id.not_in(running_users),
+            )
+            .order_by(ProfileUpdateJob.next_attempt_at, ProfileUpdateJob.dirty_at)
+            .limit(1)
+        ).first()
+        if row is None:
+            db.commit()
+            return None
+
+        row.status = "running"
+        row.claimed_at = timestamp
+        job = {
+            "user_id": row.user_id,
+            "chat_session_id": row.chat_session_id,
+            "revision": row.revision,
+        }
+        db.commit()
+        return job
+
+
+def complete_profile_update_job(chat_session_id: str, revision: int) -> None:
+    with _lock, _session() as db:
+        db.execute(text("BEGIN IMMEDIATE"))
+        row = db.get(ProfileUpdateJob, str(chat_session_id))
+        if row is None:
+            db.commit()
+            return
+        if row.revision == revision:
+            db.delete(row)
+        else:
+            row.status = "pending"
+            row.claimed_at = None
+        db.commit()
+
+
+def fail_profile_update_job(chat_session_id: str, revision: int, error: str) -> None:
+    with _lock, _session() as db:
+        db.execute(text("BEGIN IMMEDIATE"))
+        row = db.get(ProfileUpdateJob, str(chat_session_id))
+        if row is None:
+            db.commit()
+            return
+        row.status = "pending"
+        row.claimed_at = None
+        if row.revision == revision:
+            row.attempts += 1
+            row.next_attempt_at = time.time() + min(3600, 30 * (2 ** (row.attempts - 1)))
+            row.last_error = error[-2000:]
+        db.commit()
+
+
+def next_profile_update_delay() -> float | None:
+    with _lock, _session() as db:
+        claimed_at = db.scalars(
+            select(ProfileUpdateJob.claimed_at)
+            .where(ProfileUpdateJob.status == "running")
+            .order_by(ProfileUpdateJob.claimed_at)
+            .limit(1)
+        ).first()
+        if claimed_at is not None:
+            return max(0, claimed_at + PROFILE_JOB_LEASE_SECONDS - time.time())
+        next_attempt = db.scalars(
+            select(ProfileUpdateJob.next_attempt_at)
+            .where(ProfileUpdateJob.status == "pending")
+            .order_by(ProfileUpdateJob.next_attempt_at)
+            .limit(1)
+        ).first()
+        return max(0, next_attempt - time.time()) if next_attempt is not None else None
+
+
+def has_pending_profile_update_jobs() -> bool:
+    with _lock, _session() as db:
+        return db.scalars(
+            select(ProfileUpdateJob.chat_session_id)
+            .where(ProfileUpdateJob.status == "pending")
+            .limit(1)
+        ).first() is not None
