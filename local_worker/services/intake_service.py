@@ -3,7 +3,7 @@ from typing import AsyncIterable
 
 from local_worker.models import ChatRequest
 from agents.intake import run_intake_cli
-from local_worker import store
+from local_worker.store import conversation_session as store
 
 from db.schemas import IntakeProfile
 

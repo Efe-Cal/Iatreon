@@ -5,11 +5,8 @@ from agents.profiler import update_user_profile_with_chat_session
 from db.schemas import ChatSessionData
 from local_worker import store
 from local_worker.errors import NotFoundError
-from local_worker.provider_config import (
-    ensure_backend_session,
-    reset_current_user_id,
-    set_current_user_id,
-)
+from local_worker.request_context import set_current_user_id, reset_current_user_id
+from local_worker.store.backend_session import ensure_backend_session
 
 
 async def update_profile_from_chat_session(user_id: UUID | str, chat_session_id: UUID | str) -> str:

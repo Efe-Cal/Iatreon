@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from agents.research import ResearchAgent, ResearchEffort
 from local_worker.errors import NotFoundError
-from local_worker import store
+from local_worker.store import conversation_session as store
 from local_worker.models import CitationTextRequest, ResearchRequest
 from db.schemas import IntakeSessionData
 

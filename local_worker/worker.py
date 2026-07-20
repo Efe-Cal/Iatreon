@@ -116,10 +116,12 @@ from local_worker.services.intake_service import stream_intake_chat
 from local_worker.services.doctor_service import stream_doctor_chat_service
 from local_worker.services.research_service import get_citation_text, stream_research
 from local_worker.services.profiler_service import drain_profile_update_jobs
-from local_worker.provider_config import (
+from local_worker.store.backend_session import (
     BackendAuthRequired,
     BackendAuthUnavailable,
     ensure_backend_session,
+)
+from local_worker.request_context import (
     reset_current_user_id,
     set_current_user_id,
 )

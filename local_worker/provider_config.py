@@ -1,23 +1,22 @@
-import contextvars
 import os
 from typing import Any
-import time
-import base64
-import binascii
-import json
-import httpx
+
+import httpx  # Compatibility: existing tests patch provider_config.httpx.
+
+from local_worker.request_context import (
+    current_user_id,
+    reset_current_user_id,
+    set_current_user_id,
+)
+from local_worker.store.backend_session import (
+    BackendAuthRequired,
+    BackendAuthUnavailable,
+    backend_api_url,
+    backend_session,
+    ensure_backend_session,
+)
 
 
-_current_user_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("iatreon_user_id", default=None)
-ACCESS_REFRESH_LEEWAY_SECONDS = 5 * 60
-
-
-class BackendAuthRequired(RuntimeError):
-    pass
-
-
-class BackendAuthUnavailable(RuntimeError):
-    pass
 
 LLM_BASE_URLS = {
     "Iatreon AI": "https://iatreon.efecal.hackclub.app/v1",
@@ -38,108 +37,18 @@ SEARCH_BASE_URLS = {
 }
 
 
-def backend_api_url() -> str:
-    return os.getenv("IATREON_BACKEND_API_URL", "https://iatreon.efecal.hackclub.app").rstrip("/")
-
-
-def set_current_user_id(user_id: Any):
-    return _current_user_id.set(str(user_id) if user_id else None)
-
-
-def reset_current_user_id(token) -> None:
-    _current_user_id.reset(token)
-
-
 def provider_setup() -> dict[str, Any]:
     if os.getenv("IATREON_LOCAL_WORKER") != "1":
         return {}
 
-    user_id = _current_user_id.get()
+    user_id = current_user_id()
     if not user_id:
         return {}
 
-    try:
-        from local_worker import store
+    from local_worker.store.provider_setup import get_provider_setup
 
-        return store.get_provider_setup(user_id)
-    except Exception:
-        return {}
+    return get_provider_setup(user_id)
 
-
-def backend_session() -> dict[str, str]:
-    if os.getenv("IATREON_LOCAL_WORKER") != "1":
-        return {"access_token": os.getenv("IATREON_BACKEND_API_TOKEN", "")}
-    user_id = _current_user_id.get()
-    if not user_id:
-        return {}
-    try:
-        from local_worker import store
-
-        return store.get_backend_session(user_id)
-    except Exception:
-        return {}
-
-
-def _access_expires_soon(token: str) -> bool:
-    try:
-        payload = token.split(".")[1]
-        payload += "=" * (-len(payload) % 4)
-        expires_at = float(json.loads(base64.urlsafe_b64decode(payload))["exp"])
-        return expires_at <= time.time() + ACCESS_REFRESH_LEEWAY_SECONDS
-    except (IndexError, KeyError, TypeError, ValueError, binascii.Error):
-        return True
-
-
-async def ensure_backend_session(user_id: str | None = None, validate: bool = False) -> dict[str, str]:
-    if os.getenv("IATREON_LOCAL_WORKER") != "1":
-        return backend_session()
-
-    from local_worker import store
-
-    user_id = str(user_id or _current_user_id.get() or "")
-    session = store.get_backend_session(user_id) if user_id else {}
-    access_token = session.get("access_token", "")
-    refresh_token = session.get("refresh_token", "")
-    if not refresh_token:
-        raise BackendAuthRequired("Your session has expired. Please sign in again.")
-
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            if access_token and not _access_expires_soon(access_token):
-                if not validate:
-                    return session
-                response = await client.get(
-                    backend_api_url() + "/auth/me",
-                    headers={"Authorization": f"Bearer {access_token}"},
-                )
-                if response.status_code == 200:
-                    return session
-                if response.status_code != 401:
-                    raise BackendAuthUnavailable("Iatreon authentication is temporarily unavailable.")
-
-            response = await client.post(
-                backend_api_url() + "/auth/refresh",
-                json={"refresh_token": refresh_token},
-            )
-    except httpx.HTTPError as exc:
-        raise BackendAuthUnavailable("Iatreon authentication is temporarily unavailable.") from exc
-
-    if response.status_code == 401:
-        raise BackendAuthRequired("Your session has expired. Please sign in again.")
-    if response.status_code != 200:
-        raise BackendAuthUnavailable("Iatreon authentication is temporarily unavailable.")
-
-    try:
-        payload = response.json()
-        access_token = payload["access_token"]
-        refresh_token = payload["refresh_token"]
-        if not access_token or not refresh_token:
-            raise ValueError
-    except (KeyError, TypeError, ValueError) as exc:
-        raise BackendAuthUnavailable("Iatreon authentication returned an invalid response.") from exc
-
-    store.update_backend_session(user_id, session.get("username", ""), access_token, refresh_token)
-    return store.get_backend_session(user_id)
 
 
 def llm_config() -> dict[str, str | None]:

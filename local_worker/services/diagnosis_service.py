@@ -2,7 +2,7 @@ from typing import AsyncIterable
 from uuid import uuid4
 
 from local_worker.errors import NotFoundError
-from local_worker import store
+from local_worker.store import conversation_session as store
 from db.schemas import IntakeSessionData, ResearchSessionData
 from agents.diagnosis import DiagnosisAgent
 from local_worker.models import DiagnosisRequest
