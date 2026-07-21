@@ -113,8 +113,15 @@ async def run_intake_cli(message: str, conversation_id: str, user_id: str) -> As
 
             yield f"I have compiled the final patient data."
             yield final_patient_data, conversation_state.config["configurable"]["thread_id"]
-        except Exception as e:
-            print(f"\nFailed to generate final report: {e}")
+
+        except Exception as exc:
+            logging.exception("Failed to finalize intake")
+            yield {
+                "type": "error",
+                "content": f"Could not finalize the intake: {exc}",
+                "recoverable": True,
+            }
+            return
 
 if __name__ == "__main__":
     async def main():

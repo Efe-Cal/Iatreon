@@ -41,6 +41,9 @@ services:
       REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-2592000}
       BACKEND_API_DB_URL: postgresql+asyncpg://backend_api:backend_api@backend-db:5432/backend_api
       PDF_WORKER_BASE_URL: http://pdf-api:8000
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
+      R2_ENDPOINT_URL: ${R2_ENDPOINT_URL}
     depends_on:
       backend-db:
         condition: service_healthy

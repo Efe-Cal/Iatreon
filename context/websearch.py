@@ -20,7 +20,6 @@ def make_exa_client():
     client = Exa(**kwargs)
     if client.headers.get("x-api-key"):
         client.headers["Authorization"] = f"Bearer {client.headers['x-api-key']}"
-    client.headers["x-api-key"] = None # Remove the x-api-key header to avoid conflicts
     return client
 
 

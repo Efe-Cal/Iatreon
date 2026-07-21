@@ -68,6 +68,15 @@ class DiagnosisAgent():
                 citations,
                 triggered_by="diagnosis",
             )
+            self.research_session = ResearchSessionData(
+                id=research_session_id,
+                user_id=self.user_id,
+                chat_session_id=self.chat_session_id,
+                triggered_by="diagnosis",
+                research_effort="fast",
+                research_report=research_report,
+                citations=citations,
+            )
             return research_report or "No research report was produced."
 
         from db.db import unit_of_work
@@ -168,8 +177,8 @@ Medical Summary: {self.intake_session.medical_summary}"""
         logging.debug(f"Diagnosis agent input message: {user_message}")
         
         try:
-            response = await self.agent.ainvoke({"messages": [{"role": "user", "content": user_message}]}, version="v2")
-            report = response.value["structured_response"]
+            response = await self.agent.ainvoke({"messages": [{"role": "user", "content": user_message}]})
+            report = response.get("structured_response")
             yield report.model_dump() if hasattr(report, "model_dump") else report or response["messages"][-1].content
         except Exception as exc:
             logging.exception("Diagnosis agent failed.")
