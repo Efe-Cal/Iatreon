@@ -1,4 +1,5 @@
 from pathlib import Path
+import asyncio
 import hashlib
 import base64
 
@@ -81,15 +82,23 @@ async def upload_backup(backup_path: Path, user_id: str, checksum: str) -> None:
         upload_url = upload_url_request["upload_url"]
         backup_id = upload_url_request["backup_id"]
 
-        with backup_path.open("rb") as file:
-            response = await client.put(
-                upload_url,
-                data=file,
-                headers={"Content-Type": "application/octet-stream"},
-                timeout=300,
-            )
-            if response.status_code != 200:
-                raise RuntimeError(f"Failed to upload backup: {response.status_code} {response.text}")
+        async def file_chunks():
+            with backup_path.open("rb") as file:
+                while chunk := await asyncio.to_thread(file.read, 1024 * 1024):
+                    yield chunk
+
+        upload_headers = {
+            "Content-Type": "application/octet-stream",
+            "Content-Length": str(backup_path.stat().st_size),
+        }
+        response = await client.put(
+            upload_url,
+            content=file_chunks(),
+            headers=upload_headers,
+            timeout=300,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"Failed to upload backup: {response.status_code} {response.text}")
 
         response = await client.post(
             api_url + f"/{backup_id}/complete",

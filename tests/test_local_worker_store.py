@@ -541,7 +541,8 @@ def test_backup_transfer_uses_configured_backend_and_private_auth(
             return Response(payload={"status": "success"})
 
         async def put(self, url, **kwargs):
-            calls.append(("PUT", url, {**kwargs, "body": kwargs["data"].read()}))
+            body = b"".join([chunk async for chunk in kwargs["content"]])
+            calls.append(("PUT", url, {**kwargs, "body": body}))
             return Response()
 
         async def get(self, url, **kwargs):
@@ -559,7 +560,10 @@ def test_backup_transfer_uses_configured_backend_and_private_auth(
     asyncio.run(store.download_backup("one", user_id, destination_path))
 
     assert calls[0][1] == "https://backend.test/backup/upload"
-    assert calls[1][2]["headers"] == {"Content-Type": "application/octet-stream"}
+    assert calls[1][2]["headers"] == {
+        "Content-Type": "application/octet-stream",
+        "Content-Length": str(backup_path.stat().st_size),
+    }
     assert calls[1][2]["body"] == b"encrypted backup"
     assert calls[2][2]["json"] == {"checksum": checksum}
     assert calls[3][1] == "https://backend.test/backup/download/one"
