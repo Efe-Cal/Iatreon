@@ -5,4 +5,4 @@ PyJWT==2.10.1
 SQLAlchemy==2.0.51
 uvicorn==0.49.0
 boto3==1.43.39
-dotenv==1.2.2
+dotenv
