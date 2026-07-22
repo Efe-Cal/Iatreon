@@ -141,13 +141,14 @@ def test_hcai_streams_query_headers_and_body_without_storage(monkeypatch, tmp_pa
         response = client.post(
             "/v1/chat/completions?trace=1",
             json={"private": "secret-medical"},
-            headers={"Authorization": f"Bearer {token}", "X-Test": "kept"},
+            headers={"Authorization": f"Bearer {token}", "Accept-Encoding": "zstd", "X-Test": "kept"},
         )
 
     assert response.content == b'{"ok":true}'
     assert calls[0]["url"] == "https://ai.hackclub.com/proxy/v1/chat/completions"
     assert calls[0]["params"] == [("trace", "1")]
     assert calls[0]["headers"]["Authorization"] == "Bearer hcai-upstream-key"
+    assert calls[0]["headers"]["accept-encoding"] == "identity"
     assert calls[0]["headers"]["x-test"] == "kept"
     assert calls[0]["stream"] is True
     assert b"secret-medical" in calls[0]["body"]

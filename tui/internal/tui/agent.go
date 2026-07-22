@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strconv"
 )
 
@@ -97,6 +98,7 @@ func handleCommonAgentEvent(ev sseEvent) (chunkMsg, bool) {
 	case "tool_end":
 		return chunkMsg{content: ev.Content, toolMessage: toolMessage{toolID: ev.ToolCallID, toolName: ev.Name, running: false}}, true
 	case "error":
+		log.Printf("Error event received: %s", ev.Content)
 		return chunkMsg{err: fmt.Errorf("%s", ev.Content), recoverable: ev.Recoverable}, true
 	}
 	if ev.Type == "" && ev.Content != "" {

@@ -50,6 +50,7 @@ async def proxy(path: str, request: Request) -> StreamingResponse:
 
     headers = _filtered_request_headers(request.headers)
     headers["Authorization"] = f"Bearer {upstream_key}"
+    headers["accept-encoding"] = "identity"
     client = httpx.AsyncClient(timeout=None)
     upstream_request = client.build_request(
         request.method,
