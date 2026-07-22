@@ -44,20 +44,26 @@ async def proxy(path: str, request: Request) -> StreamingResponse:
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    async def request_body():
-        async for chunk in request.stream():
-            yield chunk
 
     headers = _filtered_request_headers(request.headers)
     headers["Authorization"] = f"Bearer {upstream_key}"
     headers["accept-encoding"] = "identity"
+    
+    content_type = request.headers.get("content-type", "")
+    
+    if "application/json" in content_type:
+        request_body = await request.json()
+        request_body["max_tokens"] = 2000
+    else:
+        request_body = await request.body()
+    
     client = httpx.AsyncClient(timeout=None)
     upstream_request = client.build_request(
         request.method,
         f"{UPSTREAM_BASE_URL}/{path}",
         params=request.query_params.multi_items(),
         headers=headers,
-        content=request_body(),
+        content=request_body,
     )
     try:
         upstream_response = await client.send(upstream_request, stream=True)
