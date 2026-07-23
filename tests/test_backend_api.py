@@ -127,10 +127,7 @@ def test_hcai_streams_query_headers_and_body_without_storage(monkeypatch, tmp_pa
         def build_request(self, method, url, params, headers, content):
             return {"method": method, "url": url, "params": params, "headers": headers, "content": content}
         async def send(self, request, stream=False):
-            body = b""
-            async for chunk in request["content"]:
-                body += chunk
-            calls.append({**request, "body": body, "stream": stream})
+            calls.append({**request, "body": request["content"], "stream": stream})
             return FakeResponse()
         async def aclose(self):
             pass
@@ -151,7 +148,7 @@ def test_hcai_streams_query_headers_and_body_without_storage(monkeypatch, tmp_pa
     assert calls[0]["headers"]["accept-encoding"] == "identity"
     assert calls[0]["headers"]["x-test"] == "kept"
     assert calls[0]["stream"] is True
-    assert b"secret-medical" in calls[0]["body"]
+    assert calls[0]["body"] == {"private": "secret-medical", "max_tokens": 2000}
     with sqlite3.connect(tmp_path / "backend.sqlite3") as db:
         rows = db.execute("select username, password_hash, password_salt from users").fetchall()
     assert "secret-medical" not in repr(rows)
