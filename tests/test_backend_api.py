@@ -288,6 +288,9 @@ def test_backup_upload_completion_and_download(monkeypatch, tmp_path):
     assert pending.status_code == 409
     assert invalid.status_code == 422
     assert download.json()["checksum"] == "a" * 64
-    assert listed.json() == {"backups": [{"id": backup_id, "checksum": "a" * 64}]}
+    listed_backup = listed.json()["backups"][0]
+    assert listed_backup["id"] == backup_id
+    assert listed_backup["checksum"] == "a" * 64
+    assert datetime.fromisoformat(listed_backup["created_at"])
     assert [call[0] for call in calls] == ["put_object", "get_object"]
     assert all(call[1]["Bucket"] == "backups" for call in calls)

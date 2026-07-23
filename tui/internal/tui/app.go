@@ -202,8 +202,7 @@ func (m model) updateBackendAccount(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.active == chatScreen {
 				m.chat.reauthenticated()
 			} else if m.active == settingsScreen {
-				m.settings.backupErr = ""
-				m.settings.backupStatus = "Signed in. Run Back Up Now again."
+				m.settings.reauthenticated()
 			}
 			return m, nil
 		}
@@ -446,7 +445,11 @@ func (m model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.reauthPending = true
 		m.reauthReturn = settingsScreen
 		m.backendAccount = newBackendAccountModel(m.userid, m.worker)
-		m.backendAccount.requireSignIn(m.backendUsername, "Your session expired. Sign in to retry the backup.")
+		message := m.settings.authMessage
+		if message == "" {
+			message = "Your session expired. Sign in to continue."
+		}
+		m.backendAccount.requireSignIn(m.backendUsername, message)
 		m.active = backendAccountScreen
 		return m, m.backendAccount.Init()
 	}

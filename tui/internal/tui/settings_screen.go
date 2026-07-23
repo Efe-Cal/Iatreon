@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -40,6 +41,14 @@ const (
 	settingsActionEditProviders
 )
 
+type settingsDataView int
+
+const (
+	settingsDataActions settingsDataView = iota
+	settingsDataRestoreList
+	settingsDataRestoreConfirm
+)
+
 type profileSettings struct {
 	UserID         string            `json:"user_id"`
 	Demographics   map[string]string `json:"demographics"`
@@ -66,6 +75,25 @@ type settingsBackupMsg struct {
 	authRequired bool
 }
 
+type backupMetadata struct {
+	ID        string `json:"id"`
+	Checksum  string `json:"checksum"`
+	CreatedAt string `json:"created_at"`
+}
+
+type settingsBackupsMsg struct {
+	backups      []backupMetadata
+	err          error
+	authRequired bool
+}
+
+type settingsRestoreMsg struct {
+	err          error
+	authRequired bool
+}
+
+type settingsRestoreExitMsg struct{}
+
 type settingsModel struct {
 	userid   string
 	username string
@@ -87,6 +115,20 @@ type settingsModel struct {
 	backupStatus string
 	backupErr    string
 	authRequired bool
+
+	dataCursor     int
+	dataView       settingsDataView
+	backups        []backupMetadata
+	backupCursor   int
+	loadingBackups bool
+	restoring      bool
+	restoreStatus  string
+	listErr        string
+	restoreErr     string
+	confirmInput   textinput.Model
+
+	authMessage       string
+	authReturnMessage string
 }
 
 var settingsCategories = []struct {
@@ -111,12 +153,17 @@ var (
 )
 
 func newSettingsModel(userid, username string, worker *Worker) settingsModel {
+	confirm := textinput.New()
+	confirm.Placeholder = "RESTORE"
+	confirm.CharLimit = len("RESTORE")
+	confirm.Width = 12
 	return settingsModel{
-		userid:   userid,
-		username: username,
-		worker:   worker,
-		focus:    settingsSidebarFocus,
-		loading:  true,
+		userid:       userid,
+		username:     username,
+		worker:       worker,
+		focus:        settingsSidebarFocus,
+		loading:      true,
+		confirmInput: confirm,
 	}
 }
 
@@ -132,6 +179,21 @@ func (m settingsModel) footer() []string {
 	}
 	if m.loadErr != "" {
 		return []string{"r Retry", "Esc Back", "Ctrl+C Quit"}
+	}
+	if m.restoring {
+		return []string{"Restoring backup...", "Ctrl+C Quit"}
+	}
+	if m.dataView == settingsDataRestoreConfirm {
+		return []string{"Type RESTORE", "Enter Confirm", "Esc Cancel", "Ctrl+C Quit"}
+	}
+	if m.dataView == settingsDataRestoreList {
+		if m.loadingBackups {
+			return []string{"Esc Back", "Ctrl+C Quit"}
+		}
+		if m.listErr != "" {
+			return []string{"r Retry", "Esc Back", "Ctrl+C Quit"}
+		}
+		return []string{"Up/Down Navigate", "Enter Select", "Esc Back", "Ctrl+C Quit"}
 	}
 	actions := []string{"Up/Down Navigate", "Left/Right Focus", "Tab Focus"}
 	if m.focus == settingsSidebarFocus || settingsCategory(m.categoryCursor) != settingsAccount {
@@ -167,7 +229,40 @@ func (m settingsModel) backup() tea.Cmd {
 	}
 }
 
+func (m settingsModel) listBackups() tea.Cmd {
+	return func() tea.Msg {
+		if m.worker == nil {
+			return settingsBackupsMsg{err: errors.New("encrypted local storage is unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		backups, resp, err := m.worker.ListBackups(ctx, m.userid)
+		return settingsBackupsMsg{
+			backups:      backups,
+			err:          err,
+			authRequired: resp.ErrorCode == "backend_auth_required",
+		}
+	}
+}
+
+func (m settingsModel) restore() tea.Cmd {
+	backup := m.selectedBackup()
+	return func() tea.Msg {
+		if m.worker == nil || backup == nil {
+			return settingsRestoreMsg{err: errors.New("encrypted local storage is unavailable")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+		defer cancel()
+		resp, err := m.worker.RestoreBackup(ctx, m.userid, *backup)
+		return settingsRestoreMsg{
+			err:          err,
+			authRequired: resp.ErrorCode == "backend_auth_required",
+		}
+	}
+}
+
 func (m settingsModel) Update(msg tea.Msg) (settingsModel, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case settingsLoadedMsg:
 		m.loading = false
@@ -185,13 +280,111 @@ func (m settingsModel) Update(msg tea.Msg) (settingsModel, tea.Cmd) {
 			m.backupStatus = ""
 			m.backupErr = msg.err.Error()
 			m.authRequired = msg.authRequired
+			if msg.authRequired {
+				m.authMessage = "Your session expired. Sign in to retry the backup."
+				m.authReturnMessage = "Signed in. Run Back Up Now again."
+			}
 			return m, nil
 		}
 		m.backupErr = ""
 		m.backupStatus = "Backup uploaded successfully."
 		return m, nil
 
+	case settingsBackupsMsg:
+		if !m.loadingBackups && m.dataView != settingsDataRestoreList {
+			return m, nil
+		}
+		m.loadingBackups = false
+		if msg.err != nil {
+			m.listErr = msg.err.Error()
+			m.authRequired = msg.authRequired
+			if msg.authRequired {
+				m.authMessage = "Your session expired. Sign in to view your backups."
+				m.authReturnMessage = "Signed in. Select Restore from Backup again."
+			}
+			return m, nil
+		}
+		m.backups = msg.backups
+		m.backupCursor = 0
+		m.listErr = ""
+		return m, nil
+
+	case settingsRestoreMsg:
+		m.restoring = false
+		if msg.err != nil {
+			m.restoreStatus = ""
+			m.restoreErr = msg.err.Error()
+			m.authRequired = msg.authRequired
+			if msg.authRequired {
+				m.authMessage = "Your session expired. Sign in before restoring this backup."
+				m.authReturnMessage = "Signed in. Select Restore from Backup again."
+			}
+			m.dataView = settingsDataRestoreList
+			return m, nil
+		}
+		m.restoreErr = ""
+		m.restoreStatus = "Restore complete. Restarting Iatreon..."
+		return m, tea.Tick(time.Second, func(time.Time) tea.Msg { return settingsRestoreExitMsg{} })
+
+	case settingsRestoreExitMsg:
+		return m, tea.Quit
+
 	case tea.KeyMsg:
+		if m.restoring {
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+		if m.dataView == settingsDataRestoreConfirm {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "esc":
+				m.dataView = settingsDataRestoreList
+				m.restoreErr = ""
+				m.confirmInput.Blur()
+				return m, nil
+			case "enter":
+				if strings.TrimSpace(m.confirmInput.Value()) != "RESTORE" {
+					m.restoreErr = "Type RESTORE exactly to continue."
+					return m, nil
+				}
+				m.restoring = true
+				m.restoreErr = ""
+				m.confirmInput.Blur()
+				return m, m.restore()
+			}
+			m.confirmInput, cmd = m.confirmInput.Update(msg)
+			return m, cmd
+		}
+		if m.dataView == settingsDataRestoreList {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "esc":
+				m.dataView = settingsDataActions
+				m.loadingBackups = false
+				m.listErr = ""
+				m.restoreErr = ""
+				return m, nil
+			case "r":
+				if m.listErr != "" {
+					m.loadingBackups = true
+					m.listErr = ""
+					return m, m.listBackups()
+				}
+			case "up", "k":
+				m.move(-1)
+				return m, nil
+			case "down", "j":
+				m.move(1)
+				return m, nil
+			case "enter":
+				return m.activate()
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
@@ -237,6 +430,16 @@ func (m *settingsModel) move(updown int) {
 	if m.focus == settingsSidebarFocus {
 		count := len(settingsCategories)
 		m.categoryCursor = (m.categoryCursor + updown + count) % count
+		return
+	}
+	if settingsCategory(m.categoryCursor) == settingsDataCategory {
+		if m.dataView == settingsDataRestoreList {
+			if len(m.backups) > 0 {
+				m.backupCursor = clamp(m.backupCursor+updown, 0, len(m.backups)-1)
+			}
+		} else {
+			m.dataCursor = (m.dataCursor + updown + 2) % 2
+		}
 	}
 }
 
@@ -255,12 +458,31 @@ func (m settingsModel) activate() (settingsModel, tea.Cmd) {
 	case settingsProviders:
 		m.action = settingsActionEditProviders
 	case settingsDataCategory:
-		if !m.backingUp {
+		if m.dataView == settingsDataRestoreList {
+			if m.loadingBackups || m.listErr != "" || len(m.backups) == 0 {
+				return m, nil
+			}
+			m.dataView = settingsDataRestoreConfirm
+			m.restoreErr = ""
+			m.confirmInput.Reset()
+			m.confirmInput.Focus()
+			return m, textinput.Blink
+		}
+		if m.dataCursor == 0 && !m.backingUp {
 			m.backingUp = true
 			m.backupStatus = ""
 			m.backupErr = ""
 			m.authRequired = false
 			return m, m.backup()
+		}
+		if m.dataCursor == 1 {
+			m.dataView = settingsDataRestoreList
+			m.loadingBackups = true
+			m.listErr = ""
+			m.restoreErr = ""
+			m.restoreStatus = ""
+			m.authRequired = false
+			return m, m.listBackups()
 		}
 	}
 	return m, nil
@@ -398,12 +620,19 @@ func (m settingsModel) categoryContent(width int) string {
 		)
 
 	case settingsDataCategory:
+		if m.dataView == settingsDataRestoreList {
+			return m.restoreListView(width)
+		}
+		if m.dataView == settingsDataRestoreConfirm {
+			return m.restoreConfirmView(width)
+		}
 		label := "Back Up Now"
 		if m.backingUp {
 			label = "Processing backup..."
 		}
 		lines := []string{
-			m.actionRow(label, width, selected && !m.backingUp),
+			m.actionRow(label, width, selected && m.dataCursor == 0 && !m.backingUp),
+			m.actionRow("Restore from Backup", width, selected && m.dataCursor == 1 && !m.backingUp),
 			"",
 			hintStyle.Render("Creates an encrypted snapshot and uploads it to your Iatreon account."),
 		}
@@ -420,6 +649,100 @@ func (m settingsModel) categoryContent(width int) string {
 		return lipgloss.JoinVertical(lipgloss.Left, lines...)
 	}
 	return ""
+}
+
+func (m settingsModel) selectedBackup() *backupMetadata {
+	if len(m.backups) == 0 || m.backupCursor < 0 || m.backupCursor >= len(m.backups) {
+		return nil
+	}
+	return &m.backups[m.backupCursor]
+}
+
+func (m settingsModel) restoreListView(width int) string {
+	if m.loadingBackups {
+		return systemStyle.Align(lipgloss.Center).Render("Loading backups...")
+	}
+	if m.listErr != "" {
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			errorStyle.Render("Could not load backups."),
+			"",
+			lipgloss.NewStyle().Width(width).Render(m.listErr),
+			"",
+			hintStyle.Render("Press r to retry or Esc to go back."),
+		)
+	}
+	if len(m.backups) == 0 {
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			settingsSectionStyle.Render("Available backups"),
+			"",
+			hintStyle.Render("No completed backups are available."),
+		)
+	}
+	rows := make([]string, 0, len(m.backups))
+	for i, backup := range m.backups {
+		rows = append(rows, m.actionRow(backupLabel(backup), width, i == m.backupCursor))
+	}
+	lines := []string{
+		settingsSectionStyle.Render("Available backups"),
+		"",
+		visibleRows(rows, m.backupCursor, max(1, m.height-9)),
+	}
+	if m.restoreErr != "" {
+		lines = append(lines, "", errorStyle.Render("Restore failed: "+m.restoreErr))
+	}
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		lines...,
+	)
+}
+
+func (m settingsModel) restoreConfirmView(width int) string {
+	backup := m.selectedBackup()
+	if backup == nil {
+		return errorStyle.Render("The selected backup is no longer available.")
+	}
+	lines := []string{
+		errorStyle.Render("This replaces all current local data."),
+		"",
+		lipgloss.NewStyle().Width(width).Render("Backup: " + backupLabel(*backup)),
+		"",
+		"Type RESTORE to continue:",
+		m.confirmInput.View(),
+	}
+	if m.restoring {
+		lines = append(lines, "", systemStyle.Render("Restoring backup..."))
+	}
+	if m.restoreStatus != "" {
+		lines = append(lines, "", lipgloss.NewStyle().Foreground(colorAccent).Render(m.restoreStatus))
+	}
+	if m.restoreErr != "" {
+		lines = append(lines, "", errorStyle.Render(m.restoreErr))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func backupLabel(backup backupMetadata) string {
+	label := "Unknown time"
+	if created, err := time.Parse(time.RFC3339Nano, backup.CreatedAt); err == nil {
+		label = created.Local().Format("2006-01-02 15:04 MST")
+	} else if created, err := time.ParseInLocation("2006-01-02T15:04:05.999999", backup.CreatedAt, time.UTC); err == nil {
+		label = created.Local().Format("2006-01-02 15:04 MST")
+	}
+	return label + "  " + shortID(backup.ID)
+}
+
+func (m *settingsModel) reauthenticated() {
+	m.backupErr = ""
+	m.listErr = ""
+	m.restoreErr = ""
+	m.dataView = settingsDataActions
+	m.loadingBackups = false
+	m.restoring = false
+	m.backupStatus = m.authReturnMessage
+	m.authMessage = ""
+	m.authReturnMessage = ""
 }
 
 func (m settingsModel) valueRow(label, value string, width int, selected bool) string {

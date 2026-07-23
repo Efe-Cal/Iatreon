@@ -153,6 +153,89 @@ func TestSettingsBackupStateAndDuplicatePrevention(t *testing.T) {
 	}
 }
 
+func TestSettingsRestoreListConfirmationAndSuccess(t *testing.T) {
+	m := readySettingsModel()
+	m.categoryCursor = int(settingsDataCategory)
+	m.focus = settingsContentFocus
+	m.dataCursor = 1
+
+	m, cmd := m.Update(testKey("enter"))
+	if m.dataView != settingsDataRestoreList || !m.loadingBackups || cmd == nil {
+		t.Fatal("Restore from Backup should load backups asynchronously")
+	}
+
+	m, _ = m.Update(settingsBackupsMsg{backups: []backupMetadata{
+		{ID: "backup-new", Checksum: strings.Repeat("a", 64), CreatedAt: "2026-07-23T12:30:00Z"},
+		{ID: "backup-old", Checksum: strings.Repeat("b", 64), CreatedAt: "2026-07-22T12:30:00Z"},
+	}})
+	if m.loadingBackups || !strings.Contains(m.View(), "backup-") {
+		t.Fatal("loaded backups should be visible")
+	}
+	m, _ = m.Update(testKey("down"))
+	if m.backupCursor != 1 {
+		t.Fatal("down should select the next backup")
+	}
+	m, _ = m.Update(testKey("enter"))
+	if m.dataView != settingsDataRestoreConfirm {
+		t.Fatal("selecting a backup should open confirmation")
+	}
+
+	m.confirmInput.SetValue("wrong")
+	m, cmd = m.Update(testKey("enter"))
+	if cmd != nil || m.restoring || !strings.Contains(m.restoreErr, "RESTORE") {
+		t.Fatal("restore must require the exact confirmation text")
+	}
+
+	m.confirmInput.SetValue("RESTORE")
+	m, cmd = m.Update(testKey("enter"))
+	if !m.restoring || cmd == nil {
+		t.Fatal("valid confirmation should start restore asynchronously")
+	}
+	m, cmd = m.Update(settingsRestoreMsg{})
+	if m.restoring || m.restoreStatus == "" || cmd == nil {
+		t.Fatal("successful restore should show status and schedule a clean exit")
+	}
+}
+
+func TestSettingsRestoreBackNavigationAndErrors(t *testing.T) {
+	m := readySettingsModel()
+	m.categoryCursor = int(settingsDataCategory)
+	m.focus = settingsContentFocus
+	m.dataView = settingsDataRestoreList
+	m.listErr = "temporary failure"
+
+	m, cmd := m.Update(testKey("r"))
+	if !m.loadingBackups || m.listErr != "" || cmd == nil {
+		t.Fatal("r should retry a failed backup listing")
+	}
+	m, _ = m.Update(testKey("esc"))
+	if m.dataView != settingsDataActions || m.close {
+		t.Fatal("Esc from backup list should return to Data actions")
+	}
+	m, _ = m.Update(settingsBackupsMsg{err: errors.New("late response")})
+	if m.authRequired || m.listErr != "" {
+		t.Fatal("a completed list request should be ignored after leaving the list")
+	}
+
+	m.dataView = settingsDataRestoreList
+	m.backups = []backupMetadata{{ID: "backup-one", Checksum: strings.Repeat("a", 64)}}
+	m, _ = m.Update(testKey("enter"))
+	m, _ = m.Update(testKey("esc"))
+	if m.dataView != settingsDataRestoreList || m.close {
+		t.Fatal("Esc from confirmation should return to the backup list")
+	}
+}
+
+func TestBackupLabelUsesLocalTimeAndShortID(t *testing.T) {
+	label := backupLabel(backupMetadata{
+		ID:        "12345678-aaaa-bbbb",
+		CreatedAt: "2026-07-23T12:30:00Z",
+	})
+	if !strings.Contains(label, "2026-07-23") || !strings.Contains(label, "12345678") {
+		t.Fatalf("backup label missing timestamp or short ID: %q", label)
+	}
+}
+
 func TestSettingsEditorsPrefillAndCancel(t *testing.T) {
 	settings := readySettingsModel()
 	profile := newProfileEditor(settingsTestUserID, nil, settings.data.Profile)

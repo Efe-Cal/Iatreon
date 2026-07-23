@@ -397,6 +397,55 @@ func (w *Worker) BackupData(ctx context.Context, userid string) (Response, error
 	})
 }
 
+func (w *Worker) ListBackups(ctx context.Context, userid string) ([]backupMetadata, Response, error) {
+	if w == nil {
+		return nil, Response{}, errors.New("encrypted local storage is unavailable")
+	}
+	resp, err := w.Call(ctx, "data/backup/list", struct {
+		UserID string `json:"user_id"`
+	}{UserID: userid})
+	if err != nil {
+		return nil, resp, err
+	}
+	var backups []backupMetadata
+	if err := decodeWorkerResult(resp, &backups); err != nil {
+		return nil, resp, err
+	}
+	return backups, resp, nil
+}
+
+func (w *Worker) RestoreBackup(ctx context.Context, userid string, backup backupMetadata) (Response, error) {
+	if w == nil {
+		return Response{}, errors.New("encrypted local storage is unavailable")
+	}
+	if backup.ID == "" || backup.Checksum == "" {
+		return Response{}, errors.New("backup metadata is incomplete")
+	}
+	dbPath, err := localWorkerDBPath()
+	if err != nil {
+		return Response{}, err
+	}
+	key, err := loadOrCreateWorkerKey(osCredentialStore{})
+	if err != nil {
+		return Response{}, err
+	}
+	defer zeroBytes(key)
+
+	return w.Call(ctx, "data/backup/restore", struct {
+		UserID   string `json:"user_id"`
+		DBPath   string `json:"db_path"`
+		BackupID string `json:"backup_id"`
+		Checksum string `json:"checksum"`
+		DBKey    string `json:"db_key"`
+	}{
+		UserID:   userid,
+		DBPath:   dbPath,
+		BackupID: backup.ID,
+		Checksum: backup.Checksum,
+		DBKey:    base64.StdEncoding.EncodeToString(key),
+	})
+}
+
 func (w *Worker) BackendSession(ctx context.Context, userid string) (backendSession, error) {
 	resp, err := w.Call(ctx, "backend-session/get", backendSessionInput{UserID: userid})
 	if err != nil {

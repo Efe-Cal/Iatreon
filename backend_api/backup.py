@@ -123,8 +123,15 @@ async def list_backups(
     db: AsyncSession = Depends(db_session),
 ):
     result = await db.execute(
-        select(BackupMetadata.id, BackupMetadata.checksum).where(
-            BackupMetadata.user_id == user.id
+        select(
+            BackupMetadata.id,
+            BackupMetadata.checksum,
+            BackupMetadata.created_at,
         )
+        .where(
+            BackupMetadata.user_id == user.id,
+            BackupMetadata.checksum.is_not(None),
+        )
+        .order_by(BackupMetadata.created_at.desc())
     )
     return {"backups": [dict(backup) for backup in result.mappings()]}
