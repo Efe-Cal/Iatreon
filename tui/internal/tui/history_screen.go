@@ -23,10 +23,13 @@ type historyModel struct {
 	userid string
 	worker *Worker
 
-	sessions []historySession
-	err      string
-	loading  bool
-	close    bool
+	sessions  []historySession
+	err       string
+	loading   bool
+	resuming  bool
+	resumeErr string
+	resumed   *historyResume
+	close     bool
 
 	sessionCursor int
 	sectionCursor int
@@ -55,6 +58,18 @@ type historySection struct {
 type historyLoadedMsg struct {
 	sessions []historySession
 	err      error
+}
+
+type historyResume struct {
+	SessionID      string           `json:"session_id"`
+	ConversationID string           `json:"conversation_id"`
+	Agent          string           `json:"agent"`
+	Messages       []resumedMessage `json:"messages"`
+}
+
+type historyResumedMsg struct {
+	resume historyResume
+	err    error
 }
 
 var (
@@ -89,9 +104,17 @@ func (m *historyModel) SetSize(w, h int) {
 
 func (m historyModel) footer() []string {
 	if m.fullscreen {
-		return []string{"↑/↓ Navigate", "f Unfocus", "Esc Back", "Ctrl+C Quit"}
+		actions := []string{"↑/↓ Navigate", "f Unfocus", "Esc Back", "Ctrl+C Quit"}
+		if m.focus == historyFocusSessions && len(m.sessions) > 0 {
+			actions = append([]string{"Enter Resume"}, actions...)
+		}
+		return actions
 	}
-	return []string{"↑/↓ Navigate", "←/→ Focus", "Tab Focus", "f Focus", "Esc Back", "Ctrl+C Quit"}
+	actions := []string{"↑/↓ Navigate", "←/→ Focus", "Tab Focus", "f Focus", "Esc Back", "Ctrl+C Quit"}
+	if m.focus == historyFocusSessions && len(m.sessions) > 0 {
+		actions = append([]string{"Enter Resume"}, actions...)
+	}
+	return actions
 }
 
 func (m historyModel) load() tea.Cmd {
@@ -119,6 +142,31 @@ func (m historyModel) load() tea.Cmd {
 	}
 }
 
+func (m historyModel) resume() tea.Cmd {
+	sessionID := m.sessions[m.sessionCursor].ID
+	return func() tea.Msg {
+		if m.worker == nil {
+			return historyResumedMsg{err: context.Canceled}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		resp, err := m.worker.Call(ctx, "session/resume", struct {
+			UserID    string `json:"user_id"`
+			SessionID string `json:"session_id"`
+		}{UserID: m.userid, SessionID: sessionID})
+		if err != nil {
+			return historyResumedMsg{err: err}
+		}
+
+		var resume historyResume
+		if err := decodeWorkerResult(resp, &resume); err != nil {
+			return historyResumedMsg{err: err}
+		}
+		return historyResumedMsg{resume: resume}
+	}
+}
+
 func (m historyModel) Update(msg tea.Msg) (historyModel, tea.Cmd) {
 	var cmd tea.Cmd
 
@@ -131,6 +179,15 @@ func (m historyModel) Update(msg tea.Msg) (historyModel, tea.Cmd) {
 			m.sessions = msg.sessions
 		}
 		m.refreshContent()
+		return m, nil
+
+	case historyResumedMsg:
+		m.resuming = false
+		if msg.err != nil {
+			m.resumeErr = msg.err.Error()
+		} else {
+			m.resumed = &msg.resume
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -157,6 +214,13 @@ func (m historyModel) Update(msg tea.Msg) (historyModel, tea.Cmd) {
 			return m, nil
 		case "down", "j":
 			m.move(1)
+			return m, nil
+		case "enter":
+			if m.focus == historyFocusSessions && len(m.sessions) > 0 && !m.resuming {
+				m.resuming = true
+				m.resumeErr = ""
+				return m, m.resume()
+			}
 			return m, nil
 		}
 	}
@@ -307,7 +371,17 @@ func (m historyModel) sessionList(w, h int) string {
 		}
 		rows = append(rows, row(title, i == m.sessionCursor, w))
 	}
-	return visibleRows(rows, m.sessionCursor, h)
+	status := ""
+	if m.resuming {
+		status = "Resuming session..."
+	} else if m.resumeErr != "" {
+		status = errorStyle.Render(clip(m.resumeErr, w))
+	}
+	if status != "" {
+		return visibleRows(rows, m.sessionCursor, max(1, h-2)) + "\n\n" + status
+	}
+	list := visibleRows(rows, m.sessionCursor, h)
+	return list
 }
 
 func (m historyModel) sectionList(w, h int) string {

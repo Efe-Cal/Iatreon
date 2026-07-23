@@ -25,6 +25,7 @@ from local_worker.store.checkpointer import (
 from local_worker.store.conversation_session import (
     create_session,
     get_chat_session_data,
+    get_session_resume_data,
     get_citation_text,
     get_intake,
     get_intake_by_chat_session,
@@ -75,6 +76,7 @@ __all__ = [
     "fail_profile_update_job",
     "get_backend_session",
     "get_chat_session_data",
+    "get_session_resume_data",
     "get_checkpointer",
     "get_citation_text",
     "get_intake",

@@ -64,3 +64,55 @@ func TestHistoryModelSelectionDiagnosisAndFullscreen(t *testing.T) {
 		t.Fatalf("fullscreen height=%d, want 24", got)
 	}
 }
+
+func TestHistoryEnterRequestsSelectedSessionResume(t *testing.T) {
+	m := newHistoryModel("user-1", nil)
+	m.loading = false
+	m.sessions = []historySession{{ID: "session-1"}}
+
+	if !strings.Contains(strings.Join(m.footer(), " "), "Enter Resume") {
+		t.Fatal("sessions footer should advertise resume")
+	}
+
+	updated, cmd := m.Update(testKey("enter"))
+	if !updated.resuming || cmd == nil {
+		t.Fatal("enter on a session should start an asynchronous resume")
+	}
+
+	m.focus = historyFocusSections
+	m.resuming = false
+	updated, cmd = m.Update(testKey("enter"))
+	if updated.resuming || cmd != nil {
+		t.Fatal("enter outside the sessions panel should not resume")
+	}
+}
+
+func TestHistoryResumeOpensExistingChat(t *testing.T) {
+	m := newModel("user-1", true, true, true, nil)
+	m.active = historyScreen
+	m.history = newHistoryModel("user-1", nil)
+
+	updated, _ := m.Update(historyResumedMsg{resume: historyResume{
+		SessionID:      "session-1",
+		ConversationID: "conversation-1",
+		Agent:          "diagnosis",
+		Messages: []resumedMessage{
+			{Role: "user", Text: "My head hurts"},
+			{Role: "ai", Text: "Tell me more"},
+		},
+	}})
+	got := updated.(model)
+
+	if got.active != chatScreen {
+		t.Fatalf("resume should open chat, active=%v", got.active)
+	}
+	if got.chat.sessionID != "session-1" || got.chat.conversationID != "conversation-1" {
+		t.Fatalf("resume lost session IDs: session=%q conversation=%q", got.chat.sessionID, got.chat.conversationID)
+	}
+	if got.chat.agent.Kind() != AgentDiagnosis || !got.chat.invokeAgentWithEnter {
+		t.Fatal("diagnosis should resume at its existing continuation prompt")
+	}
+	if len(got.chat.history) != 3 || got.chat.history[0].text != "My head hurts" || got.chat.history[1].text != "Tell me more" {
+		t.Fatalf("restored chat history is incomplete: %#v", got.chat.history)
+	}
+}

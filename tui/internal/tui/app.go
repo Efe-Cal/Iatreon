@@ -424,6 +424,31 @@ func (m model) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 	updated, cmd := m.history.Update(msg)
 	m.history = updated
+	m.history.SetSize(m.width, m.bodyHeightFor(historyScreen))
+
+	if m.history.resumed != nil {
+		resume := m.history.resumed
+		kind := AgentIntake
+		switch resume.Agent {
+		case "research":
+			kind = AgentResearch
+		case "diagnosis":
+			kind = AgentDiagnosis
+		case "doctor":
+			kind = AgentDoctor
+		}
+		m.chat = m.initChat(newResumedChatModel(
+			kind,
+			m.userid,
+			resume.SessionID,
+			resume.ConversationID,
+			resume.Messages,
+			m.worker,
+		))
+		m.history = m.initHistory(newHistoryModel(m.userid, m.worker))
+		m.active = chatScreen
+		return m, m.chat.Init()
+	}
 
 	if m.history.close {
 		m.history = m.initHistory(newHistoryModel(m.userid, m.worker))

@@ -7,6 +7,11 @@ class SessionCreateRequest(BaseModel):
     user_id: UUID
 
 
+class SessionResumeRequest(BaseModel):
+    user_id: UUID
+    session_id: UUID
+
+
 class HistoryRequest(BaseModel):
     user_id: UUID
 

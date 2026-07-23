@@ -241,6 +241,60 @@ def get_chat_session_data(user_id: str, chat_session_id: str) -> dict[str, Any] 
         }
 
 
+def get_session_resume_data(user_id: str, chat_session_id: str) -> dict[str, Any] | None:
+    with _lock, _session() as db:
+        session = db.get(ChatSession, str(chat_session_id))
+        if session is None or session.user_id != str(user_id):
+            return None
+
+        intake = db.get(Intake, session.intake_session_id) if session.intake_session_id else None
+        user_research = db.scalars(
+            select(Research)
+            .where(
+                Research.user_id == str(user_id),
+                Research.chat_session_id == str(chat_session_id),
+                Research.triggered_by == "user",
+            )
+            .limit(1)
+        ).first()
+        diagnosis = db.scalars(
+            select(Diagnosis)
+            .where(
+                Diagnosis.user_id == str(user_id),
+                Diagnosis.chat_session_id == str(chat_session_id),
+            )
+            .limit(1)
+        ).first()
+
+        if session.doctor_session_id:
+            agent = "doctor"
+            conversation_id = session.doctor_session_id
+        elif diagnosis:
+            agent = "doctor"
+            conversation_id = session.intake_session_id
+        elif user_research:
+            agent = "diagnosis"
+            conversation_id = session.intake_session_id
+        elif intake:
+            agent = "research"
+            conversation_id = session.intake_session_id
+        else:
+            agent = "intake"
+            conversation_id = session.intake_session_id
+
+        history_conversation_ids = []
+        for thread_id in (session.intake_session_id, conversation_id):
+            if thread_id and thread_id not in history_conversation_ids:
+                history_conversation_ids.append(thread_id)
+
+        return {
+            "session_id": session.id,
+            "conversation_id": conversation_id,
+            "agent": agent,
+            "history_conversation_ids": history_conversation_ids,
+        }
+
+
 def save_research(
     user_id: str,
     research_id: str,

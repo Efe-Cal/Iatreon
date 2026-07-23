@@ -28,6 +28,11 @@ type messageItem struct {
 	toolMessage
 }
 
+type resumedMessage struct {
+	Role string `json:"role"`
+	Text string `json:"text"`
+}
+
 type chatModel struct {
 	agent          AgentHandler
 	userid         string
@@ -148,6 +153,31 @@ func newChatModelForAgent(kind AgentKind, userid string, session_id string, work
 		worker:        worker,
 		footerActions: handler.Footer(),
 	}
+}
+
+func newResumedChatModel(kind AgentKind, userid, sessionID, conversationID string, messages []resumedMessage, worker *Worker) chatModel {
+	m := newChatModelForAgent(kind, userid, sessionID, worker)
+	m.conversationID = conversationID
+	m.history = make([]messageItem, 0, len(messages)+1)
+	for _, message := range messages {
+		switch message.Role {
+		case "user":
+			m.history = append(m.history, messageItem{role: "user", text: message.Text})
+		case "ai":
+			m.history = append(m.history, messageItem{role: "ai", label: "Iatreon:", text: message.Text})
+		}
+	}
+	m.history = append(m.history, messageItem{role: "system", text: "Session resumed."})
+
+	switch kind {
+	case AgentResearch:
+		m.invokeAgentWithEnter = true
+		m.UpdateFooter("Enter Resume Research", 0)
+	case AgentDiagnosis:
+		m.invokeAgentWithEnter = true
+		m.UpdateFooter("Enter Resume Diagnosis", 0)
+	}
+	return m
 }
 
 func (m *chatModel) Init() tea.Cmd {

@@ -98,6 +98,130 @@ def test_store_round_trips_worker_records(initialized_store):
     assert history[0]["sections"][-1]["id"] == doctor_session_id
 
 
+def test_session_resume_tracks_workflow_stage(initialized_store):
+    user_id = str(uuid.uuid4())
+    session_id = store.create_session(user_id)
+
+    resume = store.get_session_resume_data(user_id, session_id)
+    assert resume["agent"] == "intake"
+    assert resume["conversation_id"] is None
+
+    intake_id = str(uuid.uuid4())
+    store.link_intake_session(session_id, intake_id)
+    resume = store.get_session_resume_data(user_id, session_id)
+    assert resume["agent"] == "intake"
+    assert resume["conversation_id"] == intake_id
+
+    profile = {"chief_complaint": "Headache", "symptoms": ["pain"]}
+    store.save_intake(user_id, intake_id, session_id, profile, intake_id)
+    assert store.get_session_resume_data(user_id, session_id)["agent"] == "research"
+
+    store.save_research(
+        user_id,
+        str(uuid.uuid4()),
+        session_id,
+        "fast",
+        "Doctor research",
+        {},
+        triggered_by="doctor",
+    )
+    assert store.get_session_resume_data(user_id, session_id)["agent"] == "research"
+
+    store.save_research(
+        user_id,
+        str(uuid.uuid4()),
+        session_id,
+        "standard",
+        "User research",
+        {},
+    )
+    assert store.get_session_resume_data(user_id, session_id)["agent"] == "diagnosis"
+
+    store.save_diagnosis(
+        user_id,
+        str(uuid.uuid4()),
+        intake_id,
+        session_id,
+        {"primary_diagnosis": "Migraine"},
+    )
+    resume = store.get_session_resume_data(user_id, session_id)
+    assert resume["agent"] == "doctor"
+    assert resume["conversation_id"] == intake_id
+
+    doctor_id = str(uuid.uuid4())
+    store.link_doctor_session(session_id, doctor_id)
+    resume = store.get_session_resume_data(user_id, session_id)
+    assert resume["agent"] == "doctor"
+    assert resume["conversation_id"] == doctor_id
+    assert resume["history_conversation_ids"] == [intake_id, doctor_id]
+    assert store.get_session_resume_data(str(uuid.uuid4()), session_id) is None
+
+
+def test_resume_messages_keeps_only_visible_chat_turns():
+    from local_worker.worker import _resume_messages
+
+    messages = [
+        {"role": "system", "content": "hidden"},
+        {"type": "human", "content": "Hello"},
+        {"type": "ai", "content": [{"type": "text", "text": "Hi"}, {"type": "tool_call"}]},
+        {"type": "tool", "content": "hidden"},
+        {"type": "assistant", "content": ""},
+    ]
+
+    assert _resume_messages(messages) == [
+        {"role": "user", "text": "Hello"},
+        {"role": "ai", "text": "Hi"},
+    ]
+
+
+def test_resume_session_combines_intake_and_doctor_threads(monkeypatch):
+    from local_worker import worker
+
+    user_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    intake_id = str(uuid.uuid4())
+    doctor_id = str(uuid.uuid4())
+
+    monkeypatch.setattr(
+        worker.store,
+        "get_session_resume_data",
+        lambda *_: {
+            "session_id": str(session_id),
+            "conversation_id": doctor_id,
+            "agent": "doctor",
+            "history_conversation_ids": [intake_id, doctor_id],
+        },
+    )
+
+    class Checkpoint:
+        def __init__(self, messages):
+            self.checkpoint = {"channel_values": {"messages": messages}}
+
+    class Checkpointer:
+        async def aget_tuple(self, config):
+            thread_id = config["configurable"]["thread_id"]
+            if thread_id == intake_id:
+                return Checkpoint([{"type": "human", "content": "Intake question"}])
+            if thread_id == doctor_id:
+                return Checkpoint([{"type": "ai", "content": "Doctor response"}])
+            return None
+
+    monkeypatch.setattr(worker.store, "get_checkpointer", lambda: Checkpointer())
+
+    result = asyncio.run(
+        worker.resume_session(
+            worker.SessionResumeRequest(user_id=user_id, session_id=session_id)
+        )
+    )
+
+    assert result["conversation_id"] == doctor_id
+    assert result["messages"] == [
+        {"role": "user", "text": "Intake question"},
+        {"role": "ai", "text": "Doctor response"},
+    ]
+    assert "history_conversation_ids" not in result
+
+
 def test_profiler_service_updates_only_medical_summary(initialized_store, monkeypatch):
     from local_worker.services import profiler_service
 

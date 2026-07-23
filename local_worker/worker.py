@@ -107,6 +107,7 @@ from local_worker.models import (
     ProviderSetupUpdateRequest,
     ResearchRequest,
     SessionCreateRequest,
+    SessionResumeRequest,
     SettingsRequest,
     UserProfileStatusRequest,
     UserProfileUpdateRequest,
@@ -118,6 +119,7 @@ from local_worker.services.intake_service import stream_intake_chat
 from local_worker.services.doctor_service import stream_doctor_chat_service
 from local_worker.services.research_service import get_citation_text, stream_research
 from local_worker.services.profiler_service import drain_profile_update_jobs
+from local_worker.errors import NotFoundError
 from local_worker.store.backend_session import (
     BackendAuthRequired,
     BackendAuthUnavailable,
@@ -191,6 +193,71 @@ async def restore_backup(req: BackupRestoreRequest):
 @route("session/create", SessionCreateRequest)
 async def create_session(req: SessionCreateRequest):
     return {"session_id": store.create_session(str(req.user_id))}
+
+
+def _resume_messages(messages):
+    restored = []
+    for message in messages:
+        if isinstance(message, dict):
+            role = message.get("role") or message.get("type")
+            content = message.get("content")
+        else:
+            role = getattr(message, "type", None)
+            content = getattr(message, "content", None)
+
+        role = {"human": "user", "assistant": "ai"}.get(role, role)
+        if role not in {"user", "ai"}:
+            continue
+
+        if isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, str):
+                    parts.append(block)
+                elif isinstance(block, dict) and isinstance(block.get("text"), str):
+                    parts.append(block["text"])
+            content = "".join(parts)
+
+        if isinstance(content, str) and content.strip():
+            restored.append({"role": role, "text": content})
+    return restored
+
+
+
+@route("session/resume", SessionResumeRequest)
+async def resume_session(req: SessionResumeRequest):
+    data = store.get_session_resume_data(str(req.user_id), str(req.session_id))
+    if data is None:
+        raise NotFoundError("Chat session not found.")
+
+    history_conversation_ids = data.pop("history_conversation_ids", [])
+    conversation_id = data["conversation_id"]
+    messages = []
+    seen = set()
+    found_checkpoint = False
+    for thread_id in [*history_conversation_ids, conversation_id]:
+        if not thread_id or thread_id in seen:
+            continue
+        seen.add(thread_id)
+        try:
+            checkpoint = await store.get_checkpointer().aget_tuple(
+                {"configurable": {"thread_id": str(thread_id)}}
+            )
+        except Exception:
+            continue
+        if checkpoint:
+            found_checkpoint = True
+            messages.extend(checkpoint.checkpoint["channel_values"].get("messages", []))
+
+    if not found_checkpoint: 
+        raise NotFoundError("Conversation not found.")
+
+    return {
+        **data,
+        "conversation_id": str(conversation_id),
+        "messages": _resume_messages(messages),
+    }
+
 
 
 @route("profile/update", UserProfileUpdateRequest)
