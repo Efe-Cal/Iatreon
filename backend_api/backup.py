@@ -5,6 +5,7 @@ import boto3
 from botocore.config import Config
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import current_user
@@ -114,3 +115,16 @@ async def download_backup(
     )
 
     return {"status": "success", "download_url": download_url, "checksum": metadata.checksum}
+
+
+@router.get("/list")
+async def list_backups(
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(db_session),
+):
+    result = await db.execute(
+        select(BackupMetadata.id, BackupMetadata.checksum).where(
+            BackupMetadata.user_id == user.id
+        )
+    )
+    return {"backups": [dict(backup) for backup in result.mappings()]}

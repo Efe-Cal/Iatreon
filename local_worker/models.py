@@ -91,3 +91,15 @@ class BackupRequest(BaseModel):
     source_path: str
     backup_path: str
     db_key: str
+
+
+class BackupListRequest(BaseModel):
+    user_id: UUID
+
+
+class BackupRestoreRequest(BaseModel):
+    user_id: UUID
+    db_path: str
+    backup_id: str
+    checksum: str
+    db_key: str

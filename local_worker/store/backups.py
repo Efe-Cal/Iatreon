@@ -1,10 +1,12 @@
-from pathlib import Path
 import asyncio
-import hashlib
 import base64
+import hashlib
+import os
+from pathlib import Path
 
 from local_worker.store.database import sqlcipher
 from local_worker.store.backend_session import backend_api_url, get_backend_session
+
 
 def calculate_sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -145,3 +147,65 @@ async def download_backup(backup_id: str, user_id: str, destination_path: Path) 
             "Downloaded backup checksum does not match: "
             f"{checksum} != {download_url_request['checksum']}"
         )
+
+
+async def restore_backup(
+    user_id: str,
+    backup_id: str,
+    restore_path: Path,
+    checksum: str,
+    db_key: str,
+) -> None:
+    downloaded_backup_temp_path = Path(f"{restore_path}.backup.tmp")
+
+    try:
+        await download_backup(
+            backup_id,
+            user_id=user_id,
+            destination_path=downloaded_backup_temp_path,
+        )
+
+        downloaded_checksum = calculate_sha256(downloaded_backup_temp_path)
+        if downloaded_checksum != checksum:
+            raise RuntimeError(
+                "Downloaded backup checksum does not match provided checksum: "
+                f"{downloaded_checksum} != {checksum}"
+            )
+
+        temp_connection = sqlcipher.connect(
+            str(downloaded_backup_temp_path),
+            check_same_thread=False,
+        )
+        try:
+            key_hex = base64.b64decode(db_key, validate=True).hex()
+            temp_connection.execute(f"PRAGMA key = \"x'{key_hex}'\"")
+            temp_connection.execute("SELECT count(*) FROM sqlite_master").fetchone()
+            result = temp_connection.execute("PRAGMA cipher_integrity_check").fetchall()
+            if result:
+                raise RuntimeError(f"Backup integrity check failed: {result}")
+        finally:
+            temp_connection.close()
+
+        os.replace(downloaded_backup_temp_path, restore_path)
+
+    finally:
+        downloaded_backup_temp_path.unlink(missing_ok=True)
+
+
+async def list_backups(user_id: str) -> list[dict]:
+    import httpx
+
+    api_url = backend_api_url() + "/backup/list"
+    access_token = get_backend_session(user_id).get("access_token")
+    if not access_token:
+        raise RuntimeError("No access token found for user, cannot list backups")
+
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(api_url, headers=headers, timeout=30)
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Failed to list backups: {response.status_code} {response.text}"
+            )
+        return response.json().get("backups", [])

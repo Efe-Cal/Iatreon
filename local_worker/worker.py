@@ -94,9 +94,11 @@ def route(name: str, request_model: type[BaseModel]):
     return decorator
 
 from local_worker.models import (
+    BackupListRequest,
     BackupRequest,
     BackendSessionRequest,
     BackendSessionUpdateRequest,
+    BackupRestoreRequest,
     ChatRequest,
     CitationTextRequest,
     DiagnosisRequest,
@@ -127,7 +129,15 @@ from local_worker.request_context import (
 )
 
 
-BACKEND_AUTH_ROUTES = {"chat/intake", "chat/doctor", "research", "diagnose", "data/backup"}
+BACKEND_AUTH_ROUTES = {
+    "chat/intake",
+    "chat/doctor",
+    "research",
+    "diagnose",
+    "data/backup",
+    "data/backup/list",
+    "data/backup/restore",
+}
 
 
 @route("worker/init", WorkerInitRequest)
@@ -151,6 +161,32 @@ async def backup_data(req: BackupRequest):
     await store.upload_backup(Path(req.backup_path), str(req.user_id), checksum)
     return {"status": "success"}
 
+
+@route("data/backup/list", BackupListRequest)
+async def get_backup(req: BackupListRequest):
+    from local_worker.store.backups import list_backups
+
+    backup_data = await list_backups(str(req.user_id))
+    return backup_data
+
+
+@route("data/backup/restore", BackupRestoreRequest)
+async def restore_backup(req: BackupRestoreRequest):
+    from local_worker.store.backups import restore_backup as restore
+
+    await store.close_checkpointer()
+    try:
+        await restore(
+            user_id=str(req.user_id),
+            backup_id=req.backup_id,
+            restore_path=Path(req.db_path),
+            checksum=req.checksum,
+            db_key=req.db_key,
+        )
+    finally:
+        store.initialize(req.db_path, req.db_key)
+        await store.initialize_checkpointer()
+    return {"status": "success"}
 
 @route("session/create", SessionCreateRequest)
 async def create_session(req: SessionCreateRequest):

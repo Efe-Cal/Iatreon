@@ -1,5 +1,6 @@
-import base64
 import asyncio
+import base64
+import hashlib
 import uuid
 from unittest.mock import patch
 
@@ -600,3 +601,89 @@ def test_backup_route_converts_paths_and_refreshes_auth(monkeypatch, tmp_path):
     assert seen["create"] == (source_path, backup_path, "key")
     assert seen["upload"][0] == backup_path
     assert "data/backup" in worker.BACKEND_AUTH_ROUTES
+
+
+def test_restore_rejects_cipher_integrity_errors(monkeypatch, tmp_path):
+    from local_worker.store import backups
+
+    backup_bytes = b"damaged encrypted database"
+    restore_path = tmp_path / "current.db"
+    restore_path.write_bytes(b"current database")
+    closed = []
+
+    async def download_backup(backup_id, user_id, destination_path):
+        assert (backup_id, user_id) == ("backup-one", "user-one")
+        destination_path.write_bytes(backup_bytes)
+
+    class Connection:
+        def execute(self, statement):
+            return self
+
+        def fetchone(self):
+            return (1,)
+
+        def fetchall(self):
+            return [("corrupt page",)]
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(backups, "download_backup", download_backup)
+    monkeypatch.setattr(backups.sqlcipher, "connect", lambda *args, **kwargs: Connection())
+
+    with pytest.raises(RuntimeError, match="Backup integrity check failed"):
+        asyncio.run(
+            backups.restore_backup(
+                user_id="user-one",
+                backup_id="backup-one",
+                restore_path=restore_path,
+                checksum=hashlib.sha256(backup_bytes).hexdigest(),
+                db_key=_key(b"a"),
+            )
+        )
+
+    assert restore_path.read_bytes() == b"current database"
+    assert closed == [True]
+
+
+def test_restore_route_closes_and_reopens_store(monkeypatch, tmp_path):
+    from local_worker import worker
+    from local_worker.store import backups
+
+    calls = []
+    seen = {}
+
+    async def close_checkpointer():
+        calls.append("close")
+
+    async def restore(**kwargs):
+        calls.append("restore")
+        seen.update(kwargs)
+
+    def initialize(db_path, db_key):
+        calls.append("initialize")
+
+    async def initialize_checkpointer():
+        calls.append("checkpoint")
+
+    monkeypatch.setattr(worker.store, "close_checkpointer", close_checkpointer)
+    monkeypatch.setattr(backups, "restore_backup", restore)
+    monkeypatch.setattr(worker.store, "initialize", initialize)
+    monkeypatch.setattr(worker.store, "initialize_checkpointer", initialize_checkpointer)
+
+    user_id = uuid.uuid4()
+    db_path = tmp_path / "local.sqlite3"
+    request = worker.BackupRestoreRequest(
+        user_id=user_id,
+        db_path=str(db_path),
+        backup_id="backup-one",
+        checksum="a" * 64,
+        db_key=_key(b"a"),
+    )
+
+    assert asyncio.run(worker.restore_backup(request)) == {"status": "success"}
+    assert calls == ["close", "restore", "initialize", "checkpoint"]
+    assert seen["user_id"] == str(user_id)
+    assert seen["backup_id"] == "backup-one"
+    assert seen["restore_path"] == db_path
+    assert {"data/backup/list", "data/backup/restore"} <= worker.BACKEND_AUTH_ROUTES
