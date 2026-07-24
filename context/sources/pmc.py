@@ -67,6 +67,7 @@ class PMCClient:
             return ""
 
         sections = []
+        emitted_paragraphs = set()
 
         for sec in root.findall(".//sec"):
             title_elem = sec.find("title")
@@ -74,6 +75,9 @@ class PMCClient:
 
             paragraphs = []
             for p in sec.findall(".//p"):
+                if p in emitted_paragraphs:
+                    continue
+                emitted_paragraphs.add(p)
                 text = "".join(p.itertext()).strip()
                 if text:
                     paragraphs.append(text)
@@ -83,6 +87,9 @@ class PMCClient:
 
         if not sections:
             for p in root.findall(".//p"):
+                if p in emitted_paragraphs:
+                    continue
+                emitted_paragraphs.add(p)
                 text = "".join(p.itertext()).strip()
                 if text:
                     sections.append(text)

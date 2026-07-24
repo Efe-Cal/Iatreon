@@ -11,7 +11,7 @@ from ..sources.pmc import PMCClient
 from ..sources.pubmed import PubMedClient
 from .ranking import QualityRanker
 from ..sources.get_ncbi_books import BookshelfClient
-from ..errors import log_external_failure
+from ..errors import ExternalServiceError, log_external_failure
 
 
 class MedicalKnowledgePipeline:
@@ -25,7 +25,10 @@ class MedicalKnowledgePipeline:
         self.source_warnings: list[str] = []
 
     def _source_failed(self, provider: str, operation: str, error: object) -> None:
-        self.source_warnings.append(log_external_failure(provider, operation, error))
+        if isinstance(error, ExternalServiceError):
+            self.source_warnings.append(log_external_failure(error.provider, error.operation, error.__cause__ or error))
+        else:
+            self.source_warnings.append(log_external_failure(provider, operation, error))
 
     async def search(self, query: str, max_results: int = 10, include_books: bool = True) -> dict:
         # print(f"\n{'='*60}")
@@ -153,7 +156,7 @@ class MedicalKnowledgePipeline:
         include_books: bool = False,
     ) -> dict:
         results = await self.search(query, max_results=max_articles, include_books=include_books)
-        articles = [asdict(a) for a in results["articles"][:max_articles]]
+        articles = [asdict(a) for a in results["articles"]]
         books = [asdict(b) for b in results["books"]]
         return {"query": query, "articles": articles, "books": books, "warnings": results.get("warnings", [])}
 
@@ -259,6 +262,7 @@ async def run_pipeline(query: str, max_articles: int = 5, include_books: bool = 
     articles = deduplicate_articles(articles)
     articles = [a for a in articles if a["full_text_available"] or a["abstract"]]
     articles = normalize_articles(articles)
+    articles = sorted(articles, key=lambda a: a.get("quality_score", 0), reverse=True)[:max_articles]
 
     return {"articles": articles, "books": books, "warnings": warnings}
 

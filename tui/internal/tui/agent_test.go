@@ -42,6 +42,20 @@ func TestHandleCommonAgentEventError(t *testing.T) {
 	}
 }
 
+func TestResearchCompleteShowsSourceWarnings(t *testing.T) {
+	data := json.RawMessage(`{
+		"report": "# Findings\n\nLimited evidence.",
+		"source_warnings": ["PubMed search failed: timeout"]
+	}`)
+	msg := (&researchHandler{}).HandleEvent(sseEvent{Type: "research_complete", Data: data})
+
+	for _, want := range []string{"Source availability warning", "may be incomplete", "PubMed search failed: timeout", "# Findings"} {
+		if !strings.Contains(msg.report, want) {
+			t.Fatalf("report missing %q:\n%s", want, msg.report)
+		}
+	}
+}
+
 func TestRecoverableChatErrorEnablesRetry(t *testing.T) {
 	m := newChatModelForAgent(AgentIntake, "user-1", "session-1", nil)
 	m.retryMessage = "hello"

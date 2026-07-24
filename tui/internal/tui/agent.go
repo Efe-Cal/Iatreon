@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 )
 
 type AgentKind int
@@ -220,6 +221,7 @@ func (*researchHandler) HandleEvent(ev sseEvent) chunkMsg {
 		var data struct {
 			Report            string          `json:"report"`
 			Citations         json.RawMessage `json:"citations"`
+			SourceWarnings    []string        `json:"source_warnings"`
 			ResearchSessionID string          `json:"research_session_id"`
 		}
 		if err := json.Unmarshal(ev.Data, &data); err != nil {
@@ -231,6 +233,9 @@ func (*researchHandler) HandleEvent(ev sseEvent) chunkMsg {
 		report := data.Report
 		if report == "" {
 			report = "_(no report content)_"
+		}
+		if len(data.SourceWarnings) > 0 {
+			report = formatSourceWarnings(data.SourceWarnings) + report
 		}
 		return chunkMsg{
 			content:           "\n\n✅ **Research complete.** Opening report.",
@@ -246,6 +251,17 @@ func (*researchHandler) HandleEvent(ev sseEvent) chunkMsg {
 		return msg
 	}
 	return chunkMsg{}
+}
+
+func formatSourceWarnings(warnings []string) string {
+	var b strings.Builder
+	b.WriteString("# ⚠ Source availability warning\n\n")
+	b.WriteString("> This report may be incomplete because one or more external sources were unavailable.\n>\n")
+	for _, warning := range warnings {
+		fmt.Fprintf(&b, "> - %s\n", warning)
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 // ---------------

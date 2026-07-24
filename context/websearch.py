@@ -2,7 +2,7 @@ from exa_py import Exa
 from exa_py.api import ContentsOptions, TextContentsOptions, HighlightsContentsOptions
 from dotenv import load_dotenv
 
-from context.errors import log_external_failure
+from context.errors import ExternalServiceError
 from local_worker.provider_config import provider_setup, search_config
 
 load_dotenv()
@@ -70,11 +70,9 @@ Prioritize:
 Avoid omitting nuanced or uncertain findings.
 Prefer completeness over brevity."""
                 )))
+        return [{"title": r.title, "url": r.url, "highlights": r.highlights} for r in response.results]
     except Exception as exc:
-        log_external_failure("Exa", "search", exc)
-        return []
-
-    return [{"title": r.title, "url": r.url, "highlights": r.highlights} for r in response.results]
+        raise ExternalServiceError("Exa", "search", exc) from exc
 
 def fetch_web_content(url: str) -> str:
     """Fetches the full contents of a web page.
@@ -89,8 +87,7 @@ def fetch_web_content(url: str) -> str:
     try:
         response = make_exa_client().get_contents(url, livecrawl="preferred", text=TextContentsOptions())
     except Exception as exc:
-        log_external_failure("Exa", "content fetch", exc)
-        return "Failed to fetch content."
+        raise ExternalServiceError("Exa", "content fetch", exc) from exc
 
     if not response.statuses or response.statuses[0].status != "success" or not response.results:
         return "Failed to fetch content."

@@ -3,7 +3,7 @@ import xml.etree.ElementTree as ET
 import requests
 
 from ..config import NCBI_API_KEY, NCBI_BASE
-from ..errors import log_external_failure
+from ..errors import ExternalServiceError
 from ..models import Article
 from .ncbi_rate_limit import ncbi_get
 
@@ -28,8 +28,7 @@ class PubMedClient:
             r.raise_for_status()
             ids = r.json()["esearchresult"]["idlist"]
         except (requests.RequestException, KeyError, ValueError) as exc:
-            log_external_failure("PubMed", "search", exc)
-            return []
+            raise ExternalServiceError("PubMed", "search", exc) from exc
         # print(f"[PubMed] Found {len(ids)} articles")
         return ids
 
@@ -54,16 +53,14 @@ class PubMedClient:
             r.raise_for_status()
             return self._parse_pubmed_xml(r.text)
         except (requests.RequestException, ET.ParseError) as exc:
-            log_external_failure("PubMed", "abstract fetch", exc)
-            return []
+            raise ExternalServiceError("PubMed", "abstract fetch", exc) from exc
 
     def _parse_pubmed_xml(self, xml_text: str) -> list[Article]:
         articles = []
         try:
             root = ET.fromstring(xml_text)
         except ET.ParseError as exc:
-            log_external_failure("PubMed", "XML parse", exc)
-            return []
+            raise ExternalServiceError("PubMed", "XML parse", exc) from exc
 
         for article_elem in root.findall(".//PubmedArticle"):
             a = Article()
@@ -115,10 +112,9 @@ class PubMedClient:
                     a.mesh_terms.append(mesh.text)
 
             pub_types = article_elem.findall(".//PublicationType")
-            for pt in pub_types:
-                if pt.text:
-                    a.study_type = pt.text
-                    break
+            a.study_type = " | ".join(
+                pt.text for pt in pub_types if pt.text
+            )
 
             articles.append(a)
 

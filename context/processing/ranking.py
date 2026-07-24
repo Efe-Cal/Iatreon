@@ -1,4 +1,5 @@
 import math
+from datetime import datetime, timezone
 
 from ..models import Article
 
@@ -22,18 +23,19 @@ class QualityRanker:
     def score(self, article: Article) -> float:
         score = 0.0
 
-        study_type_lower = (article.study_type or "").lower()
-        for study_type, pts in self.STUDY_TYPE_SCORES.items():
-            if study_type in study_type_lower:
-                score += pts
-                break
+        study_type_lower = (article.study_type or "").lower().split(" | ")
+        max_study_type_score = max(
+            (self.STUDY_TYPE_SCORES.get(st, 0) for st in study_type_lower), default=0
+        )
+        if max_study_type_score:
+            score += max_study_type_score
         else:
             score += 5
 
         if article.citation_count > 0:
             score += min(25, math.log10(article.citation_count + 1) * 10)
 
-        current_year = 2026
+        current_year = datetime.now(timezone.utc).year
         if article.year > 0:
             age = current_year - article.year
             if age <= 2:

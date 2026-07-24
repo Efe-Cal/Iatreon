@@ -114,7 +114,7 @@ class BookshelfClient:
                 html_content = self.get_book_html_content(book["url"])
             except Exception as exc:
                 log_external_failure("NCBI Bookshelf", "book content fetch", exc)
-                html_content = ""
+                html_content = "Failed to extract content."
             book["text"] = self._html_to_md(html_content)
             if book["text"] and book["text"] != "Failed to extract content.":
                 book["full_text_available"] = True
