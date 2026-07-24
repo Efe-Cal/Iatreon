@@ -367,7 +367,12 @@ func (m historyModel) sessionList(w, h int) string {
 	for i, session := range m.sessions {
 		title := shortID(session.ID)
 		if session.CreatedAt != "" {
-			title += "  " + session.CreatedAt[:min(len(session.CreatedAt), 10)]
+			time, err := time.Parse(time.RFC3339, session.CreatedAt)
+			if err != nil {
+				title += "  " + session.CreatedAt
+			} else {
+				title += "  " + time.Local().Format("Jan 2, 3:04 PM")
+			}
 		}
 		rows = append(rows, row(title, i == m.sessionCursor, w))
 	}
