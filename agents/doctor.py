@@ -1,4 +1,5 @@
 from typing import AsyncGenerator
+import json
 import uuid
 import logging
 from dotenv import load_dotenv
@@ -26,6 +27,14 @@ class DoctorAgent:
                 "Choose research_effort as fast, standard, deep, or web."
             ),
         )
+        self.call_diagnostic_agent_tool = StructuredTool.from_function(
+            coroutine=self._call_diagnostic_agent,
+            name="call_diagnostic_agent",
+            description=(
+                "Request an updated diagnosis when the patient reports new symptoms or changes. "
+                "Pass the exact new clinical details as patient_notes; the linked intake is included automatically."
+            ),
+        )
         if os.getenv("IATREON_LOCAL_WORKER") == "1":
             from local_worker import store
             checkpointer = store.get_checkpointer()
@@ -34,7 +43,7 @@ class DoctorAgent:
             checkpointer = checkpointer_manager.get_checkpointer()
         self.agent = create_agent_by_type(
             "doctor",
-            tools=[self.call_research_agent_tool],
+            tools=[self.call_research_agent_tool, self.call_diagnostic_agent_tool],
             checkpointer=checkpointer,
         )
 
@@ -53,13 +62,13 @@ class DoctorAgent:
                 config=config,
                 version="v2",
             ):
-                #TODO: Take a look a this when we have tools
                 if event["event"] == "on_tool_start" or event["event"] == "on_tool_end":
                     inp = event.get("data", {}).get("input", {})
                     if isinstance(inp, dict):
                         query = inp.get("query", "")
                         effort = inp.get("research_effort", "")
-                        content = f"{query} ({effort})" if effort else query
+                        patient_notes = inp.get("patient_notes", "")
+                        content = patient_notes or (f"{query} ({effort})" if effort else query)
                     else:
                         content = str(inp)
                     yield {
@@ -80,6 +89,42 @@ class DoctorAgent:
                 "content": f"Doctor chat failed because the AI provider is temporarily unavailable: {exc}",
                 "recoverable": True,
             }
+
+    async def _call_diagnostic_agent(self, patient_notes: str) -> str:
+        if not self.user_id or not self.chat_session_id:
+            return "I could not start a diagnosis because the chat session is not available."
+        if not patient_notes.strip():
+            return "I could not start a diagnosis because no new patient notes were provided."
+
+        if os.getenv("IATREON_LOCAL_WORKER") == "1":
+            from local_worker import store
+            from local_worker.models import DiagnosisRequest
+            from local_worker.services.diagnosis_service import stream_diagnosis
+
+            chat_session = store.get_chat_session_data(self.user_id, str(self.chat_session_id))
+            intake_session = chat_session.get("intake_session") if chat_session else None
+            if not intake_session:
+                return (
+                    "I could not start a diagnosis because this chat has no completed intake. "
+                    "Please complete the intake first."
+                )
+
+            request = DiagnosisRequest(
+                user_id=uuid.UUID(str(self.user_id)),
+                intake_id=uuid.UUID(str(intake_session["id"])),
+                session_id=self.chat_session_id,
+                patient_notes=patient_notes,
+            )
+            events = stream_diagnosis(request, triggered_by="doctor")
+
+        async for event in events:
+            if event.get("type") == "error":
+                return event.get("content") or "Diagnosis failed."
+            if event.get("type") == "diagnosis_complete":
+                report = event.get("data", {}).get("report")
+                return report if isinstance(report, str) else json.dumps(report, default=str)
+
+        return "No diagnosis report was produced."
 
     async def _call_research_agent(self, query: str, research_effort: ResearchEffort = "standard") -> str:
         if not self.user_id or not self.chat_session_id:
@@ -162,4 +207,4 @@ class DoctorAgent:
             )
 
         return research_report or "No research report was produced."
-            
+

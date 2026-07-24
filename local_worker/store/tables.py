@@ -72,6 +72,8 @@ class Diagnosis(Base):
     user_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
     intake_session_id: Mapped[str] = mapped_column(String, index=True, nullable=False)
     chat_session_id: Mapped[str | None] = mapped_column(String, index=True, nullable=True)
+    patient_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    triggered_by: Mapped[str] = mapped_column(String, nullable=False)
     report: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 

@@ -8,6 +8,7 @@ Analyze the provided clinical information and produce a structured, evidence-bas
 You will receive:
 - **Chief complaint** (required)
 - **Medical summary / history** (required)
+- **New patient notes** (optional): an addendum reported after the original intake
 - **Research findings** (optional): {inst_research_sources}
 
 # Instructions

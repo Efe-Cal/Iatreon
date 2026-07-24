@@ -144,13 +144,18 @@ class DbTests(unittest.IsolatedAsyncioTestCase):
                 db,
                 intake.id,
                 {"primary_diagnosis": "Migraine"},
+                patient_notes="The headache now includes nausea.",
+                triggered_by="doctor",
             )
             raw = db.objects[(DiagnosisSession, saved.id)]
             self.assertNotIn("Migraine", raw.encrypted_payload)
+            self.assertNotIn("nausea", raw.encrypted_payload)
 
             read = await DiagnosisRepo(str(user_id)).get_diagnosis_session(db, saved.id)
             self.assertEqual(read.report["primary_diagnosis"], "Migraine")
             self.assertEqual(read.intake_session_id, intake.id)
+            self.assertEqual(read.patient_notes, "The headache now includes nausea.")
+            self.assertEqual(read.triggered_by, "doctor")
         finally:
             reset_session_kek(token)
 

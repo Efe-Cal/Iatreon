@@ -7,14 +7,22 @@ from db.schemas import IntakeSessionData, ResearchSessionData
 from agents.diagnosis import DiagnosisAgent
 from local_worker.models import DiagnosisRequest
 
-async def stream_diagnosis(req: DiagnosisRequest) -> AsyncIterable:
+async def stream_diagnosis(req: DiagnosisRequest, triggered_by: str = "user") -> AsyncIterable:
     intake_id = req.intake_id
     user_id = str(req.user_id)
     session_id = req.session_id
 
     intake_record = store.get_intake(str(intake_id))
-    if not intake_record:
+    if not intake_record or str(intake_record["user_id"]) != user_id:
         raise NotFoundError("Intake session not found.")
+    if session_id:
+        chat_session = store.get_chat_session_data(user_id, str(session_id))
+        if (
+            not chat_session
+            or not chat_session["intake_session"]
+            or str(chat_session["intake_session"]["id"]) != str(intake_id)
+        ):
+            raise NotFoundError("Chat session with linked intake not found.")
 
     profile = intake_record.get("profile") or {}
     intake_session = IntakeSessionData(
@@ -42,7 +50,12 @@ async def stream_diagnosis(req: DiagnosisRequest) -> AsyncIterable:
             citations=research_record.get("citations") or {},
         )
 
-    diagnosis_agent = DiagnosisAgent(intake_session, research_session, chat_session_id)
+    diagnosis_agent = DiagnosisAgent(
+        intake_session,
+        research_session,
+        chat_session_id,
+        patient_notes=req.patient_notes,
+    )
     async for diagnosis_chunk in diagnosis_agent.diagnose():
         if isinstance(diagnosis_chunk, dict) and diagnosis_chunk.get("type") == "error":
             yield diagnosis_chunk
@@ -50,7 +63,15 @@ async def stream_diagnosis(req: DiagnosisRequest) -> AsyncIterable:
 
         report = diagnosis_chunk if isinstance(diagnosis_chunk, dict) else {"content": diagnosis_chunk}
         diagnosis_id = uuid4()
-        store.save_diagnosis(user_id, str(diagnosis_id), str(intake_session.id), str(chat_session_id) if chat_session_id else None, report)
+        store.save_diagnosis(
+            user_id,
+            str(diagnosis_id),
+            str(intake_session.id),
+            str(chat_session_id) if chat_session_id else None,
+            report,
+            req.patient_notes,
+            triggered_by,
+        )
         yield {
             "type": "diagnosis_complete",
             "data": {

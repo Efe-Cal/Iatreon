@@ -43,6 +43,7 @@ class DiagnosisRequest(BaseModel):
     user_id: UUID
     intake_id: UUID
     session_id: UUID | None = None
+    patient_notes: str | None = None
     
 
 class ChatRequest(BaseModel):

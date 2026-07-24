@@ -235,6 +235,8 @@ def get_chat_session_data(user_id: str, chat_session_id: str) -> dict[str, Any] 
                 "user_id": diagnosis.user_id,
                 "intake_session_id": diagnosis.intake_session_id,
                 "chat_session_id": diagnosis.chat_session_id,
+                "patient_notes": diagnosis.patient_notes,
+                "triggered_by": diagnosis.triggered_by,
                 "report": diagnosis.report,
             } if diagnosis else None,
             "doctor_session_id": session.doctor_session_id,
@@ -367,7 +369,15 @@ def get_latest_research(user_id: str, chat_session_id: str | None, triggered_by:
         return _research_record(row) if row else None
 
 
-def save_diagnosis(user_id: str, diagnosis_id: str, intake_id: str, chat_session_id: str | None, report: dict[str, Any]) -> None:
+def save_diagnosis(
+    user_id: str,
+    diagnosis_id: str,
+    intake_id: str,
+    chat_session_id: str | None,
+    report: dict[str, Any],
+    patient_notes: str | None,
+    triggered_by: str,
+) -> None:
     created_at = now()
     with _lock, _session() as db:
         row = db.get(Diagnosis, str(diagnosis_id))
@@ -375,6 +385,8 @@ def save_diagnosis(user_id: str, diagnosis_id: str, intake_id: str, chat_session
             "user_id": str(user_id),
             "intake_session_id": str(intake_id),
             "chat_session_id": str(chat_session_id) if chat_session_id else None,
+            "patient_notes": patient_notes,
+            "triggered_by": triggered_by,
             "report": report,
             "created_at": created_at,
         }
@@ -393,6 +405,8 @@ def save_diagnosis(user_id: str, diagnosis_id: str, intake_id: str, chat_session
                 "title": "Diagnosis",
                 "created_at": created_at,
                 "content": report,
+                "patient_notes": patient_notes,
+                "triggered_by": triggered_by,
             })
             session.sections = sections
         _queue_profile_update(db, user_id, chat_session_id)

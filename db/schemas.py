@@ -53,6 +53,8 @@ class DiagnosisSessionData(BaseModel):
     user_id: UUID
     intake_session_id: UUID
     chat_session_id: Optional[UUID] = None
+    patient_notes: Optional[str] = None
+    triggered_by: str
     report: dict = Field(default_factory=dict)
 
 class DifferentialItem(BaseModel):

@@ -12,10 +12,11 @@ from db.schemas import DiagnosisReport, IntakeSessionData, ResearchSessionData
 load_dotenv()
 
 class DiagnosisAgent():
-    def __init__(self, intake_session: IntakeSessionData, research_session: ResearchSessionData | None, chat_session_id: UUID | None = None):
+    def __init__(self, intake_session: IntakeSessionData, research_session: ResearchSessionData | None, chat_session_id: UUID | None = None, patient_notes: str | None = None):
         self.intake_session = intake_session
         self.research_session = research_session
         self.chat_session_id = chat_session_id
+        self.patient_notes = patient_notes
         self.user_id = intake_session.user_id
         self.research_repo = None
         
@@ -171,6 +172,12 @@ class DiagnosisAgent():
 Chief complaint: {self.intake_session.chief_complaint or "N/A"}
 Symptoms: {symptoms}
 Medical Summary: {self.intake_session.medical_summary}"""
+        if self.patient_notes:
+            user_message += (
+                "\n\n# New Patient Notes\n"
+                "Treat these as an addition to the existing intake, and focus on the new information provided. Do not invent details that are not stated.\n"
+                f"{self.patient_notes}"
+            )
         if self.research_session and self.research_session.research_report:
             user_message += f"\n\n# Research Findings\n{self.research_session.research_report}"
         

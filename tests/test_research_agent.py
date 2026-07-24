@@ -1,4 +1,5 @@
 import unittest
+import json
 import os
 import uuid
 from types import SimpleNamespace
@@ -97,6 +98,122 @@ class ResearchAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(FakeResearchAgent.seen_profile, IntakeSessionData)
         self.assertEqual(FakeResearchAgent.seen_profile.chief_complaint, "Chest pain")
         self.assertEqual(FakeResearchAgent.seen_user_id, str(user_id))
+
+    async def test_doctor_diagnostic_uses_linked_local_intake_and_records_origin(self):
+        from agents.doctor import DoctorAgent
+        from local_worker import store
+
+        user_id = uuid.uuid4()
+        chat_session_id = uuid.uuid4()
+        intake_id = uuid.uuid4()
+        seen = {}
+
+        async def fake_stream(request, triggered_by):
+            seen["request"] = request
+            seen["triggered_by"] = triggered_by
+            yield {
+                "type": "diagnosis_complete",
+                "data": {"report": {"primary_diagnosis": "Migraine"}},
+            }
+
+        agent = DoctorAgent.__new__(DoctorAgent)
+        agent.user_id = str(user_id)
+        agent.chat_session_id = chat_session_id
+
+        with (
+            patch.dict(os.environ, {"IATREON_LOCAL_WORKER": "1"}),
+            patch.object(
+                store,
+                "get_chat_session_data",
+                return_value={"intake_session": {"id": str(intake_id)}},
+            ),
+            patch("local_worker.services.diagnosis_service.stream_diagnosis", fake_stream),
+        ):
+            result = await agent._call_diagnostic_agent("New nausea and light sensitivity.")
+
+        self.assertEqual(json.loads(result)["primary_diagnosis"], "Migraine")
+        self.assertEqual(seen["request"].intake_id, intake_id)
+        self.assertEqual(seen["request"].patient_notes, "New nausea and light sensitivity.")
+        self.assertEqual(seen["triggered_by"], "doctor")
+
+    async def test_doctor_diagnostic_requires_linked_intake(self):
+        from agents.doctor import DoctorAgent
+        from local_worker import store
+
+        agent = DoctorAgent.__new__(DoctorAgent)
+        agent.user_id = str(uuid.uuid4())
+        agent.chat_session_id = uuid.uuid4()
+
+        with (
+            patch.dict(os.environ, {"IATREON_LOCAL_WORKER": "1"}),
+            patch.object(store, "get_chat_session_data", return_value=None),
+        ):
+            result = await agent._call_diagnostic_agent("New nausea.")
+
+        self.assertIn("no completed intake", result)
+
+    async def test_local_diagnosis_service_persists_doctor_addendum(self):
+        from local_worker.models import DiagnosisRequest
+        from local_worker.services import diagnosis_service
+
+        user_id = uuid.uuid4()
+        chat_session_id = uuid.uuid4()
+        intake_id = uuid.uuid4()
+        seen = {}
+
+        class FakeDiagnosisAgent:
+            def __init__(self, intake, research, chat_id, patient_notes=None):
+                seen["intake"] = intake
+                seen["chat_id"] = chat_id
+                seen["patient_notes"] = patient_notes
+
+            async def diagnose(self):
+                yield {"primary_diagnosis": "Migraine"}
+
+        def fake_save(*args):
+            seen["saved"] = args
+
+        request = DiagnosisRequest(
+            user_id=user_id,
+            intake_id=intake_id,
+            session_id=chat_session_id,
+            patient_notes="New nausea and light sensitivity.",
+        )
+        intake_record = {
+            "id": str(intake_id),
+            "user_id": str(user_id),
+            "profile": {
+                "chief_complaint": "Headache",
+                "symptoms": [{"name": "headache"}],
+                "medical_summary": "Two days of headache.",
+            },
+            "transcript": "transcript",
+            "completed_at": None,
+        }
+
+        with (
+            patch.object(diagnosis_service.store, "get_intake", return_value=intake_record),
+            patch.object(
+                diagnosis_service.store,
+                "get_chat_session_data",
+                return_value={"intake_session": {"id": str(intake_id)}},
+            ),
+            patch.object(diagnosis_service.store, "get_latest_research", return_value=None),
+            patch.object(diagnosis_service.store, "save_diagnosis", fake_save),
+            patch.object(diagnosis_service, "DiagnosisAgent", FakeDiagnosisAgent),
+        ):
+            events = [
+                event
+                async for event in diagnosis_service.stream_diagnosis(
+                    request,
+                    triggered_by="doctor",
+                )
+            ]
+
+        self.assertEqual(events[0]["type"], "diagnosis_complete")
+        self.assertEqual(seen["patient_notes"], "New nausea and light sensitivity.")
+        self.assertEqual(seen["chat_id"], chat_session_id)
+        self.assertEqual(seen["saved"][-2:], ("New nausea and light sensitivity.", "doctor"))
 
 
 if __name__ == "__main__":

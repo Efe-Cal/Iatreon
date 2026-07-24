@@ -90,11 +90,25 @@ def test_store_round_trips_worker_records(initialized_store):
     assert store.get_citation_text(research_id, 1) == "citation text"
 
     diagnosis_id = str(uuid.uuid4())
-    store.save_diagnosis(user_id, diagnosis_id, intake_id, session_id, {"primary_diagnosis": "Migraine"})
+    store.save_diagnosis(
+        user_id,
+        diagnosis_id,
+        intake_id,
+        session_id,
+        {"primary_diagnosis": "Migraine"},
+        "The headache is now accompanied by nausea.",
+        "doctor",
+    )
 
     history = store.list_history(user_id)
     assert history[0]["id"] == session_id
     assert [section["type"] for section in history[0]["sections"]] == ["intake", "research", "diagnosis", "doctor"]
+    diagnosis_section = next(section for section in history[0]["sections"] if section["type"] == "diagnosis")
+    assert diagnosis_section["patient_notes"] == "The headache is now accompanied by nausea."
+    assert diagnosis_section["triggered_by"] == "doctor"
+    diagnosis_session = store.get_chat_session_data(user_id, session_id)["diagnosis_session"]
+    assert diagnosis_session["patient_notes"] == "The headache is now accompanied by nausea."
+    assert diagnosis_session["triggered_by"] == "doctor"
     assert history[0]["sections"][-1]["id"] == doctor_session_id
 
 
@@ -143,6 +157,8 @@ def test_session_resume_tracks_workflow_stage(initialized_store):
         intake_id,
         session_id,
         {"primary_diagnosis": "Migraine"},
+        None,
+        "user",
     )
     resume = store.get_session_resume_data(user_id, session_id)
     assert resume["agent"] == "doctor"
@@ -243,7 +259,15 @@ def test_profiler_service_updates_only_medical_summary(initialized_store, monkey
         "intake transcript",
     )
     store.save_research(user_id, str(uuid.uuid4()), session_id, "standard", "Evidence", {})
-    store.save_diagnosis(user_id, str(uuid.uuid4()), intake_id, session_id, {"primary_diagnosis": "Migraine"})
+    store.save_diagnosis(
+        user_id,
+        str(uuid.uuid4()),
+        intake_id,
+        session_id,
+        {"primary_diagnosis": "Migraine"},
+        None,
+        "user",
+    )
     doctor_session_id = str(uuid.uuid4())
     store.link_doctor_session(session_id, doctor_session_id)
     seen = {}
