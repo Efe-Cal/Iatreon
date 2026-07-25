@@ -70,7 +70,7 @@ func TestSettingsViewShowsRealValuesButNeverSecrets(t *testing.T) {
 	m := readySettingsModel()
 	m.categoryCursor = int(settingsProviders)
 	view := m.View()
-	for _, expected := range []string{"Account", "Medical Profile", "Providers", "Data", "OpenRouter", "Exa", "8 agent assignments", "Edit providers"} {
+	for _, expected := range []string{"Account", "Medical Profile", "Providers", "Data", "Legal", "OpenRouter", "Exa", "8 agent assignments", "Edit providers"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("settings view missing %q", expected)
 		}

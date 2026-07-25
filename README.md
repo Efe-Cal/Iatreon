@@ -2,6 +2,11 @@
 
 Iatreon is an privacy-first AI-doctor platform, aiming to be error-free. It uses AI agents to get to know the patient and perform deep medical research. The platform is built with a terminal-based user interface using Bubble Tea and integrates various medical data sources for comprehensive research.
 
+> [!WARNING]
+> Iatreon is experimental software, not a medical device or a substitute for
+> professional medical advice, diagnosis, or treatment. Do not use it for
+> emergencies.
+
 ## Features
 
 - **Intake Agent**: Conducts structured patient interviews to gather medical history and current symptoms.
@@ -14,7 +19,12 @@ Iatreon is an privacy-first AI-doctor platform, aiming to be error-free. It uses
 
 ## Privacy and Security
 
-Iatreon is designed around privacy and security. Your data is stored in a local encrypted database, and it only leaves your machine when you use external AI providers. Iatreon does not store any personal data on external servers. Even when you backup your database, it remains encrypted.
+Iatreon is designed around privacy and security, aiming to minimize data exposure  
+- **Encrypted Local Storage**: All patient data is stored locally in an encrypted database, ensuring that sensitive information remains secure.
+- **Encrypted Backups**: Your data stays encrypted even when backed up!
+- **Minimal external processing**: Data leaves your device only when required by a configured AI provider or medical-data service.
+- **User-controlled providers:** You choose which AI provider processes your requests.
+- **Open source:** You can inspect how information is stored and transmitted.
 
 ## Project Structure
 
@@ -64,7 +74,7 @@ Iatreon is designed around privacy and security. Your data is stored in a local 
    ```
 3. Set the `APP_ENV` environment variable to `dev` for local development:
    ```bash
-   export APP_ENV=dev  # On Windows: set APP_ENV=dev
+   export APP_ENV=dev  # On Windows: $env:APP_ENV="dev"
    ```
 
 #### How to Build for Prod

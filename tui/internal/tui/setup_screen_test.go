@@ -70,23 +70,39 @@ func TestProfileEditorCanDeleteSelectedListEntries(t *testing.T) {
 	}
 }
 
-func TestSetupLandingKeys(t *testing.T) {
+func TestSetupStartsAtLegalReview(t *testing.T) {
 	m := newSetupModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", nil, true)
 
 	m, _ = m.Update(testKey("x"))
-	if m.step != stepLanding || m.cancelled {
-		t.Fatalf("random key should not leave landing: step=%v cancelled=%v", m.step, m.cancelled)
+	if m.step != stepLegal || m.cancelled {
+		t.Fatalf("random key should not leave legal review: step=%v cancelled=%v", m.step, m.cancelled)
 	}
 
 	m, _ = m.Update(testKey("esc"))
 	if !m.cancelled {
-		t.Fatal("esc should cancel setup when cancellation is enabled")
+		t.Fatal("esc should cancel legal review when cancellation is enabled")
+	}
+}
+
+func TestSetupRequiresSequentialLegalReview(t *testing.T) {
+	m := newSetupModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", nil, false)
+	m.SetSize(80, 20)
+
+	for i, title := range []string{"Terms of Service", "Privacy Policy", "Medical Disclaimer"} {
+		if !strings.Contains(m.View(), title) {
+			t.Fatalf("legal document %d should show %q", i, title)
+		}
+		if i < len(legalDocuments)-1 {
+			m, _ = m.Update(testKey("enter"))
+			if m.step != stepLegal {
+				t.Fatal("setup must remain in legal review until the final document")
+			}
+		}
 	}
 
-	m = newSetupModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", nil, false)
 	m, _ = m.Update(testKey("enter"))
 	if m.step != stepAge {
-		t.Fatalf("enter should start setup at age step, got %v", m.step)
+		t.Fatalf("accepting the final document should continue to age, got %v", m.step)
 	}
 }
 

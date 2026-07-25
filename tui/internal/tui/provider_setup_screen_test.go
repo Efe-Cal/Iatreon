@@ -265,9 +265,21 @@ func TestBackendAPIURLDefaultsToHostedBackend(t *testing.T) {
 
 func TestBackendAccountOffersExplicitChoices(t *testing.T) {
 	m := newBackendAccountModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", nil)
+	m, _ = m.Update(testKey("enter"))
 	view := m.View()
 	if !strings.Contains(view, "Sign in") || !strings.Contains(view, "Create account") {
 		t.Fatalf("account choices missing from view: %q", view)
+	}
+}
+
+func TestBackendAccountStartsWithLanding(t *testing.T) {
+	m := newBackendAccountModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", nil)
+	if m.step != backendAccountLanding || !strings.Contains(m.View(), "Your AI-powered clinical assistant") {
+		t.Fatalf("account landing missing: step=%v view=%q", m.step, m.View())
+	}
+	m, _ = m.Update(testKey("enter"))
+	if m.step != backendAccountChoice {
+		t.Fatalf("enter should open account choices, got %v", m.step)
 	}
 }
 

@@ -16,7 +16,7 @@ import (
 type setupStep int
 
 const (
-	stepLanding setupStep = iota
+	stepLegal setupStep = iota
 	stepAge
 	stepGender
 	stepPMH
@@ -55,6 +55,7 @@ type setupModel struct {
 	width      int
 	height     int
 	listCursor int
+	legal      legalModel
 
 	// Form fields
 	age         textinput.Model
@@ -132,10 +133,11 @@ func newSetupModel(userid string, worker *Worker, canCancel bool) setupModel {
 	age.Focus()
 
 	return setupModel{
-		step:             stepLanding,
+		step:             stepLegal,
 		userid:           userid,
 		worker:           worker,
 		canCancel:        canCancel,
+		legal:            newLegalModel(),
 		age:              age,
 		gender:           gender,
 		pmh:              pmh,
@@ -173,6 +175,7 @@ func newProfileEditor(userid string, worker *Worker, profile profileSettings) se
 func (m *setupModel) SetSize(w, h int) {
 	m.width = w
 	m.height = h
+	m.legal.SetSize(w, h)
 	fieldWidth := w/2 + 10
 	if fieldWidth < 30 {
 		fieldWidth = 30
@@ -197,11 +200,11 @@ func (m setupModel) Init() tea.Cmd {
 }
 
 func (m setupModel) footer() []string {
-	if m.step == stepLanding {
-		if m.canCancel {
-			return []string{"Enter Start", "Esc Dashboard", "Ctrl+C Quit"}
+	if m.step == stepLegal {
+		if m.legal.document == len(legalDocuments)-1 {
+			return []string{"Up/Down Scroll", "Enter Accept Terms & Continue", "Esc Previous", "Ctrl+C Quit"}
 		}
-		return []string{"Enter Start", "Ctrl+C Quit"}
+		return []string{"Up/Down Scroll", "Enter Next Document", "Esc Previous", "Ctrl+C Quit"}
 	}
 	field, ok := m.currentField()
 	if m.editing && m.step == stepAge {
@@ -315,21 +318,33 @@ func (m setupModel) Update(msg tea.Msg) (setupModel, tea.Cmd) {
 	case tea.KeyMsg:
 		key := msg.String()
 
-		if m.step == stepLanding {
+		if m.step == stepLegal {
 			switch key {
 			case "ctrl+c":
 				return m, tea.Quit
 			case "esc":
-				if m.canCancel {
+				if m.legal.document > 0 {
+					m.legal.document--
+					m.legal.viewport.GotoTop()
+					m.legal.refresh()
+				} else if m.canCancel {
 					m.cancelled = true
 				}
 				return m, nil
 			case "enter":
+				if m.legal.document < len(legalDocuments)-1 {
+					m.legal.document++
+					m.legal.viewport.GotoTop()
+					m.legal.refresh()
+					return m, nil
+				}
 				m.step = stepAge
 				m.focusCurrentField()
 				return m, textinput.Blink
 			}
-			return m, nil
+			var cmd tea.Cmd
+			m.legal.viewport, cmd = m.legal.viewport.Update(msg)
+			return m, cmd
 		}
 
 		// Multi-line collection steps (pmh, medications, allergies, family_history)
@@ -443,20 +458,14 @@ func (m setupModel) goBack() (setupModel, tea.Cmd) {
 		m.cancelled = true
 		return m, nil
 	}
-	if m.step == stepLanding {
-		if m.canCancel {
-			m.cancelled = true
-		}
-		return m, nil
-	}
 	prev := m.step - 1
-	if prev < stepLanding {
-		prev = stepLanding
+	if prev < stepLegal {
+		prev = stepLegal
 	}
 	m.step = prev
 	m.listCursor = 0
 
-	if m.step != stepLanding {
+	if m.step != stepLegal {
 		m.focusCurrentField()
 	}
 	return m, textinput.Blink
@@ -473,8 +482,8 @@ func (m setupModel) View() string {
 	}
 
 	switch m.step {
-	case stepLanding:
-		return m.renderLanding()
+	case stepLegal:
+		return m.legal.View()
 	default:
 		return m.renderForm()
 	}
@@ -503,41 +512,6 @@ func (m setupModel) renderAnchored(content string) string {
 		m.width, m.height,
 		lipgloss.Center, lipgloss.Top,
 		strings.Repeat("\n", topPad)+body,
-	)
-}
-
-func (m setupModel) renderLanding() string {
-	subtitle := systemStyle.Render("Your AI-powered clinical assistant")
-
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorPrimary).
-		Padding(2, 4).
-		Margin(1, 0)
-
-	features := []string{
-		"[1] Intelligent patient intake",
-		"[2] Evidence-based research",
-		"[3] Differential diagnosis support",
-		"[4] Client-side encrypted storage",
-	}
-
-	featureList := lipgloss.JoinVertical(lipgloss.Left, features...)
-	box := boxStyle.Render(featureList)
-
-	content := lipgloss.JoinVertical(
-		lipgloss.Center,
-		subtitle,
-		"",
-		box,
-		"",
-		hintStyle.Render("Press Enter to set up your profile."),
-	)
-
-	return lipgloss.Place(
-		m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
-		content,
 	)
 }
 

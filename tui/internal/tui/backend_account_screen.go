@@ -18,7 +18,8 @@ import (
 type backendAccountStep int
 
 const (
-	backendAccountChoice backendAccountStep = iota
+	backendAccountLanding backendAccountStep = iota
+	backendAccountChoice
 	backendAccountUsername
 	backendAccountPassword
 )
@@ -71,6 +72,9 @@ func (m *backendAccountModel) SetSize(w, h int) {
 func (m backendAccountModel) Init() tea.Cmd { return textinput.Blink }
 
 func (m backendAccountModel) footer() []string {
+	if m.step == backendAccountLanding {
+		return []string{"Enter Start", "Ctrl+C Quit"}
+	}
 	if m.step == backendAccountChoice {
 		return []string{"Up/Down Choose", "Enter Continue", "Ctrl+C Quit"}
 	}
@@ -109,6 +113,9 @@ func (m backendAccountModel) Update(msg tea.Msg) (backendAccountModel, tea.Cmd) 
 		case "enter":
 			m.err = nil
 			switch m.step {
+			case backendAccountLanding:
+				m.step = backendAccountChoice
+				return m, nil
 			case backendAccountChoice:
 				m.step = backendAccountUsername
 				m.username.Focus()
@@ -204,6 +211,8 @@ func (m backendAccountModel) View() string {
 	}
 	var content string
 	switch m.step {
+	case backendAccountLanding:
+		return m.renderLanding()
 	case backendAccountChoice:
 		choices := []string{"Sign in", "Create account"}
 		lines := []string{systemStyle.Render("Connect your Iatreon account"), ""}
@@ -226,5 +235,29 @@ func (m backendAccountModel) View() string {
 	if m.reason != "" {
 		content = systemStyle.Render(m.reason) + "\n\n" + content
 	}
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
+}
+
+func (m backendAccountModel) renderLanding() string {
+	subtitle := systemStyle.Render("Your AI-powered clinical assistant")
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorPrimary).
+		Padding(2, 4).
+		Margin(1, 0)
+	features := []string{
+		"[1] Intelligent patient intake",
+		"[2] Evidence-based research",
+		"[3] Differential diagnosis support",
+		"[4] Client-side encrypted storage",
+	}
+	content := lipgloss.JoinVertical(
+		lipgloss.Center,
+		subtitle,
+		"",
+		boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, features...)),
+		"",
+		hintStyle.Render("Press Enter to get started."),
+	)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }

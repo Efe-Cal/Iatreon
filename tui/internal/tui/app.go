@@ -21,6 +21,7 @@ const (
 	reportScreen
 	historyScreen
 	settingsScreen
+	legalScreen
 )
 
 type model struct {
@@ -36,6 +37,7 @@ type model struct {
 	report            reportModel
 	history           historyModel
 	settings          settingsModel
+	legal             legalModel
 	width             int
 	height            int
 	userid            string
@@ -127,6 +129,7 @@ func newModel(userid string, hasProfile bool, hasProviderSetup bool, hasBackendS
 		backendAccount:    backendAccount,
 		setup:             setup,
 		settings:          settings,
+		legal:             newLegalModel(),
 		userid:            userid,
 		worker:            worker,
 	}
@@ -159,6 +162,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.report.SetSize(wsm.Width, m.bodyHeightFor(reportScreen))
 		m.history.SetSize(wsm.Width, m.bodyHeightFor(historyScreen))
 		m.settings.SetSize(wsm.Width, m.bodyHeightFor(settingsScreen))
+		m.legal.SetSize(wsm.Width, m.bodyHeightFor(legalScreen))
 		return m, nil
 	}
 
@@ -183,6 +187,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateHistory(msg)
 	case settingsScreen:
 		return m.updateSettings(msg)
+	case legalScreen:
+		return m.updateLegal(msg)
 	default:
 		return m, nil
 	}
@@ -252,6 +258,11 @@ func (m *model) initHistory(hm historyModel) historyModel {
 func (m *model) initSettings(sm settingsModel) settingsModel {
 	sm.SetSize(m.width, m.bodyHeightFor(settingsScreen))
 	return sm
+}
+
+func (m *model) initLegal(lm legalModel) legalModel {
+	lm.SetSize(m.width, m.bodyHeightFor(legalScreen))
+	return lm
 }
 
 func (m *model) reopenSettings(category settingsCategory, reload bool) tea.Cmd {
@@ -492,12 +503,29 @@ func (m model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.providerSetup = m.initProviderSetup(newProviderEditor(m.userid, m.worker, m.settings.data.ProviderSetup))
 		m.active = providerSetupScreen
 		return m, m.providerSetup.Init()
+	case settingsActionOpenLegal:
+		m.settings.action = settingsActionNone
+		m.legal = m.initLegal(newLegalModel())
+		m.active = legalScreen
+		return m, m.legal.Init()
 	}
 
 	if m.settings.close {
 		m.settings.close = false
 		m.active = dashboardScreen
 		return m, nil
+	}
+	return m, cmd
+}
+
+func (m model) updateLegal(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.legal.Update(msg)
+	m.legal = updated
+	m.legal.SetSize(m.width, m.bodyHeightFor(legalScreen))
+	if m.legal.close {
+		m.legal = m.initLegal(newLegalModel())
+		cmd := m.reopenSettings(settingsLegal, false)
+		return m, cmd
 	}
 	return m, cmd
 }
@@ -525,6 +553,8 @@ func (m model) View() string {
 		body = m.history.View()
 	case settingsScreen:
 		body = m.settings.View()
+	case legalScreen:
+		body = m.legal.View()
 	default:
 		body = "Unknown screen"
 	}
@@ -559,6 +589,8 @@ func (m model) chromeFor(active screen) (string, []string) {
 		return "Iatreon - History", m.history.footer()
 	case settingsScreen:
 		return "Iatreon - Settings", m.settings.footer()
+	case legalScreen:
+		return "Iatreon - Legal", m.legal.footer()
 	default:
 		return "Iatreon - Dashboard", m.dashboard.footer()
 	}

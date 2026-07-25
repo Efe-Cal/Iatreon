@@ -31,6 +31,7 @@ const (
 	settingsProfile
 	settingsProviders
 	settingsDataCategory
+	settingsLegal
 )
 
 type settingsAction int
@@ -39,6 +40,7 @@ const (
 	settingsActionNone settingsAction = iota
 	settingsActionEditProfile
 	settingsActionEditProviders
+	settingsActionOpenLegal
 )
 
 type settingsDataView int
@@ -139,6 +141,7 @@ var settingsCategories = []struct {
 	{name: "Medical Profile", description: "The health information used during intake and clinical analysis."},
 	{name: "Providers", description: "AI and literature-search services used by Iatreon."},
 	{name: "Data", description: "Encrypted storage and cloud backup."},
+	{name: "Legal", description: "Terms, privacy practices, and medical-use limitations."},
 }
 
 var (
@@ -484,6 +487,8 @@ func (m settingsModel) activate() (settingsModel, tea.Cmd) {
 			m.authRequired = false
 			return m, m.listBackups()
 		}
+	case settingsLegal:
+		m.action = settingsActionOpenLegal
 	}
 	return m, nil
 }
@@ -664,6 +669,14 @@ func (m settingsModel) categoryContent(width int) string {
 			lines = append(lines, "", errorStyle.Render(message))
 		}
 		return lipgloss.JoinVertical(lipgloss.Left, lines...)
+
+	case settingsLegal:
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			m.actionRow("Read legal documents", width, selected),
+			"",
+			hintStyle.Render("Terms of Service, Privacy Policy, and Medical Disclaimer."),
+		)
 	}
 	return ""
 }
