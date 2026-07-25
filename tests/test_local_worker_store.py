@@ -502,8 +502,8 @@ def test_profile_runner_launches_hidden_with_key_on_stdin(initialized_store, mon
     assert process.stdin.closed
     if os.name == "nt":
         assert seen["kwargs"]["creationflags"] == (
-            worker.subprocess.DETACHED_PROCESS
-            | worker.subprocess.CREATE_NEW_PROCESS_GROUP
+            # worker.subprocess.DETACHED_PROCESS
+             worker.subprocess.CREATE_NEW_PROCESS_GROUP
             | worker.subprocess.CREATE_NO_WINDOW
         )
     assert worker.get_profile_runner_pids() == {process.pid}

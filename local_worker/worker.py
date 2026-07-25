@@ -518,8 +518,8 @@ def launch_profile_job_runner() -> None:
         }
         if os.name == "nt":
             kwargs["creationflags"] = (
-                subprocess.DETACHED_PROCESS
-                | subprocess.CREATE_NEW_PROCESS_GROUP
+                # subprocess.DETACHED_PROCESS
+                subprocess.CREATE_NEW_PROCESS_GROUP
                 | subprocess.CREATE_NO_WINDOW
             )
         else:
