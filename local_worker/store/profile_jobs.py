@@ -2,13 +2,14 @@ import time
 from typing import Any
 
 from local_worker.store.database import _lock, _session
-from local_worker.store.tables import ProfileUpdateJob
+from local_worker.store.tables import Profile, ProfileUpdateJob
 
 from sqlalchemy.orm import Session
 from sqlalchemy import  select, text
 
 
 PROFILE_JOB_LEASE_SECONDS = 15 * 60
+PROFILE_JOB_MAX_ATTEMPTS = 5
 
 
 def upsert_profile_update_job(
@@ -106,6 +107,39 @@ def complete_profile_update_job(chat_session_id: str, revision: int) -> None:
         db.commit()
 
 
+def apply_profile_update_job(
+    chat_session_id: str,
+    revision: int,
+    expected_medical_summary: str,
+    medical_summary: str,
+) -> bool:
+    with _lock, _session() as db:
+        db.execute(text("BEGIN IMMEDIATE"))
+        job = db.get(ProfileUpdateJob, str(chat_session_id))
+        if job is None:
+            db.commit()
+            return False
+
+        profile = db.get(Profile, job.user_id)
+        current_summary = (profile.payload.get("medical_summary") or "") if profile else ""
+        if job.revision != revision or current_summary != expected_medical_summary:
+            job.status = "pending"
+            job.claimed_at = None
+            if current_summary != expected_medical_summary:
+                job.next_attempt_at = time.time()
+            db.commit()
+            return False
+
+        if profile is None:
+            db.rollback()
+            raise ValueError("User profile not found.")
+
+        profile.payload = {**profile.payload, "medical_summary": medical_summary}
+        db.delete(job)
+        db.commit()
+        return True
+
+
 def fail_profile_update_job(chat_session_id: str, revision: int, error: str) -> None:
     with _lock, _session() as db:
         db.execute(text("BEGIN IMMEDIATE"))
@@ -113,12 +147,31 @@ def fail_profile_update_job(chat_session_id: str, revision: int, error: str) -> 
         if row is None:
             db.commit()
             return
-        row.status = "pending"
         row.claimed_at = None
         if row.revision == revision:
             row.attempts += 1
-            row.next_attempt_at = time.time() + min(3600, 30 * (2 ** (row.attempts - 1)))
             row.last_error = error[-2000:]
+            if row.attempts >= PROFILE_JOB_MAX_ATTEMPTS:
+                row.status = "failed"
+            else:
+                row.status = "pending"
+                row.next_attempt_at = time.time() + min(
+                    3600,
+                    30 * (2 ** (row.attempts - 1)),
+                )
+        else:
+            row.status = "pending"
+        db.commit()
+
+
+def recover_profile_update_jobs() -> None:
+    with _lock, _session() as db:
+        db.execute(text("BEGIN IMMEDIATE"))
+        for row in db.scalars(
+            select(ProfileUpdateJob).where(ProfileUpdateJob.status == "running")
+        ):
+            row.status = "pending"
+            row.claimed_at = None
         db.commit()
 
 

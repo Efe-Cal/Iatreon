@@ -9,7 +9,10 @@ from local_worker.request_context import set_current_user_id, reset_current_user
 from local_worker.store.backend_session import ensure_backend_session
 
 
-async def update_profile_from_chat_session(user_id: UUID | str, chat_session_id: UUID | str) -> str:
+async def _generate_profile_update(
+    user_id: UUID | str,
+    chat_session_id: UUID | str,
+) -> tuple[str, str]:
     user_id = str(user_id)
     chat_session = store.get_chat_session_data(user_id, str(chat_session_id))
     if chat_session is None:
@@ -19,14 +22,20 @@ async def update_profile_from_chat_session(user_id: UUID | str, chat_session_id:
     if not profile:
         raise NotFoundError("User profile not found.")
 
+    current_summary = profile.get("medical_summary") or ""
     medical_summary = await update_user_profile_with_chat_session(
         ChatSessionData.model_validate(chat_session),
-        profile.get("medical_summary") or "",
+        current_summary,
     )
     if not isinstance(medical_summary, str) or not medical_summary.strip():
         raise RuntimeError("Profiler did not return a medical summary.")
 
-    store.update_profile_medical_summary(user_id, medical_summary)
+    return current_summary, medical_summary
+
+
+async def update_profile_from_chat_session(user_id: UUID | str, chat_session_id: UUID | str) -> str:
+    _, medical_summary = await _generate_profile_update(user_id, chat_session_id)
+    store.update_profile_medical_summary(str(user_id), medical_summary)
     return medical_summary
 
 
@@ -45,10 +54,22 @@ async def drain_profile_update_jobs() -> None:
             provider = store.get_provider_setup(job["user_id"]).get("llm_provider") or "Iatreon AI"
             if provider == "Iatreon AI":
                 await ensure_backend_session(job["user_id"])
-            await update_profile_from_chat_session(job["user_id"], job["chat_session_id"])
+            try:
+                await store.initialize_checkpointer()
+                expected_summary, medical_summary = await _generate_profile_update(
+                    job["user_id"],
+                    job["chat_session_id"],
+                )
+            finally:
+                await store.close_checkpointer()
         except Exception as exc:
             store.fail_profile_update_job(job["chat_session_id"], job["revision"], str(exc))
         else:
-            store.complete_profile_update_job(job["chat_session_id"], job["revision"])
+            store.apply_profile_update_job(
+                job["chat_session_id"],
+                job["revision"],
+                expected_summary,
+                medical_summary,
+            )
         finally:
             reset_current_user_id(token)

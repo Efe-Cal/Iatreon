@@ -63,7 +63,9 @@ import contextlib
 import inspect
 import os
 from pathlib import Path
+import signal
 import subprocess
+import time
 import traceback
 from pydantic import BaseModel
 
@@ -75,6 +77,7 @@ os.environ.setdefault("IATREON_LOCAL_WORKER", "1")
 routes = {}
 protocol_stdout = sys.stdout
 _worker_init: "WorkerInitRequest | None" = None
+_profile_runner_processes: dict[int, subprocess.Popen] = {}
 
 class _NullWriter:
     def write(self, value: str) -> int:
@@ -177,7 +180,9 @@ async def restore_backup(req: BackupRestoreRequest):
     from local_worker.store.backups import restore_backup as restore
 
     await store.close_checkpointer()
+    runner_lock = None
     try:
+        runner_lock = await asyncio.to_thread(_lock_profiler_for_restore, req.db_path)
         await restore(
             user_id=str(req.user_id),
             backup_id=req.backup_id,
@@ -186,8 +191,13 @@ async def restore_backup(req: BackupRestoreRequest):
             db_key=req.db_key,
         )
     finally:
-        store.initialize(req.db_path, req.db_key)
-        await store.initialize_checkpointer()
+        try:
+            store.initialize(req.db_path, req.db_key)
+            await store.initialize_checkpointer()
+        finally:
+            if runner_lock is not None:
+                _release_profiler_lock(runner_lock)
+            launch_profile_job_runner()
     return {"status": "success"}
 
 @route("session/create", SessionCreateRequest)
@@ -370,8 +380,8 @@ def build_profile_runner_command() -> list[str]:
     return [sys.executable, str(Path(__file__).resolve()), "--drain-profile-jobs"]
 
 
-def _acquire_profiler_lock(db_path: str):
-    lock = open(f"{db_path}.profile-runner.lock", "a+b")
+def _acquire_file_lock(path: str, blocking: bool = False):
+    lock = open(path, "a+b")
     try:
         if os.name == "nt":
             import msvcrt
@@ -381,18 +391,20 @@ def _acquire_profiler_lock(db_path: str):
                 lock.write(b"\0")
                 lock.flush()
             lock.seek(0)
-            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            mode = msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK
+            msvcrt.locking(lock.fileno(), mode, 1)
         else:
             import fcntl
 
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
+            fcntl.flock(lock.fileno(), flags)
     except OSError:
         lock.close()
         return None
     return lock
 
 
-def _release_profiler_lock(lock) -> None:
+def _release_file_lock(lock) -> None:
     try:
         if os.name == "nt":
             import msvcrt
@@ -407,6 +419,68 @@ def _release_profiler_lock(lock) -> None:
         lock.close()
 
 
+def _acquire_profiler_lock(db_path: str):
+    return _acquire_file_lock(f"{db_path}.profile-runner.lock")
+
+
+def _release_profiler_lock(lock) -> None:
+    _release_file_lock(lock)
+
+
+def _acquire_profiler_launch_lock(db_path: str):
+    lock = _acquire_file_lock(f"{db_path}.profile-runner-launch.lock", blocking=True)
+    if lock is None:
+        raise RuntimeError("Could not acquire the profiler launch lock")
+    return lock
+
+
+def _write_profile_runner_pid(lock, pid: int | None) -> None:
+    lock.seek(1)
+    lock.truncate()
+    if pid is not None:
+        lock.write(str(pid).encode("ascii"))
+    lock.flush()
+
+
+def _read_profile_runner_pid(db_path: str) -> int | None:
+    try:
+        with open(f"{db_path}.profile-runner.lock", "rb") as lock:
+            lock.seek(1)
+            value = lock.read().decode("ascii").strip()
+        return int(value) if value else None
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+
+
+def _lock_profiler_for_restore(db_path: str):
+    launch_lock = _acquire_profiler_launch_lock(db_path)
+    try:
+        runner_lock = _acquire_profiler_lock(db_path)
+        if runner_lock is None:
+            pid = _read_profile_runner_pid(db_path)
+            if pid is None or pid == os.getpid():
+                raise RuntimeError("Could not identify the active profiler process for restore")
+
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except OSError as exc:
+                raise RuntimeError("Could not stop the active profiler process for restore") from exc
+
+            deadline = time.monotonic() + 5
+            while runner_lock is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+                runner_lock = _acquire_profiler_lock(db_path)
+            if runner_lock is None:
+                raise RuntimeError("Timed out stopping the active profiler process for restore")
+
+        _write_profile_runner_pid(runner_lock, None)
+        return runner_lock
+    finally:
+        _release_file_lock(launch_lock)
+
+
 def is_profile_runner_active(db_path: str) -> bool:
     lock = _acquire_profiler_lock(db_path)
     if lock is None:
@@ -415,53 +489,93 @@ def is_profile_runner_active(db_path: str) -> bool:
     return False
 
 
+def get_profile_runner_pids() -> set[int]:
+    for pid, process in list(_profile_runner_processes.items()):
+        if process.poll() is not None:
+            _profile_runner_processes.pop(pid)
+    return set(_profile_runner_processes)
+
+
 def launch_profile_job_runner() -> None:
-    if (
-        _worker_init is None
-        or store.next_profile_update_delay() is None
-        or is_profile_runner_active(_worker_init.db_path)
-    ):
+    if _worker_init is None:
         return
 
-    kwargs = {
-        "stdin": subprocess.PIPE,
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
-        "text": True,
-        "close_fds": True,
-    }
-    if os.name == "nt":
-        kwargs["creationflags"] = (
-            subprocess.DETACHED_PROCESS
-            | subprocess.CREATE_NEW_PROCESS_GROUP
-            | subprocess.CREATE_NO_WINDOW
-        )
-    else:
-        kwargs["start_new_session"] = True
-
+    get_profile_runner_pids()
+    launch_lock = _acquire_profiler_launch_lock(_worker_init.db_path)
     try:
-        process = subprocess.Popen(build_profile_runner_command(), **kwargs)
-        if process.stdin is not None:
-            process.stdin.write(_worker_init.model_dump_json())
-            process.stdin.close()
-    except OSError:
-        return
+        if (
+            store.next_profile_update_delay() is None
+            or is_profile_runner_active(_worker_init.db_path)
+        ):
+            return
+
+        kwargs = {
+            "stdin": subprocess.PIPE,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "text": True,
+            "close_fds": True,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS
+                | subprocess.CREATE_NEW_PROCESS_GROUP
+                | subprocess.CREATE_NO_WINDOW
+            )
+        else:
+            kwargs["start_new_session"] = True
+
+        try:
+            process = subprocess.Popen(build_profile_runner_command(), **kwargs)
+            _profile_runner_processes[process.pid] = process
+            if process.stdin is not None:
+                process.stdin.write(_worker_init.model_dump_json())
+                process.stdin.close()
+        except OSError:
+            return
+    finally:
+        _release_file_lock(launch_lock)
 
 
 async def run_profile_job_runner() -> None:
     req = WorkerInitRequest.model_validate_json(await asyncio.to_thread(sys.stdin.read))
-    runner_lock = _acquire_profiler_lock(req.db_path)
-    if runner_lock is None:
-        return
+    runner_lock = None
+    launch_lock = _acquire_profiler_launch_lock(req.db_path)
+    try:
+        runner_lock = _acquire_profiler_lock(req.db_path)
+        if runner_lock is None:
+            return
+        _write_profile_runner_pid(runner_lock, os.getpid())
+    finally:
+        _release_file_lock(launch_lock)
+
     try:
         store.initialize(req.db_path, req.db_key)
-        await store.initialize_checkpointer()
-        try:
+        store.recover_profile_update_jobs()
+        while True:
             await drain_profile_update_jobs()
-        finally:
-            await store.close_checkpointer()
+
+            launch_lock = _acquire_profiler_launch_lock(req.db_path)
+            try:
+                if store.next_profile_update_delay() is not None:
+                    continue
+                _write_profile_runner_pid(runner_lock, None)
+                _release_profiler_lock(runner_lock)
+                runner_lock = None
+                return
+            finally:
+                _release_file_lock(launch_lock)
     finally:
-        _release_profiler_lock(runner_lock)
+        try:
+            await store.close_checkpointer()
+        finally:
+            if runner_lock is not None:
+                launch_lock = _acquire_profiler_launch_lock(req.db_path)
+                try:
+                    _write_profile_runner_pid(runner_lock, None)
+                    _release_profiler_lock(runner_lock)
+                finally:
+                    _release_file_lock(launch_lock)
 
 
 def serialize(value):

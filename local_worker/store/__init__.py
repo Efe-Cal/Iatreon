@@ -45,11 +45,13 @@ from local_worker.store.conversation_session import (
 
 from local_worker.store.database import _reset_for_tests, initialize
 from local_worker.store.profile_jobs import (
+    apply_profile_update_job,
     claim_profile_update_job,
     complete_profile_update_job,
     fail_profile_update_job,
     has_pending_profile_update_jobs,
     next_profile_update_delay,
+    recover_profile_update_jobs,
     upsert_profile_update_job,
 )
 
@@ -66,6 +68,7 @@ __all__ = [
     "backend_api_url",
     "backend_session",
     "calculate_sha256",
+    "apply_profile_update_job",
     "claim_profile_update_job",
     "close_checkpointer",
     "complete_profile_update_job",
@@ -95,6 +98,7 @@ __all__ = [
     "list_history",
     "next_profile_update_delay",
     "profile_markdown",
+    "recover_profile_update_jobs",
     "save_diagnosis",
     "save_intake",
     "save_research",

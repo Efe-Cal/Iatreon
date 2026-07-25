@@ -1,6 +1,12 @@
 import asyncio
 import base64
 import hashlib
+import os
+from pathlib import Path
+import subprocess
+import sys
+import threading
+import time
 import uuid
 from unittest.mock import patch
 
@@ -361,13 +367,64 @@ def test_profile_job_runner_updates_and_completes_job(initialized_store, monkeyp
 
     async def update(user, session):
         seen.append((user, session))
+        return "Old", "New"
 
-    monkeypatch.setattr(profiler_service, "update_profile_from_chat_session", update)
+    monkeypatch.setattr(profiler_service, "_generate_profile_update", update)
     asyncio.run(profiler_service.drain_profile_update_jobs())
 
     assert seen == [(user_id, session_id)]
+    assert store.get_profile(user_id)["medical_summary"] == "New"
     assert not store.has_pending_profile_update_jobs()
     assert store.claim_profile_update_job() is None
+
+
+def test_profile_job_failure_is_terminal_and_new_revision_revives_it(initialized_store):
+    user_id = str(uuid.uuid4())
+    session_id = store.create_session(user_id)
+    store.upsert_profile_update_job(user_id, session_id)
+    job = store.claim_profile_update_job()
+
+    for attempt in range(5):
+        store.fail_profile_update_job(session_id, job["revision"], f"failure {attempt}")
+
+    assert store.next_profile_update_delay() is None
+    assert store.claim_profile_update_job() is None
+
+    store.upsert_profile_update_job(user_id, session_id)
+    assert store.claim_profile_update_job()["revision"] > job["revision"]
+
+
+def test_profile_job_apply_rejects_stale_summary_and_commits_atomically(initialized_store):
+    user_id = str(uuid.uuid4())
+    session_id = store.create_session(user_id)
+    store.update_profile({"user_id": user_id, "medical_summary": "Old"})
+    store.upsert_profile_update_job(user_id, session_id)
+    job = store.claim_profile_update_job()
+
+    store.update_profile({"user_id": user_id, "medical_summary": "Manual edit"})
+    assert not store.apply_profile_update_job(session_id, job["revision"], "Old", "Generated")
+    assert store.get_profile(user_id)["medical_summary"] == "Manual edit"
+
+    retried = store.claim_profile_update_job()
+    assert store.apply_profile_update_job(
+        session_id,
+        retried["revision"],
+        "Manual edit",
+        "Generated from current profile",
+    )
+    assert store.get_profile(user_id)["medical_summary"] == "Generated from current profile"
+    assert store.claim_profile_update_job() is None
+
+
+def test_profile_runner_startup_recovers_abandoned_jobs(initialized_store):
+    user_id = str(uuid.uuid4())
+    session_id = store.create_session(user_id)
+    store.upsert_profile_update_job(user_id, session_id)
+    claimed = store.claim_profile_update_job()
+
+    store.recover_profile_update_jobs()
+
+    assert store.claim_profile_update_job()["revision"] == claimed["revision"]
 
 
 def test_medical_profile_route_queues_with_state_delay(monkeypatch):
@@ -391,7 +448,7 @@ def test_medical_profile_route_queues_with_state_delay(monkeypatch):
     assert seen["delay_seconds"] == 2 * 60
 
 
-def test_profile_runner_launches_detached_with_key_on_stdin(initialized_store, monkeypatch):
+def test_profile_runner_launches_hidden_with_key_on_stdin(initialized_store, monkeypatch):
     from local_worker import worker
 
     user_id = str(uuid.uuid4())
@@ -413,7 +470,12 @@ def test_profile_runner_launches_detached_with_key_on_stdin(initialized_store, m
 
     class Process:
         def __init__(self):
+            self.pid = 1234
+            self.returncode = None
             self.stdin = InputPipe()
+
+        def poll(self):
+            return self.returncode
 
     process = Process()
     seen = {}
@@ -425,6 +487,7 @@ def test_profile_runner_launches_detached_with_key_on_stdin(initialized_store, m
 
     monkeypatch.setattr(worker, "is_profile_runner_active", lambda db_path: False)
     monkeypatch.setattr(worker.subprocess, "Popen", popen)
+    monkeypatch.setattr(worker, "_profile_runner_processes", {})
     monkeypatch.setattr(
         worker,
         "_worker_init",
@@ -437,6 +500,122 @@ def test_profile_runner_launches_detached_with_key_on_stdin(initialized_store, m
     assert "secret" not in seen["command"]
     assert '"db_key":"secret"' in process.stdin.value
     assert process.stdin.closed
+    if os.name == "nt":
+        assert seen["kwargs"]["creationflags"] == (
+            worker.subprocess.DETACHED_PROCESS
+            | worker.subprocess.CREATE_NEW_PROCESS_GROUP
+            | worker.subprocess.CREATE_NO_WINDOW
+        )
+    assert worker.get_profile_runner_pids() == {process.pid}
+
+    process.returncode = 0
+    assert worker.get_profile_runner_pids() == set()
+
+
+def test_restore_lock_terminates_runner_before_database_replace(initialized_store, tmp_path):
+    from local_worker import worker
+
+    ready_path = tmp_path / "runner-ready"
+    child_code = """
+import asyncio
+import os
+import sys
+import time
+from pathlib import Path
+from local_worker import store, worker
+
+db_path, db_key, ready_path = sys.argv[1:]
+gate = worker._acquire_profiler_launch_lock(db_path)
+lock = worker._acquire_profiler_lock(db_path)
+worker._write_profile_runner_pid(lock, os.getpid())
+worker._release_file_lock(gate)
+store.initialize(db_path, db_key)
+asyncio.run(store.initialize_checkpointer())
+Path(ready_path).touch()
+time.sleep(60)
+"""
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            child_code,
+            str(initialized_store),
+            _key(b"a"),
+            str(ready_path),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    runner_lock = None
+    try:
+        deadline = time.monotonic() + 10
+        while not ready_path.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert ready_path.exists()
+
+        runner_lock = worker._lock_profiler_for_restore(str(initialized_store))
+        process.wait(timeout=5)
+
+        replacement = tmp_path / "replacement.sqlite3"
+        replacement.write_bytes(b"replacement database")
+        os.replace(replacement, initialized_store)
+        assert initialized_store.read_bytes() == b"replacement database"
+    finally:
+        if runner_lock is not None:
+            worker._release_profiler_lock(runner_lock)
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def test_profiler_launch_waits_for_queue_empty_runner_to_release_gate(
+    initialized_store,
+    monkeypatch,
+):
+    from local_worker import worker
+
+    user_id = str(uuid.uuid4())
+    session_id = store.create_session(user_id)
+    store.upsert_profile_update_job(user_id, session_id)
+
+    class InputPipe:
+        def write(self, value):
+            pass
+
+        def close(self):
+            pass
+
+    class Process:
+        pid = 1234
+        stdin = InputPipe()
+
+        def poll(self):
+            return None
+
+    launched = []
+    monkeypatch.setattr(worker.subprocess, "Popen", lambda *args, **kwargs: launched.append(True) or Process())
+    monkeypatch.setattr(worker, "_profile_runner_processes", {})
+    monkeypatch.setattr(
+        worker,
+        "_worker_init",
+        worker.WorkerInitRequest(db_path=str(initialized_store), db_key="secret"),
+    )
+
+    runner_lock = worker._acquire_profiler_lock(str(initialized_store))
+    launch_gate = worker._acquire_profiler_launch_lock(str(initialized_store))
+
+    def finish_old_runner():
+        time.sleep(0.05)
+        worker._release_profiler_lock(runner_lock)
+        worker._release_file_lock(launch_gate)
+
+    thread = threading.Thread(target=finish_old_runner)
+    thread.start()
+    worker.launch_profile_job_runner()
+    thread.join(timeout=5)
+
+    assert launched == [True]
 
 
 def test_profiler_agent_reads_structured_response(monkeypatch):
@@ -814,10 +993,24 @@ def test_restore_route_closes_and_reopens_store(monkeypatch, tmp_path):
     async def initialize_checkpointer():
         calls.append("checkpoint")
 
+    def lock_profiler(db_path):
+        calls.append("lock")
+        return "runner-lock"
+
+    def release_profiler(lock):
+        assert lock == "runner-lock"
+        calls.append("release")
+
+    def launch_profiler():
+        calls.append("launch")
+
     monkeypatch.setattr(worker.store, "close_checkpointer", close_checkpointer)
     monkeypatch.setattr(backups, "restore_backup", restore)
     monkeypatch.setattr(worker.store, "initialize", initialize)
     monkeypatch.setattr(worker.store, "initialize_checkpointer", initialize_checkpointer)
+    monkeypatch.setattr(worker, "_lock_profiler_for_restore", lock_profiler)
+    monkeypatch.setattr(worker, "_release_profiler_lock", release_profiler)
+    monkeypatch.setattr(worker, "launch_profile_job_runner", launch_profiler)
 
     user_id = uuid.uuid4()
     db_path = tmp_path / "local.sqlite3"
@@ -830,7 +1023,15 @@ def test_restore_route_closes_and_reopens_store(monkeypatch, tmp_path):
     )
 
     assert asyncio.run(worker.restore_backup(request)) == {"status": "success"}
-    assert calls == ["close", "restore", "initialize", "checkpoint"]
+    assert calls == [
+        "close",
+        "lock",
+        "restore",
+        "initialize",
+        "checkpoint",
+        "release",
+        "launch",
+    ]
     assert seen["user_id"] == str(user_id)
     assert seen["backup_id"] == "backup-one"
     assert seen["restore_path"] == db_path
