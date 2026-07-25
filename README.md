@@ -76,6 +76,10 @@ Iatreon is designed around privacy and security, aiming to minimize data exposur
    ```bash
    export APP_ENV=dev  # On Windows: $env:APP_ENV="dev"
    ```
+4. Run the TUI application:
+   ```bash
+   go run ./cmd/app/main.go
+   ```
 
 #### How to Build for Prod
 Run the build.ps1 script to build the project and produce an installer:
