@@ -81,6 +81,28 @@ func TestRecoverableChatErrorEnablesRetry(t *testing.T) {
 	}
 }
 
+func TestAgentStartIgnoresRepeatedEnter(t *testing.T) {
+	for name, kind := range map[string]AgentKind{
+		"research":  AgentResearch,
+		"diagnosis": AgentDiagnosis,
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := newChatModelForAgent(kind, "user-1", "session-1", nil)
+			m.invokeAgentWithEnter = true
+
+			started, _ := m.Update(testKey("enter"))
+			updated, _ := started.Update(testKey("enter"))
+
+			if !updated.isStreaming {
+				t.Fatal("agent should remain busy after repeated Enter")
+			}
+			if len(updated.history) != len(started.history) {
+				t.Fatal("repeated Enter should not start another request")
+			}
+		})
+	}
+}
+
 type errTest string
 
 func (e errTest) Error() string { return string(e) }

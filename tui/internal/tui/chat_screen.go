@@ -356,7 +356,8 @@ func (m *chatModel) renderMessage(msg messageItem) string {
 	switch msg.role {
 	case "user":
 		body := m.renderMarkdown(msg.text, true)
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render("> " + body)
+		body = strings.TrimPrefix(body, "\n")
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render(">" + body)
 	case "ai":
 		label := msg.label
 		if msg.text == "" {
@@ -659,9 +660,13 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			if m.invokeAgentWithEnter {
 				m.invokeAgentWithEnter = false
 				m.history = append(m.history, messageItem{role: "system", text: "Starting " + m.agent.AgentLabel() + "..."})
+				m.isStreaming = true
 				m.refreshViewport(true)
 				m.retryMessage = ""
-				return *m, m.streamMessage(m.agent, m.conversationID, m.userid, "")
+				return *m, tea.Batch(
+					m.streamMessage(m.agent, m.conversationID, m.userid, ""),
+					m.spinner.Tick,
+				)
 			}
 			if text == "" {
 				return *m, nil
@@ -705,10 +710,20 @@ func (m *chatModel) View() string {
 	// reflected even when the parent doesn't repaint on every chunk.
 	m.viewport.SetContent(m.renderHistory())
 
+	inputView := m.input.View()
+	if m.isStreaming {
+		switch m.agent.Kind() {
+		case AgentResearch:
+			inputView = m.spinner.View() + " Researcher is working..."
+		case AgentDiagnosis:
+			inputView = m.spinner.View() + " Diagnostician is working..."
+		}
+	}
+
 	body := lipgloss.JoinVertical(
 		lipgloss.Left,
 		m.viewport.View(),
-		m.input.View(),
+		inputView,
 	)
 	return body
 }

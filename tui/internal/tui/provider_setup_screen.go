@@ -25,9 +25,11 @@ const (
 )
 
 var (
-	llmProviders    = []string{"Iatreon AI", "OpenRouter", "Together AI", "Groq", "Fireworks AI", "DeepSeek", "xAI", "Gemini", "Cohere", "Perplexity"}
+	llmProviders    = []string{"Iatreon AI", "OpenRouter", "Together AI", "Groq", "Fireworks AI", "DeepSeek", "xAI", "Gemini", "Cohere", "Perplexity", "OpenAI", "Hack Club AI"}
 	searchProviders = []string{"Iatreon AI", "Exa"}
 	llmBaseURLs     = map[string]string{
+		"OpenAI":       "https://api.openai.com/v1",
+		"Hack Club AI": "https://ai.hackclub.com/proxy/v1",
 		"OpenRouter":   "https://openrouter.ai/api/v1",
 		"Together AI":  "https://api.together.ai/v1",
 		"Groq":         "https://api.groq.com/openai/v1",
