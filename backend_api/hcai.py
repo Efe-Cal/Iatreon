@@ -1,3 +1,4 @@
+import json
 import os
 
 import httpx
@@ -54,6 +55,7 @@ async def proxy(path: str, request: Request) -> StreamingResponse:
     if "application/json" in content_type:
         request_body = await request.json()
         request_body["max_tokens"] = 2000
+        request_body = json.dumps(request_body).encode()
     else:
         request_body = await request.body()
     

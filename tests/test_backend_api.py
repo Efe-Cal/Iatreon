@@ -1,5 +1,6 @@
 import importlib
 import hashlib
+import json
 import sqlite3
 import sys
 from datetime import datetime, timezone
@@ -148,7 +149,8 @@ def test_hcai_streams_query_headers_and_body_without_storage(monkeypatch, tmp_pa
     assert calls[0]["headers"]["accept-encoding"] == "identity"
     assert calls[0]["headers"]["x-test"] == "kept"
     assert calls[0]["stream"] is True
-    assert calls[0]["body"] == {"private": "secret-medical", "max_tokens": 2000}
+    assert isinstance(calls[0]["body"], bytes)
+    assert json.loads(calls[0]["body"]) == {"private": "secret-medical", "max_tokens": 2000}
     with sqlite3.connect(tmp_path / "backend.sqlite3") as db:
         rows = db.execute("select username, password_hash, password_salt from users").fetchall()
     assert "secret-medical" not in repr(rows)
