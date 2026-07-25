@@ -87,13 +87,27 @@ type backendSessionUpdateInput struct {
 }
 
 type providerSetupInput struct {
-	UserID         string `json:"user_id"`
-	LLMProvider    string `json:"llm_provider"`
-	LLMAPIKey      string `json:"llm_api_key"`
-	LLMBaseURL     string `json:"llm_base_url"`
-	SearchProvider string `json:"search_provider"`
-	SearchAPIKey   string `json:"search_api_key"`
-	SearchBaseURL  string `json:"search_base_url"`
+	UserID         string            `json:"user_id"`
+	LLMProvider    string            `json:"llm_provider"`
+	LLMAPIKey      string            `json:"llm_api_key"`
+	LLMBaseURL     string            `json:"llm_base_url"`
+	SearchProvider string            `json:"search_provider"`
+	SearchAPIKey   string            `json:"search_api_key"`
+	SearchBaseURL  string            `json:"search_base_url"`
+	AgentModels    map[string]string `json:"agent_models"`
+}
+
+type providerModelsInput struct {
+	UserID      string `json:"user_id"`
+	LLMProvider string `json:"llm_provider"`
+	LLMAPIKey   string `json:"llm_api_key"`
+	LLMBaseURL  string `json:"llm_base_url"`
+}
+
+type providerModelsResult struct {
+	Models     []string          `json:"models"`
+	Defaults   map[string]string `json:"defaults"`
+	FetchError string            `json:"fetch_error"`
 }
 
 func workerCommand() (*exec.Cmd, error) {
@@ -343,6 +357,16 @@ func (w *Worker) HasProviderSetup(ctx context.Context, userid string) (bool, err
 func (w *Worker) UpdateProviderSetup(ctx context.Context, input providerSetupInput) error {
 	_, err := w.Call(ctx, "provider/update", input)
 	return err
+}
+
+func (w *Worker) ProviderModels(ctx context.Context, input providerModelsInput) (providerModelsResult, error) {
+	resp, err := w.Call(ctx, "provider/models", input)
+	if err != nil {
+		return providerModelsResult{}, err
+	}
+	var result providerModelsResult
+	err = decodeWorkerResult(resp, &result)
+	return result, err
 }
 
 func (w *Worker) LoadSettings(ctx context.Context, userid string) (settingsData, error) {

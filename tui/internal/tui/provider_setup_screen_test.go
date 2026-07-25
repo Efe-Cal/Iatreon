@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestProviderSetupDefaultPathSubmits(t *testing.T) {
@@ -19,10 +21,23 @@ func TestProviderSetupDefaultPathSubmits(t *testing.T) {
 	}
 
 	m, _ = m.Update(testKey("enter"))
-	if m.step != providerStepConfirm {
-		t.Fatalf("default search provider should skip credentials, got step %v", m.step)
+	if m.step != providerStepModels {
+		t.Fatalf("default search provider should advance to models, got step %v", m.step)
+	}
+	for key, want := range iatreonAgentModels {
+		if got := m.agentModels[key]; got != want {
+			t.Fatalf("Iatreon model %q = %q, want %q", key, got, want)
+		}
+	}
+	if m.modelsLoading {
+		t.Fatal("Iatreon models should not be fetched")
 	}
 
+	m.cursor = len(agentModelSlots)
+	m, _ = m.Update(testKey("enter"))
+	if m.step != providerStepConfirm {
+		t.Fatalf("model overview should continue to review, got step %v", m.step)
+	}
 	m, cmd := m.Update(testKey("enter"))
 	if !m.submitting {
 		t.Fatal("confirm enter should submit provider setup")
@@ -38,6 +53,111 @@ func TestProviderSetupDefaultPathSubmits(t *testing.T) {
 	}
 	if m.llmAPIKeyValue() != "" || m.searchAPIKeyValue() != "" {
 		t.Fatal("Iatreon JWT must not be copied into provider API-key fields")
+	}
+}
+
+func TestProviderSetupExternalModelsSupportPickerFilterAndManualEntry(t *testing.T) {
+	m := newProviderSetupModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", nil)
+	m.llmProvider = "OpenRouter"
+	m.step = providerStepModels
+	m.modelsLoading = true
+	m.modelsRequest = 1
+
+	m, _ = m.Update(providerModelsLoadedMsg{
+		provider: "OpenRouter",
+		request:  1,
+		result: providerModelsResult{
+			Models: []string{"openai/gpt-5", "google/gemini-3-flash-preview"},
+			Defaults: map[string]string{
+				"intake":            "google/gemini-3-flash-preview",
+				"doctor":            "openai/gpt-5",
+				"diagnosis":         "openai/gpt-5",
+				"inference":         "openai/gpt-5",
+				"profiler":          "openai/gpt-5",
+				"research_fast":     "google/gemini-3-flash-preview",
+				"research_standard": "openai/gpt-5",
+				"research_deep":     "openai/gpt-5",
+			},
+		},
+	})
+	if m.modelsLoading || m.agentModels["intake"] != "google/gemini-3-flash-preview" {
+		t.Fatal("fetched defaults were not applied")
+	}
+
+	m, _ = m.Update(testKey("enter"))
+	if m.step != providerStepModelPicker {
+		t.Fatalf("agent row should open picker, got %v", m.step)
+	}
+	m, _ = m.Update(testKey("/"))
+	m, _ = m.Update(testKey("gpt"))
+	m, _ = m.Update(testKey("enter"))
+	if got := m.filteredModels(); len(got) != 1 || got[0] != "openai/gpt-5" {
+		t.Fatalf("filtered models = %#v", got)
+	}
+	m, _ = m.Update(testKey("enter"))
+	if m.agentModels["intake"] != "openai/gpt-5" || m.step != providerStepModels {
+		t.Fatal("picker did not save the selected model")
+	}
+
+	m, _ = m.Update(testKey("m"))
+	m.manualModel.SetValue("custom/model")
+	m, _ = m.Update(testKey("enter"))
+	if m.agentModels["intake"] != "custom/model" {
+		t.Fatal("manual model ID was not saved")
+	}
+}
+
+func TestProviderSetupModelFetchFailureAllowsRetryOrManualEntry(t *testing.T) {
+	m := newProviderSetupModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", nil)
+	m.llmProvider = "OpenRouter"
+	m.step = providerStepModels
+	m.modelsRequest = 1
+	m.modelsLoading = true
+	m, _ = m.Update(providerModelsLoadedMsg{
+		provider: "OpenRouter",
+		request:  1,
+		result:   providerModelsResult{FetchError: "provider unavailable"},
+	})
+	if m.modelsFetchErr == "" {
+		t.Fatal("model fetch error was not retained")
+	}
+
+	m, _ = m.Update(testKey("enter"))
+	if m.step != providerStepModelManual {
+		t.Fatalf("failed fetch should fall back to manual entry, got %v", m.step)
+	}
+	m, _ = m.Update(testKey("esc"))
+	m, cmd := m.Update(testKey("r"))
+	if !m.modelsLoading || cmd == nil || m.modelsRequest != 2 {
+		t.Fatal("retry did not start a fresh model request")
+	}
+}
+
+func TestProviderChangeClearsAgentModels(t *testing.T) {
+	m := newProviderEditor("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", nil, providerSetupInput{
+		LLMProvider: "OpenRouter",
+		AgentModels: map[string]string{"intake": "old/model"},
+	})
+	m = m.moveCursor(1)
+	m, _ = m.Update(testKey("enter"))
+	if len(m.agentModels) != 0 {
+		t.Fatalf("provider change retained models: %#v", m.agentModels)
+	}
+}
+
+func TestProviderModelViewsFitMinimumBody(t *testing.T) {
+	m := newProviderSetupModel("ff6b65d2-bee0-4565-ad42-0d7ccb1f41a9", nil)
+	m.SetSize(80, 20)
+	m, _ = m.prepareModelStep()
+	for _, step := range []providerSetupStep{providerStepModels, providerStepConfirm} {
+		m.step = step
+		view := m.View()
+		if got := lipgloss.Width(view); got > 80 {
+			t.Fatalf("step %v width = %d", step, got)
+		}
+		if got := lipgloss.Height(view); got > 20 {
+			t.Fatalf("step %v height = %d", step, got)
+		}
 	}
 }
 

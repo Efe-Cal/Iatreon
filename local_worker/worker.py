@@ -106,6 +106,7 @@ from local_worker.models import (
     CitationTextRequest,
     DiagnosisRequest,
     HistoryRequest,
+    ProviderModelsRequest,
     ProviderSetupStatusRequest,
     ProviderSetupUpdateRequest,
     ResearchRequest,
@@ -290,6 +291,27 @@ async def update_provider_setup(req: ProviderSetupUpdateRequest):
 @route("provider/status", ProviderSetupStatusRequest)
 async def provider_status(req: ProviderSetupStatusRequest):
     return {"has_provider_setup": store.has_provider_setup(str(req.user_id))}
+
+
+@route("provider/models", ProviderModelsRequest)
+async def provider_models(req: ProviderModelsRequest):
+    from local_worker.provider_config import agent_model_defaults, fetch_provider_models
+
+    try:
+        models = await fetch_provider_models(
+            req.llm_provider,
+            req.llm_api_key,
+            req.llm_base_url,
+        )
+        fetch_error = ""
+    except Exception as exc:
+        models = []
+        fetch_error = str(exc)
+    return {
+        "models": models,
+        "defaults": agent_model_defaults(),
+        "fetch_error": fetch_error,
+    }
 
 
 @route("settings/get", SettingsRequest)

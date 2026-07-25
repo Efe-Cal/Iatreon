@@ -611,13 +611,30 @@ func (m settingsModel) categoryContent(width int) string {
 		if search == "" {
 			search = "Not configured"
 		}
-		return lipgloss.JoinVertical(
-			lipgloss.Left,
+		modelCount := 0
+		for _, model := range m.data.ProviderSetup.AgentModels {
+			if strings.TrimSpace(model) != "" {
+				modelCount++
+			}
+		}
+		models := "Using runtime defaults"
+		if modelCount > 0 {
+			models = fmt.Sprintf("%d agent assignments", modelCount)
+		}
+		rows := []string{
 			m.valueRow("AI provider", llm, width, false),
 			m.valueRow("Search provider", search, width, false),
-			"",
-			m.actionRow("Edit providers", width, selected),
-		)
+		}
+		if isIatreonProvider(llm) {
+			rows = append(rows,
+				m.valueRow("Intake / fast research", iatreonAgentModels["intake"], width, false),
+				m.valueRow("Other operations", iatreonAgentModels["doctor"], width, false),
+			)
+		} else {
+			rows = append(rows, m.valueRow("AI models", models, width, false))
+		}
+		rows = append(rows, "", m.actionRow("Edit providers", width, selected))
+		return lipgloss.JoinVertical(lipgloss.Left, rows...)
 
 	case settingsDataCategory:
 		if m.dataView == settingsDataRestoreList {

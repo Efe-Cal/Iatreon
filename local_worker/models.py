@@ -90,6 +90,14 @@ class ProviderSetupUpdateRequest(BaseModel):
     search_provider: str
     search_api_key: str = ""
     search_base_url: str = ""
+    agent_models: dict[str, str] = Field(default_factory=dict)
+
+
+class ProviderModelsRequest(BaseModel):
+    user_id: UUID
+    llm_provider: str
+    llm_api_key: str = ""
+    llm_base_url: str = ""
 
 
 class BackupRequest(BaseModel):

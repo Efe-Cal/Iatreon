@@ -21,13 +21,42 @@ const (
 	providerStepSearch
 	providerStepSearchKey
 	providerStepSearchBaseURL
+	providerStepModels
+	providerStepModelPicker
+	providerStepModelFilter
+	providerStepModelManual
 	providerStepConfirm
 )
+
+type agentModelSlot struct {
+	key   string
+	label string
+}
 
 var (
 	llmProviders    = []string{"Iatreon AI", "OpenRouter", "Together AI", "Groq", "Fireworks AI", "DeepSeek", "xAI", "Gemini", "Cohere", "Perplexity", "OpenAI", "Hack Club AI"}
 	searchProviders = []string{"Iatreon AI", "Exa"}
-	llmBaseURLs     = map[string]string{
+	agentModelSlots = []agentModelSlot{
+		{key: "intake", label: "Intake"},
+		{key: "doctor", label: "Doctor"},
+		{key: "diagnosis", label: "Diagnosis"},
+		{key: "inference", label: "Inference"},
+		{key: "profiler", label: "Profile updater"},
+		{key: "research_fast", label: "Research fast / web"},
+		{key: "research_standard", label: "Research standard"},
+		{key: "research_deep", label: "Research deep"},
+	}
+	iatreonAgentModels = map[string]string{
+		"intake":            "google/gemini-3-flash-preview",
+		"research_fast":     "google/gemini-3-flash-preview",
+		"doctor":            "xiaomi/mimo-v2.5-pro",
+		"diagnosis":         "xiaomi/mimo-v2.5-pro",
+		"inference":         "xiaomi/mimo-v2.5-pro",
+		"profiler":          "xiaomi/mimo-v2.5-pro",
+		"research_standard": "xiaomi/mimo-v2.5-pro",
+		"research_deep":     "xiaomi/mimo-v2.5-pro",
+	}
+	llmBaseURLs = map[string]string{
 		"OpenAI":       "https://api.openai.com/v1",
 		"Hack Club AI": "https://ai.hackclub.com/proxy/v1",
 		"OpenRouter":   "https://openrouter.ai/api/v1",
@@ -50,12 +79,21 @@ type providerSetupModel struct {
 	height int
 	cursor int
 
-	llmProvider    string
-	llmAPIKey      textinput.Model
-	llmBaseURL     textinput.Model
-	searchProvider string
-	searchAPIKey   textinput.Model
-	searchBaseURL  textinput.Model
+	llmProvider     string
+	llmAPIKey       textinput.Model
+	llmBaseURL      textinput.Model
+	searchProvider  string
+	searchAPIKey    textinput.Model
+	searchBaseURL   textinput.Model
+	agentModels     map[string]string
+	availableModels []string
+	modelDefaults   map[string]string
+	activeModelKey  string
+	modelFilter     textinput.Model
+	manualModel     textinput.Model
+	modelsLoading   bool
+	modelsFetchErr  string
+	modelsRequest   int
 
 	err        error
 	submitted  bool
@@ -66,6 +104,13 @@ type providerSetupModel struct {
 
 type providerSubmittedMsg struct {
 	err error
+}
+
+type providerModelsLoadedMsg struct {
+	provider string
+	request  int
+	result   providerModelsResult
+	err      error
 }
 
 func newProviderSetupModel(userid string, worker *Worker) providerSetupModel {
@@ -91,6 +136,16 @@ func newProviderSetupModel(userid string, worker *Worker) providerSetupModel {
 	searchBase.CharLimit = 256
 	searchBase.Width = 54
 
+	modelFilter := textinput.New()
+	modelFilter.Placeholder = "Filter models"
+	modelFilter.CharLimit = 256
+	modelFilter.Width = 54
+
+	manualModel := textinput.New()
+	manualModel.Placeholder = "Model ID"
+	manualModel.CharLimit = 256
+	manualModel.Width = 54
+
 	return providerSetupModel{
 		step:           providerStepLLM,
 		userid:         userid,
@@ -101,6 +156,10 @@ func newProviderSetupModel(userid string, worker *Worker) providerSetupModel {
 		searchProvider: searchProviders[0],
 		searchAPIKey:   searchKey,
 		searchBaseURL:  searchBase,
+		agentModels:    map[string]string{},
+		modelDefaults:  map[string]string{},
+		modelFilter:    modelFilter,
+		manualModel:    manualModel,
 	}
 }
 
@@ -117,6 +176,7 @@ func newProviderEditor(userid string, worker *Worker, values providerSetupInput)
 	m.llmBaseURL.SetValue(values.LLMBaseURL)
 	m.searchAPIKey.SetValue(values.SearchAPIKey)
 	m.searchBaseURL.SetValue(values.SearchBaseURL)
+	m.agentModels = cloneStringMap(values.AgentModels)
 	m.cursor = max(0, slices.Index(llmProviders, m.llmProvider))
 	return m
 }
@@ -135,6 +195,8 @@ func (m *providerSetupModel) SetSize(w, h int) {
 	m.llmBaseURL.Width = fieldWidth
 	m.searchAPIKey.Width = fieldWidth
 	m.searchBaseURL.Width = fieldWidth
+	m.modelFilter.Width = fieldWidth
+	m.manualModel.Width = fieldWidth
 }
 
 func (m providerSetupModel) Init() tea.Cmd {
@@ -144,6 +206,26 @@ func (m providerSetupModel) Init() tea.Cmd {
 func (m providerSetupModel) footer() []string {
 	if m.submitting {
 		return []string{"Ctrl+C Quit"}
+	}
+	if m.modelsLoading {
+		return []string{"Esc Back", "Ctrl+C Quit"}
+	}
+	switch m.step {
+	case providerStepModels:
+		actions := []string{"Up/Down Navigate", "Enter Select"}
+		if !isIatreonProvider(m.llmProvider) {
+			actions = append(actions, "m Manual")
+			if m.modelsFetchErr != "" {
+				actions = append(actions, "r Retry")
+			}
+		}
+		return append(actions, "Esc Back", "Ctrl+C Quit")
+	case providerStepModelPicker:
+		return []string{"Up/Down Navigate", "Enter Select", "/ Filter", "m Manual", "Esc Back", "Ctrl+C Quit"}
+	case providerStepModelFilter:
+		return []string{"Type Filter", "Enter Apply", "Esc Clear", "Ctrl+C Quit"}
+	case providerStepModelManual:
+		return []string{"Enter Save", "Esc Back", "Ctrl+C Quit"}
 	}
 	if m.step == providerStepLLM || m.step == providerStepSearch {
 		if m.editing && m.step == providerStepLLM {
@@ -173,8 +255,30 @@ func submitProviderSetup(m providerSetupModel) tea.Cmd {
 			SearchProvider: m.searchProvider,
 			SearchAPIKey:   m.searchAPIKeyValue(),
 			SearchBaseURL:  m.searchBaseURLValue(),
+			AgentModels:    cloneStringMap(m.agentModels),
 		})
 		return providerSubmittedMsg{err: err}
+	}
+}
+
+func loadProviderModels(m providerSetupModel) tea.Cmd {
+	return func() tea.Msg {
+		if m.worker == nil {
+			return providerModelsLoadedMsg{
+				provider: m.llmProvider,
+				request:  m.modelsRequest,
+				err:      fmt.Errorf("encrypted local storage is unavailable"),
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		result, err := m.worker.ProviderModels(ctx, providerModelsInput{
+			UserID:      m.userid,
+			LLMProvider: m.llmProvider,
+			LLMAPIKey:   m.llmAPIKeyValue(),
+			LLMBaseURL:  m.llmBaseURLValue(),
+		})
+		return providerModelsLoadedMsg{provider: m.llmProvider, request: m.modelsRequest, result: result, err: err}
 	}
 }
 
@@ -195,20 +299,72 @@ func (m providerSetupModel) Update(msg tea.Msg) (providerSetupModel, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case providerModelsLoadedMsg:
+		if msg.provider != m.llmProvider || msg.request != m.modelsRequest || m.step != providerStepModels {
+			return m, nil
+		}
+		m.modelsLoading = false
+		m.availableModels = msg.result.Models
+		m.modelDefaults = cloneStringMap(msg.result.Defaults)
+		if msg.err != nil {
+			m.modelsFetchErr = msg.err.Error()
+		} else {
+			m.modelsFetchErr = msg.result.FetchError
+		}
+		for _, slot := range agentModelSlots {
+			if strings.TrimSpace(m.agentModels[slot.key]) == "" {
+				m.agentModels[slot.key] = m.modelDefaults[slot.key]
+			}
+		}
+		return m, nil
 	case tea.KeyMsg:
+		if m.modelsLoading {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "esc":
+				return m.goBack()
+			default:
+				return m, nil
+			}
+		}
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
+		case "r":
+			if m.step == providerStepModels && m.modelsFetchErr != "" && !isIatreonProvider(m.llmProvider) {
+				m.modelsLoading = true
+				m.modelsFetchErr = ""
+				m.modelsRequest++
+				return m, loadProviderModels(m)
+			}
+		case "/":
+			if m.step == providerStepModelPicker {
+				m.step = providerStepModelFilter
+				m.modelFilter.Focus()
+				return m, textinput.Blink
+			}
+		case "m":
+			if (m.step == providerStepModels && m.cursor < len(agentModelSlots) && !isIatreonProvider(m.llmProvider)) ||
+				m.step == providerStepModelPicker {
+				if m.step == providerStepModels {
+					m.activeModelKey = agentModelSlots[m.cursor].key
+				}
+				m.step = providerStepModelManual
+				m.manualModel.SetValue(m.agentModels[m.activeModelKey])
+				m.manualModel.Focus()
+				return m, textinput.Blink
+			}
 		case "esc":
 			return m.goBack()
 		case "enter":
 			return m.advance()
 		case "up", "left", "shift+tab":
-			if len(m.currentOptions()) > 0 {
+			if m.optionCount() > 0 {
 				return m.moveCursor(-1), nil
 			}
 		case "down", "right", "tab":
-			if len(m.currentOptions()) > 0 {
+			if m.optionCount() > 0 {
 				return m.moveCursor(1), nil
 			}
 		}
@@ -226,12 +382,23 @@ func (m providerSetupModel) Update(msg tea.Msg) (providerSetupModel, tea.Cmd) {
 }
 
 func (m providerSetupModel) moveCursor(delta int) providerSetupModel {
-	options := m.currentOptions()
-	if len(options) == 0 {
+	count := m.optionCount()
+	if count == 0 {
 		return m
 	}
-	m.cursor = (m.cursor + delta + len(options)) % len(options)
+	m.cursor = (m.cursor + delta + count) % count
 	return m
+}
+
+func (m providerSetupModel) optionCount() int {
+	switch m.step {
+	case providerStepModels:
+		return len(agentModelSlots) + 1
+	case providerStepModelPicker:
+		return len(m.filteredModels())
+	default:
+		return len(m.currentOptions())
+	}
 }
 
 func (m providerSetupModel) currentOptions() []string {
@@ -255,13 +422,19 @@ func (m *providerSetupModel) currentInput() *textinput.Model {
 		return &m.searchAPIKey
 	case providerStepSearchBaseURL:
 		return &m.searchBaseURL
+	case providerStepModelFilter:
+		return &m.modelFilter
+	case providerStepModelManual:
+		return &m.manualModel
 	default:
 		return nil
 	}
 }
 
 func (m *providerSetupModel) focusCurrentInput() {
-	for _, input := range []*textinput.Model{&m.llmAPIKey, &m.llmBaseURL, &m.searchAPIKey, &m.searchBaseURL} {
+	for _, input := range []*textinput.Model{
+		&m.llmAPIKey, &m.llmBaseURL, &m.searchAPIKey, &m.searchBaseURL, &m.modelFilter, &m.manualModel,
+	} {
 		input.Blur()
 	}
 	if input := m.currentInput(); input != nil {
@@ -278,6 +451,10 @@ func (m providerSetupModel) advance() (providerSetupModel, tea.Cmd) {
 		if selected != m.llmProvider {
 			m.llmAPIKey.SetValue("")
 			m.llmBaseURL.SetValue("")
+			m.agentModels = map[string]string{}
+			m.availableModels = nil
+			m.modelDefaults = map[string]string{}
+			m.modelsFetchErr = ""
 		}
 		m.llmProvider = selected
 		m.cursor = max(0, slices.Index(searchProviders, m.searchProvider))
@@ -307,8 +484,7 @@ func (m providerSetupModel) advance() (providerSetupModel, tea.Cmd) {
 		m.searchProvider = selected
 		m.cursor = 0
 		if isIatreonProvider(m.searchProvider) {
-			m.step = providerStepConfirm
-			return m, nil
+			return m.prepareModelStep()
 		}
 		m.step = providerStepSearchKey
 	case providerStepSearchKey:
@@ -318,7 +494,50 @@ func (m providerSetupModel) advance() (providerSetupModel, tea.Cmd) {
 		}
 		m.step = providerStepSearchBaseURL
 	case providerStepSearchBaseURL:
-		m.step = providerStepConfirm
+		return m.prepareModelStep()
+	case providerStepModels:
+		if m.cursor == len(agentModelSlots) {
+			for _, slot := range agentModelSlots {
+				if strings.TrimSpace(m.agentModels[slot.key]) == "" {
+					m.err = fmt.Errorf("select a model for %s", slot.label)
+					return m, nil
+				}
+			}
+			m.step = providerStepConfirm
+			return m, nil
+		}
+		if isIatreonProvider(m.llmProvider) {
+			return m, nil
+		}
+		m.activeModelKey = agentModelSlots[m.cursor].key
+		if len(m.availableModels) == 0 {
+			m.step = providerStepModelManual
+			m.manualModel.SetValue(m.agentModels[m.activeModelKey])
+		} else {
+			m.step = providerStepModelPicker
+			m.cursor = max(0, slices.Index(m.filteredModels(), m.agentModels[m.activeModelKey]))
+		}
+	case providerStepModelPicker:
+		models := m.filteredModels()
+		if len(models) == 0 {
+			m.err = fmt.Errorf("no models match the filter")
+			return m, nil
+		}
+		m.agentModels[m.activeModelKey] = models[m.cursor]
+		m.step = providerStepModels
+		m.cursor = m.agentModelSlotIndex(m.activeModelKey)
+	case providerStepModelFilter:
+		m.step = providerStepModelPicker
+		m.cursor = 0
+	case providerStepModelManual:
+		value := strings.TrimSpace(m.manualModel.Value())
+		if value == "" {
+			m.err = fmt.Errorf("model ID is required")
+			return m, nil
+		}
+		m.agentModels[m.activeModelKey] = value
+		m.step = providerStepModels
+		m.cursor = m.agentModelSlotIndex(m.activeModelKey)
 	case providerStepConfirm:
 		m.submitting = true
 		return m, submitProviderSetup(m)
@@ -352,16 +571,85 @@ func (m providerSetupModel) goBack() (providerSetupModel, tea.Cmd) {
 		m.cursor = max(0, slices.Index(searchProviders, m.searchProvider))
 	case providerStepSearchBaseURL:
 		m.step = providerStepSearchKey
-	case providerStepConfirm:
+	case providerStepModels:
 		if isIatreonProvider(m.searchProvider) {
 			m.step = providerStepSearch
 			m.cursor = max(0, slices.Index(searchProviders, m.searchProvider))
 		} else {
 			m.step = providerStepSearchBaseURL
 		}
+		m.modelsLoading = false
+	case providerStepModelPicker:
+		m.step = providerStepModels
+		m.cursor = m.agentModelSlotIndex(m.activeModelKey)
+	case providerStepModelFilter:
+		m.modelFilter.SetValue("")
+		m.step = providerStepModelPicker
+		m.cursor = 0
+	case providerStepModelManual:
+		if len(m.availableModels) > 0 {
+			m.step = providerStepModelPicker
+			m.cursor = max(0, slices.Index(m.filteredModels(), m.agentModels[m.activeModelKey]))
+		} else {
+			m.step = providerStepModels
+			m.cursor = m.agentModelSlotIndex(m.activeModelKey)
+		}
+	case providerStepConfirm:
+		m.step = providerStepModels
+		m.cursor = len(agentModelSlots)
 	}
 	m.focusCurrentInput()
 	return m, textinput.Blink
+}
+
+func (m providerSetupModel) prepareModelStep() (providerSetupModel, tea.Cmd) {
+	m.step = providerStepModels
+	m.cursor = 0
+	m.err = nil
+	m.activeModelKey = ""
+	m.modelFilter.SetValue("")
+	if isIatreonProvider(m.llmProvider) {
+		m.agentModels = cloneStringMap(iatreonAgentModels)
+		m.availableModels = nil
+		m.modelsFetchErr = ""
+		m.modelsLoading = false
+		return m, nil
+	}
+	m.modelsLoading = true
+	m.modelsFetchErr = ""
+	m.modelsRequest++
+	return m, loadProviderModels(m)
+}
+
+func (m providerSetupModel) agentModelSlotIndex(key string) int {
+	for i, slot := range agentModelSlots {
+		if slot.key == key {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m providerSetupModel) filteredModels() []string {
+	query := strings.ToLower(strings.TrimSpace(m.modelFilter.Value()))
+	if query == "" {
+		return m.availableModels
+	}
+	filtered := make([]string, 0, len(m.availableModels))
+	for _, model := range m.availableModels {
+		if strings.Contains(strings.ToLower(model), query) {
+			filtered = append(filtered, model)
+		}
+	}
+	return filtered
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func isIatreonProvider(provider string) bool {
@@ -429,29 +717,38 @@ func (m providerSetupModel) View() string {
 }
 
 func (m providerSetupModel) renderAnchored(content string) string {
-	paneWidth := m.width - 8
-	if paneWidth < 30 {
-		paneWidth = m.width
-	}
-	if paneWidth > 76 {
-		paneWidth = 76
-	}
+	paneWidth := m.paneWidth()
 	body := lipgloss.NewStyle().Width(paneWidth).Align(lipgloss.Left).Render(content)
 	topPad := m.height / 5
+	if m.step >= providerStepModels {
+		topPad = 1
+	}
 	if topPad < 1 {
 		topPad = 0
 	}
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Top, strings.Repeat("\n", topPad)+body)
 }
 
+func (m providerSetupModel) paneWidth() int {
+	paneWidth := m.width - 8
+	if paneWidth < 30 {
+		paneWidth = m.width
+	}
+	return min(76, paneWidth)
+}
+
 func (m providerSetupModel) stepTitle() string {
 	switch m.step {
 	case providerStepLLM:
-		return "Step 1 of 3 - Choose your AI provider"
+		return "Step 1 of 4 - Choose your AI provider"
 	case providerStepSearch:
-		return "Step 2 of 3 - Choose your search provider"
+		return "Step 2 of 4 - Choose your search provider"
+	case providerStepModels:
+		return "Step 3 of 4 - Configure agent models"
+	case providerStepModelPicker, providerStepModelFilter, providerStepModelManual:
+		return "Step 3 of 4 - Choose model for " + m.agentModelLabel(m.activeModelKey)
 	case providerStepConfirm:
-		return "Step 3 of 3 - Review provider setup"
+		return "Step 4 of 4 - Review provider setup"
 	default:
 		return "Provider credentials"
 	}
@@ -471,11 +768,79 @@ func (m providerSetupModel) renderStep() string {
 		return m.renderInput("API key for "+m.searchProvider, m.searchAPIKey.View())
 	case providerStepSearchBaseURL:
 		return m.renderInput("Base URL for "+m.searchProvider, m.searchBaseURL.View())
+	case providerStepModels:
+		return m.renderModelOverview()
+	case providerStepModelPicker:
+		return m.renderModelPicker()
+	case providerStepModelFilter:
+		return m.renderInput("Filter available models", m.modelFilter.View())
+	case providerStepModelManual:
+		return m.renderInput("Enter a model ID", m.manualModel.View())
 	case providerStepConfirm:
 		return m.renderSummary()
 	default:
 		return ""
 	}
+}
+
+func (m providerSetupModel) renderModelOverview() string {
+	if m.modelsLoading {
+		return systemStyle.Render("Loading available models...")
+	}
+	rows := make([]string, 0, len(agentModelSlots)+1)
+	width := max(1, m.paneWidth()-2)
+	for i, slot := range agentModelSlots {
+		marker := "  "
+		style := lipgloss.NewStyle().Foreground(colorMuted)
+		if i == m.cursor {
+			marker = "> "
+			style = style.Foreground(colorPrimary).Bold(true)
+		}
+		value := strings.TrimSpace(m.agentModels[slot.key])
+		if value == "" {
+			value = "Not selected"
+		}
+		suffix := ""
+		if isIatreonProvider(m.llmProvider) {
+			suffix = " (fixed)"
+		}
+		rows = append(rows, style.Render(clip(marker+slot.label+": "+value+suffix, width)))
+	}
+	continueStyle := lipgloss.NewStyle().Foreground(colorAccent)
+	continueMarker := "  "
+	if m.cursor == len(agentModelSlots) {
+		continueMarker = "> "
+		continueStyle = continueStyle.Bold(true).Foreground(colorPrimary)
+	}
+	rows = append(rows, continueStyle.Render(continueMarker+"Continue"))
+	return visibleRows(rows, m.cursor, max(1, m.height-7))
+}
+
+func (m providerSetupModel) renderModelPicker() string {
+	models := m.filteredModels()
+	if len(models) == 0 {
+		return hintStyle.Render("No models match this filter. Press / to change it or m to enter an ID.")
+	}
+	rows := make([]string, 0, len(models))
+	for i, model := range models {
+		marker := "  "
+		style := lipgloss.NewStyle().Foreground(colorMuted)
+		if i == m.cursor {
+			marker = "> "
+			style = style.Foreground(colorPrimary).Bold(true)
+		}
+		rows = append(rows, style.Render(clip(marker+model, max(1, m.paneWidth()-2))))
+	}
+	return visibleRows(rows, m.cursor, max(1, m.height-7))
+}
+
+func (m providerSetupModel) agentModelLabel(key string) string {
+	for _, slot := range agentModelSlots {
+		if slot.key == key {
+			return slot.label
+		}
+	}
+	return "agent"
 }
 
 func (m providerSetupModel) renderOptions(options []string) string {
@@ -515,16 +880,19 @@ func (m providerSetupModel) renderSummary() string {
 		searchURL = "Default"
 	}
 
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
+	lines := []string{
 		labelStyle.Render("AI"),
-		itemStyle.Render("Provider: "+m.llmProvider),
-		itemStyle.Render("Base URL: "+llmURL),
-		"",
+		itemStyle.Render(clip("Provider: "+m.llmProvider, m.paneWidth()-2)),
+		itemStyle.Render(clip("Base URL: "+llmURL, m.paneWidth()-2)),
 		labelStyle.Render("Search"),
-		itemStyle.Render("Provider: "+m.searchProvider),
-		itemStyle.Render("Base URL: "+searchURL),
-	)
+		itemStyle.Render(clip("Provider: "+m.searchProvider, m.paneWidth()-2)),
+		itemStyle.Render(clip("Base URL: "+searchURL, m.paneWidth()-2)),
+		labelStyle.Render("Models"),
+	}
+	for _, slot := range agentModelSlots {
+		lines = append(lines, itemStyle.Render(clip(slot.label+": "+m.agentModels[slot.key], m.paneWidth()-2)))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
 func (m providerSetupModel) renderPrompt() string {
@@ -536,8 +904,28 @@ func (m providerSetupModel) renderPrompt() string {
 		return hintStyle.Render("Iatreon AI uses the built-in AI and search proxy.")
 	case providerStepLLMBaseURL, providerStepSearchBaseURL:
 		return hintStyle.Render("Leave blank to use the provider default.")
+	case providerStepModels:
+		if m.modelsLoading {
+			return hintStyle.Render("Contacting " + m.llmProvider + "...")
+		}
+		if m.modelsFetchErr != "" {
+			return errorStyle.Render("Could not load models: " + m.modelsFetchErr)
+		}
+		if isIatreonProvider(m.llmProvider) {
+			return hintStyle.Render("Iatreon AI uses fixed models for each operation.")
+		}
+		return hintStyle.Render("Select an agent to change its model.")
+	case providerStepModelPicker:
+		if query := strings.TrimSpace(m.modelFilter.Value()); query != "" {
+			return hintStyle.Render("Filter: " + query)
+		}
+		return hintStyle.Render("Choose a model returned by " + m.llmProvider + ".")
+	case providerStepModelFilter:
+		return hintStyle.Render("Matching is case-insensitive.")
+	case providerStepModelManual:
+		return hintStyle.Render("Enter the exact model identifier accepted by the provider.")
 	case providerStepConfirm:
-		return hintStyle.Render("Press Enter to save these providers.")
+		return hintStyle.Render("Press Enter to save providers and models.")
 	default:
 		return hintStyle.Render("Enter the requested provider detail.")
 	}

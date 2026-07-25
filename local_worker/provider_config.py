@@ -20,10 +20,12 @@ from local_worker.store.backend_session import (
 
 LLM_BASE_URLS = {
     "Iatreon AI": "https://iatreon.efecal.hackclub.app/v1",
+    "OpenAI": "https://api.openai.com/v1",
+    "Hack Club AI": "https://ai.hackclub.com/proxy/v1",
     "OpenRouter": "https://openrouter.ai/api/v1",
-    "Together": "https://api.together.ai/v1",
+    "Together AI": "https://api.together.ai/v1",
     "Groq": "https://api.groq.com/openai/v1",
-    "Fireworks": "https://api.fireworks.ai/inference/v1",
+    "Fireworks AI": "https://api.fireworks.ai/inference/v1",
     "DeepSeek": "https://api.deepseek.com",
     "xAI": "https://api.x.ai/v1",
     "Gemini": "https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -35,6 +37,32 @@ LLM_BASE_URLS = {
 SEARCH_BASE_URLS = {
     "Iatreon AI": "https://iatreon.efecal.hackclub.app/v1/exa",
 }
+
+DEFAULT_MODEL = "google/gemini-3-flash-preview"
+IATREON_AGENT_MODELS = {
+    "intake": DEFAULT_MODEL,
+    "research_fast": DEFAULT_MODEL,
+    "doctor": "xiaomi/mimo-v2.5-pro",
+    "diagnosis": "xiaomi/mimo-v2.5-pro",
+    "inference": "xiaomi/mimo-v2.5-pro",
+    "profiler": "xiaomi/mimo-v2.5-pro",
+    "research_standard": "xiaomi/mimo-v2.5-pro",
+    "research_deep": "xiaomi/mimo-v2.5-pro",
+}
+
+
+def agent_model_defaults() -> dict[str, str]:
+    research = os.getenv("RESEARCH_AGENT_MODEL") or DEFAULT_MODEL
+    return {
+        "intake": os.getenv("INTAKE_AGENT_MODEL") or DEFAULT_MODEL,
+        "doctor": os.getenv("DOCTOR_AGENT_MODEL") or DEFAULT_MODEL,
+        "diagnosis": os.getenv("DIAGNOSIS_AGENT_MODEL") or DEFAULT_MODEL,
+        "inference": os.getenv("INFERENCE_AGENT_MODEL") or DEFAULT_MODEL,
+        "profiler": os.getenv("PROFILER_AGENT_MODEL") or DEFAULT_MODEL,
+        "research_fast": os.getenv("RESEARCH_AGENT_FAST_MODEL") or research,
+        "research_standard": research,
+        "research_deep": os.getenv("RESEARCH_AGENT_DEEP_MODEL") or research,
+    }
 
 
 def provider_setup() -> dict[str, Any]:
@@ -48,6 +76,35 @@ def provider_setup() -> dict[str, Any]:
     from local_worker.store.provider_setup import get_provider_setup
 
     return get_provider_setup(user_id)
+
+
+def agent_model(slot: str) -> str:
+    setup = provider_setup()
+    if (setup.get("llm_provider") or "Iatreon AI") == "Iatreon AI":
+        return IATREON_AGENT_MODELS.get(slot, DEFAULT_MODEL)
+    configured = setup.get("agent_models") or {}
+    return configured.get(slot) or agent_model_defaults().get(slot, DEFAULT_MODEL)
+
+
+async def fetch_provider_models(provider: str, api_key: str, base_url: str) -> list[str]:
+    if provider == "Iatreon AI":
+        return []
+    url = (base_url.strip() or LLM_BASE_URLS.get(provider, "")).rstrip("/")
+    if not url:
+        raise ValueError(f"Base URL is required for {provider}")
+    headers = {"Authorization": f"Bearer {api_key.strip()}"} if api_key.strip() else {}
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.get(url + "/models", headers=headers)
+        response.raise_for_status()
+        payload = response.json()
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, list):
+        raise ValueError("Provider returned an invalid model list")
+    return sorted({
+        item["id"].strip()
+        for item in data
+        if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"].strip()
+    })
 
 
 

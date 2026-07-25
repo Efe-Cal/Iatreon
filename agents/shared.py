@@ -9,16 +9,16 @@ from langgraph.graph.state import CompiledStateGraph
 from langchain_core.tools import tool
 
 from context.websearch import web_search
-from local_worker.provider_config import llm_config
+from local_worker.provider_config import agent_model, llm_config
 
 load_dotenv()
 
-Agent = Literal["intake", "research", "diagnosis", "inference", "profiler"]
+Agent = Literal["intake", "research", "diagnosis", "inference", "profiler", "doctor"]
 
 def get_model(agent_type: Agent, temperature: float = 0.7, model_name: str | None = None) -> ChatOpenAI:
     provider = llm_config()
-    model_name = model_name or os.getenv(f"{agent_type.upper()}_AGENT_MODEL")
-    return ChatOpenAI(model=model_name or "google/gemini-3-flash-preview",
+    model_name = model_name or agent_model(agent_type)
+    return ChatOpenAI(model=model_name,
                       base_url=provider["base_url"],
                       api_key=provider["api_key"],
                       temperature=temperature)

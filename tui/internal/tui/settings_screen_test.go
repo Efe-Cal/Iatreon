@@ -27,6 +27,7 @@ func readySettingsModel() settingsModel {
 			LLMBaseURL:     "https://openrouter.ai/api/v1",
 			SearchProvider: "Exa",
 			SearchAPIKey:   "exa-secret",
+			AgentModels:    cloneStringMap(iatreonAgentModels),
 		},
 	}
 	return m
@@ -69,7 +70,7 @@ func TestSettingsViewShowsRealValuesButNeverSecrets(t *testing.T) {
 	m := readySettingsModel()
 	m.categoryCursor = int(settingsProviders)
 	view := m.View()
-	for _, expected := range []string{"Account", "Medical Profile", "Providers", "Data", "OpenRouter", "Exa", "Edit providers"} {
+	for _, expected := range []string{"Account", "Medical Profile", "Providers", "Data", "OpenRouter", "Exa", "8 agent assignments", "Edit providers"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("settings view missing %q", expected)
 		}
@@ -77,6 +78,18 @@ func TestSettingsViewShowsRealValuesButNeverSecrets(t *testing.T) {
 	for _, secret := range []string{"sk-secret", "exa-secret"} {
 		if strings.Contains(view, secret) {
 			t.Fatalf("settings view exposed provider secret %q", secret)
+		}
+	}
+}
+
+func TestSettingsShowsIatreonFixedModels(t *testing.T) {
+	m := readySettingsModel()
+	m.categoryCursor = int(settingsProviders)
+	m.data.ProviderSetup.LLMProvider = "Iatreon AI"
+	view := m.View()
+	for _, expected := range []string{"google/gemini-3-flash-preview", "xiaomi/mimo-v2.5-pro"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("settings view missing fixed model %q", expected)
 		}
 	}
 }
@@ -248,7 +261,8 @@ func TestSettingsEditorsPrefillAndCancel(t *testing.T) {
 	}
 
 	providers := newProviderEditor(settingsTestUserID, nil, settings.data.ProviderSetup)
-	if providers.llmProvider != "OpenRouter" || providers.searchProvider != "Exa" || providers.llmAPIKey.Value() != "sk-secret" {
+	if providers.llmProvider != "OpenRouter" || providers.searchProvider != "Exa" ||
+		providers.llmAPIKey.Value() != "sk-secret" || providers.agentModels["intake"] == "" {
 		t.Fatal("provider editor was not prefilled")
 	}
 	providers, _ = providers.Update(testKey("esc"))

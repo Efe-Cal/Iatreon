@@ -20,6 +20,7 @@ from db.schemas import ArticleData, BookSectionData, IntakeSessionData
 from context.processing.pipeline import run_pipeline
 from context.websearch import web_search, fetch_web_content
 from context.sources.get_ncbi_books import BookshelfClient
+from local_worker.provider_config import agent_model
 
 load_dotenv()
 
@@ -29,7 +30,6 @@ ResearchEffort = Literal["fast", "standard", "deep", "web"]
 EFFORT_SETTINGS = {
     "fast": {
         "temperature": 0.2,
-        "model_env": "RESEARCH_AGENT_FAST_MODEL",
         "max_articles": 3,
         "web_results": 3,
         "openalex_results": 5,
@@ -37,7 +37,6 @@ EFFORT_SETTINGS = {
     },
     "standard": {
         "temperature": 0.7,
-        "model_env": "RESEARCH_AGENT_MODEL",
         "max_articles": 5,
         "web_results": 5,
         "openalex_results": 10,
@@ -45,7 +44,6 @@ EFFORT_SETTINGS = {
     },
     "deep": {
         "temperature": 0.5,
-        "model_env": "RESEARCH_AGENT_DEEP_MODEL",
         "max_articles": 8,
         "web_results": 8,
         "openalex_results": 15,
@@ -53,13 +51,16 @@ EFFORT_SETTINGS = {
     },
     "web": {
         "temperature": 0.2,
-        "model_env": "RESEARCH_AGENT_FAST_MODEL",
         "max_articles": 0,
         "web_results": 5,
         "openalex_results": 0,
         "prompt": "Use only web search and fetched web pages. Do not use literature, book, or OpenAlex searches.",
     },
 }
+
+
+def research_model_slot(effort: ResearchEffort) -> str:
+    return "research_fast" if effort in ("fast", "web") else f"research_{effort}"
 
 
 def _as_payload(value: Any) -> dict[str, Any]:
@@ -108,7 +109,7 @@ class ResearchAgent:
             name="openalex_search"
         )
         
-        model_name = os.getenv(self.effort_settings["model_env"]) or os.getenv("RESEARCH_AGENT_MODEL")
+        model_name = agent_model(research_model_slot(self.effort))
         
         tools = [
             self.web_search_tool,

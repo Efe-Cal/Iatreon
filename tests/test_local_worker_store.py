@@ -692,6 +692,7 @@ def test_local_provider_setup_drives_model_and_search_clients(initialized_store,
         "search_provider": "Exa",
         "search_api_key": "exa-key",
         "search_base_url": "",
+        "agent_models": {"intake": "groq/intake-model"},
     })
 
     from agents import shared
@@ -704,6 +705,7 @@ def test_local_provider_setup_drives_model_and_search_clients(initialized_store,
             shared.get_model("intake")
             assert chat.call_args.kwargs["api_key"] == "groq-key"
             assert chat.call_args.kwargs["base_url"] == "https://api.groq.com/openai/v1"
+            assert chat.call_args.kwargs["model"] == "groq/intake-model"
 
         with patch.object(websearch, "Exa") as exa_cls:
             exa_cls.return_value.headers = {"x-api-key": "exa-key"}
@@ -1036,3 +1038,115 @@ def test_restore_route_closes_and_reopens_store(monkeypatch, tmp_path):
     assert seen["backup_id"] == "backup-one"
     assert seen["restore_path"] == db_path
     assert {"data/backup/list", "data/backup/restore"} <= worker.BACKEND_AUTH_ROUTES
+
+
+def test_iatreon_agent_models_are_fixed(initialized_store, monkeypatch):
+    monkeypatch.setenv("IATREON_LOCAL_WORKER", "1")
+    monkeypatch.setenv("DOCTOR_AGENT_MODEL", "environment/model")
+    user_id = str(uuid.uuid4())
+    store.update_provider_setup({
+        "user_id": user_id,
+        "llm_provider": "Iatreon AI",
+        "agent_models": {
+            "intake": "saved/intake",
+            "doctor": "saved/doctor",
+        },
+    })
+
+    from local_worker.provider_config import agent_model, reset_current_user_id, set_current_user_id
+
+    token = set_current_user_id(user_id)
+    try:
+        assert agent_model("intake") == "google/gemini-3-flash-preview"
+        assert agent_model("research_fast") == "google/gemini-3-flash-preview"
+        for slot in (
+            "doctor",
+            "diagnosis",
+            "inference",
+            "profiler",
+            "research_standard",
+            "research_deep",
+        ):
+            assert agent_model(slot) == "xiaomi/mimo-v2.5-pro"
+    finally:
+        reset_current_user_id(token)
+
+
+def test_external_agent_models_fall_back_by_research_effort(initialized_store, monkeypatch):
+    monkeypatch.setenv("IATREON_LOCAL_WORKER", "1")
+    monkeypatch.setenv("RESEARCH_AGENT_MODEL", "env/research")
+    monkeypatch.setenv("RESEARCH_AGENT_FAST_MODEL", "env/fast")
+    monkeypatch.setenv("RESEARCH_AGENT_DEEP_MODEL", "env/deep")
+    user_id = str(uuid.uuid4())
+    store.update_provider_setup({
+        "user_id": user_id,
+        "llm_provider": "OpenRouter",
+        "agent_models": {"research_standard": "saved/standard"},
+    })
+
+    from local_worker.provider_config import agent_model, reset_current_user_id, set_current_user_id
+
+    token = set_current_user_id(user_id)
+    try:
+        assert agent_model("research_fast") == "env/fast"
+        assert agent_model("research_standard") == "saved/standard"
+        assert agent_model("research_deep") == "env/deep"
+    finally:
+        reset_current_user_id(token)
+
+    from agents.research import research_model_slot
+
+    assert research_model_slot("fast") == "research_fast"
+    assert research_model_slot("web") == "research_fast"
+    assert research_model_slot("standard") == "research_standard"
+    assert research_model_slot("deep") == "research_deep"
+
+
+def test_fetch_provider_models_normalizes_openai_response(monkeypatch):
+    from local_worker import provider_config
+
+    real_async_client = provider_config.httpx.AsyncClient
+
+    async def handler(request):
+        assert request.url == "https://models.example/v1/models"
+        assert request.headers["Authorization"] == "Bearer test-key"
+        return provider_config.httpx.Response(
+            200,
+            request=request,
+            json={
+                "data": [
+                    {"id": "z-model"},
+                    {"id": "a-model"},
+                    {"id": "a-model"},
+                    {"id": " "},
+                    {},
+                ]
+            },
+        )
+
+    transport = provider_config.httpx.MockTransport(handler)
+    monkeypatch.setattr(
+        provider_config.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_async_client(transport=transport, **kwargs),
+    )
+
+    models = asyncio.run(
+        provider_config.fetch_provider_models(
+            "OpenRouter",
+            "test-key",
+            "https://models.example/v1/",
+        )
+    )
+    assert models == ["a-model", "z-model"]
+
+
+def test_provider_setup_request_accepts_legacy_payload_without_models():
+    from local_worker.models import ProviderSetupUpdateRequest
+
+    request = ProviderSetupUpdateRequest(
+        user_id=uuid.uuid4(),
+        llm_provider="OpenRouter",
+        search_provider="Exa",
+    )
+    assert request.agent_models == {}
