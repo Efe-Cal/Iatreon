@@ -7,6 +7,11 @@ Iatreon is an privacy-first AI-doctor platform, aiming to be error-free. It uses
 > professional medical advice, diagnosis, or treatment. Do not use it for
 > emergencies.
 
+
+https://github.com/user-attachments/assets/7c4aabfa-eb12-439c-a3ad-fd4d7255f691
+
+<sub>To keep the video short, it only demonstrates the intake and research sections</sub>
+
 ## Features
 
 - **Intake Agent**: Conducts structured patient interviews to gather medical history and current symptoms.
