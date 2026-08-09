@@ -79,7 +79,7 @@ class ResearchAgent:
         self.effort_settings = EFFORT_SETTINGS[self.effort]
         self.checkpointer = InMemorySaver()
         self.session_id = research_session_id
-        self.config: RunnableConfig = {"configurable": {"thread_id": str(self.session_id)}}
+        self.config: RunnableConfig = {"configurable": {"thread_id": str(self.session_id)}, "recursion_limit": 40}
         self.research_repo = research_repo
         
         self.web_search_tool = StructuredTool.from_function(
