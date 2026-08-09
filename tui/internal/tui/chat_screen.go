@@ -45,7 +45,6 @@ type chatModel struct {
 	spinner  spinner.Model
 
 	toolSpinner      spinner.Model
-	shimmerFrame     float64
 	now              time.Time
 	shimmerStartedAt time.Time
 
@@ -136,6 +135,7 @@ func newChatModelForAgent(kind AgentKind, userid string, session_id string, work
 		}
 	}
 
+	now := time.Now()
 	return chatModel{
 		agent:          handler,
 		userid:         userid,
@@ -143,15 +143,17 @@ func newChatModelForAgent(kind AgentKind, userid string, session_id string, work
 		history: []messageItem{
 			{role: "system", text: handler.Welcome()},
 		},
-		input:         ti,
-		viewport:      vp,
-		spinner:       sp,
-		aiRenderer:    aiRenderer,
-		userRenderer:  userRenderer,
-		toolSpinner:   spinner.New(spinner.WithSpinner(spinner.Points)),
-		sessionID:     session_id,
-		worker:        worker,
-		footerActions: handler.Footer(),
+		input:            ti,
+		viewport:         vp,
+		spinner:          sp,
+		aiRenderer:       aiRenderer,
+		userRenderer:     userRenderer,
+		toolSpinner:      spinner.New(spinner.WithSpinner(spinner.Points)),
+		now:              now,
+		shimmerStartedAt: now,
+		sessionID:        session_id,
+		worker:           worker,
+		footerActions:    handler.Footer(),
 	}
 }
 
@@ -529,13 +531,12 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		return *m, nil
 
 	case spinner.TickMsg:
+		m.now = msg.Time
 		m.spinner, cmd = m.spinner.Update(msg)
 		cmds = append(cmds, cmd)
 
 		m.toolSpinner, cmd = m.toolSpinner.Update(msg)
 		cmds = append(cmds, cmd)
-
-		m.shimmerFrame += 0.25
 
 		m.refreshViewport()
 		return *m, tea.Batch(cmds...)
