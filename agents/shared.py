@@ -15,13 +15,20 @@ load_dotenv()
 
 Agent = Literal["intake", "research", "diagnosis", "inference", "profiler", "doctor"]
 
-def get_model(agent_type: Agent, temperature: float = 0.7, model_name: str | None = None) -> ChatOpenAI:
+def get_model(
+    agent_type: Agent,
+    temperature: float = 0.7,
+    model_name: str | None = None,
+    parallel_tool_calls: bool | None = None,
+) -> ChatOpenAI:
     provider = llm_config()
     model_name = model_name or agent_model(agent_type)
+    model_kwargs = {} if parallel_tool_calls is None else {"parallel_tool_calls": parallel_tool_calls}
     return ChatOpenAI(model=model_name,
                       base_url=provider["base_url"],
                       api_key=provider["api_key"],
-                      temperature=temperature)
+                      temperature=temperature,
+                      model_kwargs=model_kwargs)
 
 def load_system_prompt(agent_type: Agent) -> str:
     with open(os.path.join(os.path.dirname(__file__), "prompts", f"{agent_type}_agent_system_prompt.txt")) as f:
@@ -33,9 +40,15 @@ def create_agent_by_type(
     temperature: float = 0.7,
     system_prompt_format: dict | None = None,
     model_name: str | None = None,
+    parallel_tool_calls: bool | None = None,
     **kwargs
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
-    model = get_model(agent_type, temperature, model_name=model_name)
+    model = get_model(
+        agent_type,
+        temperature,
+        model_name=model_name,
+        parallel_tool_calls=parallel_tool_calls,
+    )
     system_prompt = load_system_prompt(agent_type).format(**(system_prompt_format or {}))
     
     return create_agent(

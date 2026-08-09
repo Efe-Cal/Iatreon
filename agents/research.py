@@ -125,7 +125,8 @@ class ResearchAgent:
         self.agent = create_agent_by_type("research", tools=tools,
                         checkpointer=self.checkpointer,
                         temperature=self.effort_settings["temperature"],
-                        model_name=model_name)
+                        model_name=model_name,
+                        parallel_tool_calls=True)
 
         self.article_repo = None
         self.book_section_repo = None
