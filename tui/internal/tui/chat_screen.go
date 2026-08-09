@@ -683,14 +683,21 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		case "esc":
 			m.exit_chat = true
 			return *m, nil
+		case "pgup", "pgdown":
+			m.viewport, cmd = m.viewport.Update(msg)
+			return *m, cmd
 		}
+
+		// Keep text entry separate from the viewport's letter-based vim bindings.
+		m.input, cmd = m.input.Update(msg)
+		return *m, cmd
 	}
 
-	// Forward navigation keys to the viewport so messages are scrollable.
+	// Forward non-key messages such as mouse wheel events to the viewport.
 	m.viewport, cmd = m.viewport.Update(msg)
 	cmds = append(cmds, cmd)
 
-	// Forward all other messages (typing) to the text input.
+	// Forward cursor blink and other input messages to the text input.
 	m.input, cmd = m.input.Update(msg)
 	cmds = append(cmds, cmd)
 	return *m, tea.Batch(cmds...)
