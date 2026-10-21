@@ -1,0 +1,10 @@
+FROM ubuntu:24.04
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends squid && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY pdf_worker/squid.conf /etc/squid/squid.conf
+
+EXPOSE 3128
+CMD ["squid", "-N", "-f", "/etc/squid/squid.conf"]

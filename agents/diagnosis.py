@@ -181,8 +181,6 @@ Medical Summary: {self.intake_session.medical_summary}"""
         if self.research_session and self.research_session.research_report:
             user_message += f"\n\n# Research Findings\n{self.research_session.research_report}"
         
-        logging.debug(f"Diagnosis agent input message: {user_message}")
-        
         try:
             response = await self.agent.ainvoke({"messages": [{"role": "user", "content": user_message}]})
             report = response.get("structured_response")

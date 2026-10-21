@@ -43,8 +43,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	p := tea.NewProgram(tui.NewLocalModel(userID), tea.WithAltScreen())
+	m := tui.NewLocalModel(userID)
+	defer m.Close()
+	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
+		_ = m.Close()
 		fmt.Fprintf(os.Stderr, "could not start TUI: %v\n", err)
 		os.Exit(1)
 	}

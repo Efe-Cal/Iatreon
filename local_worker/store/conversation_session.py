@@ -5,6 +5,7 @@ import uuid
 from typing import Any
 
 from local_worker.store.database import _session, _lock
+from local_worker.errors import NotFoundError
 from local_worker.store.profile_jobs import _queue_profile_update
 from local_worker.store.tables import ChatSession, Diagnosis, Intake, Profile, Research
 
@@ -12,6 +13,22 @@ from sqlalchemy import  desc, select, text
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _owned_session(db, user_id: str, chat_session_id: str | None) -> ChatSession | None:
+    if not chat_session_id:
+        return None
+    session = db.get(ChatSession, str(chat_session_id))
+    if session is None or session.user_id != str(user_id):
+        raise NotFoundError("Chat session not found.")
+    return session
+
+
+def _owned_intake(db, user_id: str, intake_id: str) -> Intake:
+    intake = db.get(Intake, str(intake_id))
+    if intake is None or intake.user_id != str(user_id):
+        raise NotFoundError("Intake session not found.")
+    return intake
 
 
 
@@ -91,30 +108,46 @@ def profile_markdown(user_id: str) -> str:
     return "\n".join(lines)
 
 
-def link_intake_session(chat_session_id: str | None, intake_id: str) -> None:
+def link_intake_session(user_id: str, chat_session_id: str | None, intake_id: str) -> None:
     if not chat_session_id:
         return
     with _lock, _session() as db:
-        session = db.get(ChatSession, str(chat_session_id))
-        if session is not None:
-            session.intake_session_id = str(intake_id)
-            db.commit()
+        session = _owned_session(db, user_id, chat_session_id)
+        intake = db.get(Intake, str(intake_id))
+        if intake is not None and intake.user_id != str(user_id):
+            raise NotFoundError("Intake session not found.")
+        if intake is not None and intake.chat_session_id not in (None, session.id):
+            raise NotFoundError("Chat session with linked intake not found.")
+        if session.intake_session_id not in (None, str(intake_id)):
+            raise NotFoundError("Chat session with linked intake not found.")
+        if intake is not None:
+            intake.chat_session_id = session.id
+        session.intake_session_id = str(intake_id)
+        db.commit()
 
 
-def link_doctor_session(chat_session_id: str | None, doctor_session_id: str) -> None:
+def link_doctor_session(user_id: str, chat_session_id: str | None, doctor_session_id: str) -> None:
     if not chat_session_id:
         return
     with _lock, _session() as db:
-        session = db.get(ChatSession, str(chat_session_id))
-        if session is not None:
-            session.doctor_session_id = str(doctor_session_id)
-            db.commit()
+        session = _owned_session(db, user_id, chat_session_id)
+        if session.doctor_session_id not in (None, str(doctor_session_id)):
+            raise NotFoundError("Doctor conversation not found.")
+        session.doctor_session_id = str(doctor_session_id)
+        db.commit()
 
 
 def save_intake(user_id: str, intake_id: str, chat_session_id: str | None, profile: dict[str, Any], transcript: str) -> None:
     completed_at = now()
     with _lock, _session() as db:
         row = db.get(Intake, str(intake_id))
+        if row is not None and row.user_id != str(user_id):
+            raise NotFoundError("Intake session not found.")
+        if row is not None and row.chat_session_id not in (None, str(chat_session_id) if chat_session_id else None):
+            raise NotFoundError("Chat session with linked intake not found.")
+        session = _owned_session(db, user_id, chat_session_id)
+        if session is not None and session.intake_session_id not in (None, str(intake_id)):
+            raise NotFoundError("Chat session with linked intake not found.")
         payload = {
             "user_id": str(user_id),
             "chat_session_id": str(chat_session_id) if chat_session_id else None,
@@ -128,7 +161,6 @@ def save_intake(user_id: str, intake_id: str, chat_session_id: str | None, profi
             for key, value in payload.items():
                 setattr(row, key, value)
 
-        session = db.get(ChatSession, str(chat_session_id)) if chat_session_id else None
         if session is not None:
             sections = [s for s in (session.sections or []) if s.get("id") != str(intake_id)]
             sections.append({
@@ -144,10 +176,10 @@ def save_intake(user_id: str, intake_id: str, chat_session_id: str | None, profi
         db.commit()
 
 
-def get_intake(intake_id: str) -> dict[str, Any] | None:
+def get_intake(user_id: str, intake_id: str) -> dict[str, Any] | None:
     with _lock, _session() as db:
         row = db.get(Intake, str(intake_id))
-        if row is None:
+        if row is None or row.user_id != str(user_id):
             return None
         return {
             "id": row.id,
@@ -159,14 +191,14 @@ def get_intake(intake_id: str) -> dict[str, Any] | None:
         }
 
 
-def get_intake_by_chat_session(chat_session_id: str) -> dict[str, Any] | None:
+def get_intake_by_chat_session(user_id: str, chat_session_id: str) -> dict[str, Any] | None:
     with _lock, _session() as db:
         session = db.get(ChatSession, str(chat_session_id))
-        if session is None or not session.intake_session_id:
+        if session is None or session.user_id != str(user_id) or not session.intake_session_id:
             return None
 
         row = db.get(Intake, session.intake_session_id)
-        if row is None:
+        if row is None or row.user_id != str(user_id) or row.chat_session_id != session.id:
             return None
 
         return {
@@ -186,6 +218,8 @@ def get_chat_session_data(user_id: str, chat_session_id: str) -> dict[str, Any] 
             return None
 
         intake = db.get(Intake, session.intake_session_id) if session.intake_session_id else None
+        if intake is not None and (intake.user_id != str(user_id) or intake.chat_session_id != session.id):
+            return None
         research_sessions = db.scalars(
             select(Research)
             .where(
@@ -207,6 +241,7 @@ def get_chat_session_data(user_id: str, chat_session_id: str) -> dict[str, Any] 
         return {
             "id": session.id,
             "user_id": session.user_id,
+            "intake_session_id": session.intake_session_id,
             "intake_session": {
                 "id": intake.id,
                 "user_id": intake.user_id,
@@ -250,6 +285,8 @@ def get_session_resume_data(user_id: str, chat_session_id: str) -> dict[str, Any
             return None
 
         intake = db.get(Intake, session.intake_session_id) if session.intake_session_id else None
+        if intake is not None and (intake.user_id != str(user_id) or intake.chat_session_id != session.id):
+            return None
         user_research = db.scalars(
             select(Research)
             .where(
@@ -310,6 +347,11 @@ def save_research(
     normalized_citations = {str(k): v for k, v in (citations or {}).items()}
     with _lock, _session() as db:
         row = db.get(Research, str(research_id))
+        if row is not None and row.user_id != str(user_id):
+            raise NotFoundError("Research session not found.")
+        if row is not None and row.chat_session_id not in (None, str(chat_session_id) if chat_session_id else None):
+            raise NotFoundError("Chat session not found.")
+        session = _owned_session(db, user_id, chat_session_id)
         payload = {
             "user_id": str(user_id),
             "chat_session_id": str(chat_session_id) if chat_session_id else None,
@@ -325,7 +367,6 @@ def save_research(
             for key, value in payload.items():
                 setattr(row, key, value)
 
-        session = db.get(ChatSession, str(chat_session_id)) if chat_session_id else None
         if session is not None:
             sections = [s for s in (session.sections or []) if s.get("id") != str(research_id)]
             sections.append({
@@ -381,6 +422,14 @@ def save_diagnosis(
     created_at = now()
     with _lock, _session() as db:
         row = db.get(Diagnosis, str(diagnosis_id))
+        if row is not None and row.user_id != str(user_id):
+            raise NotFoundError("Diagnosis session not found.")
+        if row is not None and row.chat_session_id not in (None, str(chat_session_id) if chat_session_id else None):
+            raise NotFoundError("Chat session not found.")
+        intake = _owned_intake(db, user_id, intake_id)
+        session = _owned_session(db, user_id, chat_session_id)
+        if session is not None and intake.chat_session_id != session.id:
+            raise NotFoundError("Chat session with linked intake not found.")
         payload = {
             "user_id": str(user_id),
             "intake_session_id": str(intake_id),
@@ -396,7 +445,6 @@ def save_diagnosis(
             for key, value in payload.items():
                 setattr(row, key, value)
 
-        session = db.get(ChatSession, str(chat_session_id)) if chat_session_id else None
         if session is not None:
             sections = [s for s in (session.sections or []) if s.get("id") != str(diagnosis_id)]
             sections.append({
@@ -413,10 +461,10 @@ def save_diagnosis(
         db.commit()
 
 
-def get_citation_text(research_id: str, citation_num: int) -> str:
+def get_citation_text(user_id: str, research_id: str, citation_num: int) -> str:
     with _lock, _session() as db:
         research = db.get(Research, str(research_id))
-        citations = research.citations if research else {}
+        citations = research.citations if research is not None and research.user_id == str(user_id) else {}
     citation = (citations or {}).get(str(citation_num)) or {}
     return citation.get("text") or citation.get("full_text") or ""
 

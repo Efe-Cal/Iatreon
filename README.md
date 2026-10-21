@@ -89,7 +89,7 @@ Iatreon is designed around privacy and security, aiming to minimize data exposur
 #### How to Build for Prod
 Run the build.ps1 script to build the project and produce an installer:
 ```powershell
-.scripts\build.ps1
+.\scripts\build.ps1
 ```
 
 ### Setup Environment Variables

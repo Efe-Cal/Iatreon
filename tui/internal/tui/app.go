@@ -101,6 +101,13 @@ func NewLocalModel(userid string) model {
 	return m
 }
 
+func (m model) Close() error {
+	if m.worker == nil {
+		return nil
+	}
+	return m.worker.Close()
+}
+
 func newModel(userid string, hasProfile bool, hasProviderSetup bool, hasBackendSession bool, worker *Worker) model {
 	dash := newDashboardModel(userid)
 	backendAccount := newBackendAccountModel(userid, worker)

@@ -2,6 +2,7 @@ import os
 import asyncio
 import re
 import tempfile
+import threading
 
 from urllib.parse import unquote, urlparse
 from pypdf import PdfReader
@@ -20,6 +21,7 @@ parser = LiteParse(
     ocr_enabled=True,
     output_format="markdown",
 )
+_parser_lock = threading.Lock()
 
 class PDFClient:
     def _is_probable_pdf_url(self, url: str) -> bool:
@@ -128,26 +130,28 @@ class PDFClient:
 
     def extract_text_from_pdf_liteparse(self, pdf_path: str) -> str:
         return parser.parse(pdf_path)
-         
-    
+
+    def _extract_pdf_bytes(self, pdf_bytes: bytes) -> str:
+        # The thread owns these resources until parsing finishes, even on cancellation.
+        with _parser_lock:
+            tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            try:
+                with tmp_file:
+                    tmp_file.write(pdf_bytes)
+                return self.extract_text_from_pdf_liteparse(tmp_file.name)
+            finally:
+                os.remove(tmp_file.name)
+
     async def get_pdf_content(self, url: str) -> str:
         async with httpx.AsyncClient(timeout=120) as client:
             try:
                 pdf_bytes = await self.download_pdf(self._special_case_pdf_url(url), client)
                 if not pdf_bytes:
                     return ""
-                
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-                    tmp_file.write(pdf_bytes)
-                    tmp_path = tmp_file.name
-
-                return self.extract_text_from_pdf_liteparse(tmp_path)
+                return await asyncio.to_thread(self._extract_pdf_bytes, pdf_bytes)
             except Exception as exc:
                 print(f"[PDFClient] PDF extraction failed for {url}: {exc}")
                 return ""
-            finally:
-                if 'tmp_path' in locals() and os.path.exists(tmp_path):
-                    os.remove(tmp_path)
 
 
     

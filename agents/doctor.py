@@ -137,20 +137,21 @@ class DoctorAgent:
         if os.getenv("IATREON_LOCAL_WORKER") == "1":
             from local_worker import store
 
-            intake_record = store.get_intake_by_chat_session(str(self.chat_session_id))
-            if intake_record:
-                profile = intake_record.get("profile") or {}
-                intake_session = IntakeSessionData(
-                    id=uuid.UUID(str(intake_record["id"])),
-                    user_id=uuid.UUID(str(intake_record["user_id"])),
-                    chief_complaint=profile.get("chief_complaint"),
-                    symptoms=profile.get("symptoms", []),
-                    red_flags=profile.get("red_flags", []),
-                    medical_summary=profile.get("medical_summary"),
-                    thread_id=str(intake_record.get("transcript") or ""),
-                    status="complete",
-                    completed_at=intake_record.get("completed_at"),
-                )
+            intake_record = store.get_intake_by_chat_session(str(self.user_id), str(self.chat_session_id))
+            if not intake_record:
+                return "I could not start research because this chat has no completed intake."
+            profile = intake_record.get("profile") or {}
+            intake_session = IntakeSessionData(
+                id=uuid.UUID(str(intake_record["id"])),
+                user_id=uuid.UUID(str(intake_record["user_id"])),
+                chief_complaint=profile.get("chief_complaint"),
+                symptoms=profile.get("symptoms", []),
+                red_flags=profile.get("red_flags", []),
+                medical_summary=profile.get("medical_summary"),
+                thread_id=str(intake_record.get("transcript") or ""),
+                status="complete",
+                completed_at=intake_record.get("completed_at"),
+            )
 
             research_session_id = uuid.uuid4()
             research_report = ""

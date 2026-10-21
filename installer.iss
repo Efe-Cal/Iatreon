@@ -1,5 +1,5 @@
 #define MyAppName "Iatreon"
-#define MyAppVersion "0.1.1"
+#define MyAppVersion "0.1.2"
 #define MyAppPublisher "Iatreon"
 #define MyAppExeName "iatreon.exe"
 

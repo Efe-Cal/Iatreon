@@ -12,8 +12,8 @@ async def stream_diagnosis(req: DiagnosisRequest, triggered_by: str = "user") ->
     user_id = str(req.user_id)
     session_id = req.session_id
 
-    intake_record = store.get_intake(str(intake_id))
-    if not intake_record or str(intake_record["user_id"]) != user_id:
+    intake_record = store.get_intake(user_id, str(intake_id))
+    if not intake_record:
         raise NotFoundError("Intake session not found.")
     if session_id:
         chat_session = store.get_chat_session_data(user_id, str(session_id))

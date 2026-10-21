@@ -74,13 +74,13 @@ def test_store_round_trips_worker_records(initialized_store):
     assert columns == {"user_id", "username", "access_token", "refresh_token"}
 
     intake_id = str(uuid.uuid4())
-    store.link_intake_session(session_id, intake_id)
+    store.link_intake_session(user_id, session_id, intake_id)
     store.save_intake(user_id, intake_id, session_id, profile, "transcript")
-    assert store.get_intake(intake_id)["profile"] == profile
-    assert store.get_intake_by_chat_session(session_id)["id"] == intake_id
+    assert store.get_intake(user_id, intake_id)["profile"] == profile
+    assert store.get_intake_by_chat_session(user_id, session_id)["id"] == intake_id
 
     doctor_session_id = str(uuid.uuid4())
-    store.link_doctor_session(session_id, doctor_session_id)
+    store.link_doctor_session(user_id, session_id, doctor_session_id)
 
     research_id = str(uuid.uuid4())
     store.save_research(
@@ -93,7 +93,7 @@ def test_store_round_trips_worker_records(initialized_store):
     )
     latest = store.get_latest_research(user_id, session_id)
     assert latest["id"] == research_id
-    assert store.get_citation_text(research_id, 1) == "citation text"
+    assert store.get_citation_text(user_id, research_id, 1) == "citation text"
 
     diagnosis_id = str(uuid.uuid4())
     store.save_diagnosis(
@@ -127,7 +127,7 @@ def test_session_resume_tracks_workflow_stage(initialized_store):
     assert resume["conversation_id"] is None
 
     intake_id = str(uuid.uuid4())
-    store.link_intake_session(session_id, intake_id)
+    store.link_intake_session(user_id, session_id, intake_id)
     resume = store.get_session_resume_data(user_id, session_id)
     assert resume["agent"] == "intake"
     assert resume["conversation_id"] == intake_id
@@ -171,7 +171,7 @@ def test_session_resume_tracks_workflow_stage(initialized_store):
     assert resume["conversation_id"] == intake_id
 
     doctor_id = str(uuid.uuid4())
-    store.link_doctor_session(session_id, doctor_id)
+    store.link_doctor_session(user_id, session_id, doctor_id)
     resume = store.get_session_resume_data(user_id, session_id)
     assert resume["agent"] == "doctor"
     assert resume["conversation_id"] == doctor_id
@@ -275,7 +275,7 @@ def test_profiler_service_updates_only_medical_summary(initialized_store, monkey
         "user",
     )
     doctor_session_id = str(uuid.uuid4())
-    store.link_doctor_session(session_id, doctor_session_id)
+    store.link_doctor_session(user_id, session_id, doctor_session_id)
     seen = {}
 
     async def update(chat_session, current_summary):
@@ -764,6 +764,9 @@ def test_expired_access_token_refreshes_and_rotates_local_pair(initialized_store
             return {"access_token": "access-new", "refresh_token": "refresh-new"}
 
     class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
         async def __aenter__(self):
             return self
 
@@ -795,6 +798,9 @@ def test_refresh_outage_does_not_become_reauthentication(initialized_store, monk
         status_code = 503
 
     class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
         async def __aenter__(self):
             return self
 
@@ -857,23 +863,34 @@ def test_backup_transfer_uses_configured_backend_and_private_auth(
         def json(self):
             return self._payload
 
+        async def aiter_bytes(self, chunk_size):
+            for start in range(0, len(self.content), chunk_size):
+                yield self.content[start:start + chunk_size]
+
+    class Stream:
+        def __init__(self, response):
+            self.response = response
+
+        async def __aenter__(self):
+            return self.response
+
+        async def __aexit__(self, *args):
+            pass
+
     class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, *args):
             pass
 
-        async def post(self, url, **kwargs):
-            calls.append(("POST", url, kwargs))
-            if url.endswith("/backup/upload"):
-                return Response(payload={"upload_url": "https://r2.test/upload", "backup_id": "one"})
-            return Response(payload={"status": "success"})
-
         async def put(self, url, **kwargs):
             body = b"".join([chunk async for chunk in kwargs["content"]])
             calls.append(("PUT", url, {**kwargs, "body": body}))
-            return Response()
+            return Response(payload={"backup_id": "one", "checksum": checksum})
 
         async def get(self, url, **kwargs):
             calls.append(("GET", url, kwargs))
@@ -883,6 +900,10 @@ def test_backup_transfer_uses_configured_backend_and_private_auth(
                 )
             return Response(content=b"encrypted backup")
 
+        def stream(self, method, url, **kwargs):
+            calls.append((method, url, kwargs))
+            return Stream(Response(content=b"encrypted backup"))
+
     monkeypatch.setenv("IATREON_BACKEND_API_URL", "https://backend.test/")
     monkeypatch.setattr(httpx, "AsyncClient", Client)
 
@@ -890,14 +911,15 @@ def test_backup_transfer_uses_configured_backend_and_private_auth(
     asyncio.run(store.download_backup("one", user_id, destination_path))
 
     assert calls[0][1] == "https://backend.test/backup/upload"
-    assert calls[1][2]["headers"] == {
+    assert calls[0][2]["headers"] == {
+        "Authorization": "Bearer jwt-test",
         "Content-Type": "application/octet-stream",
         "Content-Length": str(backup_path.stat().st_size),
+        "X-Backup-Checksum": checksum,
     }
-    assert calls[1][2]["body"] == b"encrypted backup"
-    assert calls[2][2]["json"] == {"checksum": checksum}
-    assert calls[3][1] == "https://backend.test/backup/download/one"
-    assert "headers" not in calls[4][2]
+    assert calls[0][2]["body"] == b"encrypted backup"
+    assert calls[1][1] == "https://backend.test/backup/download/one"
+    assert calls[2][1] == "https://r2.test/download"
     assert destination_path.read_bytes() == b"encrypted backup"
 
 

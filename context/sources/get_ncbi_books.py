@@ -1,4 +1,6 @@
 from dotenv import load_dotenv
+import re
+from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
@@ -26,6 +28,22 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
 ]
 
+_NCBI_BOOKS_HOSTS = {"ncbi.nlm.nih.gov", "www.ncbi.nlm.nih.gov"}
+_ACCESSION_RE = re.compile(r"^[A-Za-z0-9_]+$")
+_MAX_REDIRECTS = 5
+
+
+def normalize_bookshelf_url(url: str) -> str:
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.hostname not in _NCBI_BOOKS_HOSTS:
+        raise ValueError("Bookshelf URL must use HTTPS on ncbi.nlm.nih.gov")
+    if parsed.username or parsed.password or parsed.port not in (None, 443):
+        raise ValueError("Bookshelf URL contains an invalid authority")
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 2 or parts[0] != "books" or not _ACCESSION_RE.fullmatch(parts[1]):
+        raise ValueError("Bookshelf URL must contain a safe /books/<accession>/ path")
+    return f"https://www.ncbi.nlm.nih.gov/books/{parts[1]}/"
+
 
 class BookshelfClient:
     def __init__(self):
@@ -47,20 +65,42 @@ class BookshelfClient:
 
         books = []
         for result in response.results:
+            try:
+                url = normalize_bookshelf_url(result.url)
+            except (TypeError, ValueError) as exc:
+                log_external_failure("NCBI Bookshelf", "result URL validation", exc)
+                continue
             book = {
                 "title": result.title,
-                "url": result.url,
-                "accession_id": result.url.split("/")[-1],
+                "url": url,
+                "accession_id": url.split("/")[-2],
                 "source": "NCBI Bookshelf",
             }
             books.append(book)
         return books
 
+    def _get_bookshelf_response(self, url: str, headers: dict):
+        current_url = normalize_bookshelf_url(url)
+        for _ in range(_MAX_REDIRECTS + 1):
+            response = ncbi_get(current_url, headers=headers, allow_redirects=False)
+            if not response.is_redirect:
+                return response
+            location = response.headers.get("Location")
+            if not location:
+                raise ValueError("Bookshelf redirect did not include a Location header")
+            current_url = normalize_bookshelf_url(urljoin(current_url, location))
+        raise ValueError("Bookshelf exceeded the redirect limit")
+
     def get_book_html_content(self, url: str) -> str:
+        try:
+            url = normalize_bookshelf_url(url)
+        except (TypeError, ValueError) as exc:
+            log_external_failure("NCBI Bookshelf", "HTML URL validation", exc)
+            return ""
         headers = HEADERS.copy()
         headers.update({"User-Agent": USER_AGENTS[hash(url) % len(USER_AGENTS)]})
         try:
-            response = ncbi_get(url, headers=headers)
+            response = self._get_bookshelf_response(url, headers)
         except Exception as exc:
             log_external_failure("NCBI Bookshelf", "HTML fetch", exc)
             return ""

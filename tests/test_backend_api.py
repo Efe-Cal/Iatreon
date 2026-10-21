@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import hashlib
 import json
@@ -10,6 +11,76 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 
+class FakeRedis:
+    def __init__(self):
+        self.values = {}
+        self.ttls = {}
+
+    async def ping(self):
+        return True
+
+    async def incr(self, key):
+        self.values[key] = self.values.get(key, 0) + 1
+        return self.values[key]
+
+    async def decr(self, key):
+        self.values[key] = self.values.get(key, 0) - 1
+        return self.values[key]
+
+    async def expire(self, key, seconds):
+        self.ttls[key] = seconds
+
+    async def ttl(self, key):
+        return self.ttls.get(key, -1)
+
+    async def delete(self, key):
+        self.values.pop(key, None)
+        self.ttls.pop(key, None)
+
+    async def eval(self, script, numkeys, key):
+        assert numkeys == 1
+        # Redis executes the lease-release script without interleaving commands.
+        self.values[key] = self.values.get(key, 0) - 1
+        if self.values[key] <= 0:
+            self.values.pop(key)
+            self.ttls.pop(key, None)
+            return 1
+        return 0
+
+
+def test_active_lease_release_preserves_concurrent_acquisition(monkeypatch, tmp_path):
+    load_backend(monkeypatch, tmp_path)
+    limits = importlib.import_module("backend_api.limits")
+    replacement = None
+
+    class RacingRedis(FakeRedis):
+        async def decr(self, key):
+            nonlocal replacement
+            count = await super().decr(key)
+            if count == 0:
+                replacement = await limits.acquire_active_limit("test", "user", 1)
+            return count
+
+    redis = RacingRedis()
+    monkeypatch.setattr(limits, "_redis", redis)
+
+    async def release_and_reacquire():
+        nonlocal replacement
+        first = await limits.acquire_active_limit("test", "user", 1)
+        await first.release()
+        if replacement is None:
+            replacement = await limits.acquire_active_limit("test", "user", 1)
+        await first.release()  # Releasing twice must not remove the replacement.
+        try:
+            await limits.acquire_active_limit("test", "user", 1)
+        except HTTPException as exc:
+            assert exc.status_code == 429
+        else:
+            raise AssertionError("active limit admitted a second request")
+
+    asyncio.run(release_and_reacquire())
+
+
 def load_backend(monkeypatch, tmp_path):
     monkeypatch.setenv("BACKEND_API_DB_URL", f"sqlite+aiosqlite:///{tmp_path / 'backend.sqlite3'}")
     monkeypatch.setenv("JWT_SECRET", "test-secret")
@@ -18,6 +89,7 @@ def load_backend(monkeypatch, tmp_path):
         if name.startswith("backend_api."):
             del sys.modules[name]
     main = importlib.import_module("backend_api.main")
+    importlib.import_module("backend_api.limits")._redis = FakeRedis()
     importlib.import_module("backend_api.auth").PBKDF2_ITERATIONS = 1
     return main
 
@@ -156,6 +228,71 @@ def test_hcai_streams_query_headers_and_body_without_storage(monkeypatch, tmp_pa
     assert "secret-medical" not in repr(rows)
 
 
+def test_hcai_rejects_non_object_and_oversized_bodies(monkeypatch, tmp_path):
+    main = load_backend(monkeypatch, tmp_path)
+    with TestClient(main.app) as client:
+        headers = {"Authorization": f"Bearer {register(client)}"}
+        non_object = client.post(
+            "/v1/chat/completions",
+            content=b"[]",
+            headers={**headers, "Content-Type": "application/json"},
+        )
+        oversized = client.post(
+            "/v1/chat/completions",
+            content=b"x" * (2 * 1024 * 1024 + 1),
+            headers={**headers, "Content-Type": "application/octet-stream"},
+        )
+
+    assert non_object.status_code == 422
+    assert oversized.status_code == 413
+
+
+def test_register_rate_limit_and_redis_failure_are_fail_closed(monkeypatch, tmp_path):
+    main = load_backend(monkeypatch, tmp_path)
+    limits = importlib.import_module("backend_api.limits")
+    with TestClient(main.app) as client:
+        for index in range(limits.REGISTER_LIMIT.count):
+            assert client.post(
+                "/auth/register",
+                json={"username": f"user-{index}", "password": "password123"},
+            ).status_code == 201
+        limited = client.post(
+            "/auth/register",
+            json={"username": "limited", "password": "password123"},
+        )
+        limits._redis = None
+        monkeypatch.setattr(limits, "redis_asyncio", None)
+        unavailable = client.post(
+            "/auth/register",
+            json={"username": "unavailable", "password": "password123"},
+        )
+
+    assert limited.status_code == 429
+    assert int(limited.headers["Retry-After"]) > 0
+    assert unavailable.status_code == 503
+
+
+def test_login_limits_normalized_username_and_health_checks_redis(monkeypatch, tmp_path):
+    main = load_backend(monkeypatch, tmp_path)
+    limits = importlib.import_module("backend_api.limits")
+    auth = importlib.import_module("backend_api.auth")
+    monkeypatch.setattr(auth, "LOGIN_IP_LIMIT", limits.RateLimit(100, 60))
+    with TestClient(main.app) as client:
+        assert client.get("/health").json() == {"status": "ok", "redis": "ok"}
+        for username in (" Missing ", "missing", "MISSING", "missing", "missing"):
+            assert client.post(
+                "/auth/token",
+                json={"username": username, "password": "password123"},
+            ).status_code == 401
+        limited = client.post(
+            "/auth/token",
+            json={"username": "missing", "password": "password123"},
+        )
+
+    assert limited.status_code == 429
+    assert int(limited.headers["Retry-After"]) > 0
+
+
 def test_pdf_ownership_status_expiry_and_leak_prevention(monkeypatch, tmp_path):
     main = load_backend(monkeypatch, tmp_path)
     pdf = importlib.import_module("backend_api.pdf")
@@ -246,12 +383,19 @@ def test_pdf_content_streaming_conflicts_and_unavailable_service(monkeypatch, tm
     assert unavailable_response.status_code == 503
 
 
-def test_backup_upload_completion_and_download(monkeypatch, tmp_path):
+def test_backup_stream_upload_and_download(monkeypatch, tmp_path):
     main = load_backend(monkeypatch, tmp_path)
     backup = importlib.import_module("backend_api.backup")
     calls = []
 
     class R2Client:
+        def upload_file(self, filename, bucket, key, ExtraArgs):
+            with open(filename, "rb") as source:
+                calls.append(("upload_file", bucket, key, ExtraArgs, source.read()))
+
+        def delete_object(self, Bucket, Key):
+            calls.append(("delete_object", Bucket, Key))
+
         def generate_presigned_url(self, ClientMethod, Params, ExpiresIn):
             calls.append((ClientMethod, Params, ExpiresIn))
             return f"https://r2.test/{ClientMethod}"
@@ -261,35 +405,87 @@ def test_backup_upload_completion_and_download(monkeypatch, tmp_path):
 
     with TestClient(main.app) as client:
         headers = {"Authorization": f"Bearer {register(client)}"}
-        upload = client.post("/backup/upload", headers=headers)
-        backup_id = upload.json()["backup_id"]
-        pending = client.get(f"/backup/download/{backup_id}", headers=headers)
-        invalid = client.post(
-            f"/backup/upload/{backup_id}/complete",
-            json={"checksum": "invalid"},
-            headers=headers,
+        body = b"encrypted backup"
+        checksum = hashlib.sha256(body).hexdigest()
+        upload = client.put(
+            "/backup/upload",
+            content=body,
+            headers={
+                **headers,
+                "Content-Type": "application/octet-stream",
+                "Content-Length": str(len(body)),
+                "X-Backup-Checksum": checksum,
+            },
         )
-        complete = client.post(
-            f"/backup/upload/{backup_id}/complete",
-            json={"checksum": "a" * 64},
-            headers=headers,
+        backup_id = upload.json()["backup_id"]
+        invalid = client.put(
+            "/backup/upload",
+            content=body,
+            headers={
+                **headers,
+                "Content-Type": "application/octet-stream",
+                "Content-Length": str(len(body)),
+                "X-Backup-Checksum": "invalid",
+            },
         )
         download = client.get(f"/backup/download/{backup_id}", headers=headers)
         listed = client.get("/backup/list", headers=headers)
 
     assert (
         upload.status_code
-        == complete.status_code
         == download.status_code
         == listed.status_code
         == 200
     )
-    assert pending.status_code == 409
     assert invalid.status_code == 422
-    assert download.json()["checksum"] == "a" * 64
+    assert upload.json() == {"status": "success", "backup_id": backup_id, "checksum": checksum}
+    assert download.json()["checksum"] == checksum
     listed_backup = listed.json()["backups"][0]
     assert listed_backup["id"] == backup_id
-    assert listed_backup["checksum"] == "a" * 64
+    assert listed_backup["checksum"] == checksum
     assert datetime.fromisoformat(listed_backup["created_at"])
-    assert [call[0] for call in calls] == ["put_object", "get_object"]
-    assert all(call[1]["Bucket"] == "backups" for call in calls)
+    assert calls[0][0] == "upload_file"
+    assert calls[0][1] == "backups"
+    assert calls[0][2].endswith(f"/{backup_id}.db")
+    assert calls[0][3] == {"ContentType": "application/octet-stream"}
+    assert calls[0][4] == body
+    assert calls[1][0] == "get_object"
+    assert calls[1][1]["Bucket"] == "backups"
+
+
+def test_backup_retains_only_latest_five(monkeypatch, tmp_path):
+    main = load_backend(monkeypatch, tmp_path)
+    backup = importlib.import_module("backend_api.backup")
+    limits = importlib.import_module("backend_api.limits")
+    deleted = []
+
+    class R2Client:
+        def upload_file(self, filename, bucket, key, ExtraArgs):
+            pass
+
+        def delete_object(self, Bucket, Key):
+            deleted.append((Bucket, Key))
+
+    monkeypatch.setattr(backup, "create_r2_client", R2Client)
+    monkeypatch.setenv("R2_BUCKET_NAME", "backups")
+    monkeypatch.setattr(backup, "BACKUP_LIMIT", limits.RateLimit(10, 3600))
+
+    with TestClient(main.app) as client:
+        headers = {"Authorization": f"Bearer {register(client)}"}
+        for index in range(6):
+            body = f"backup-{index}".encode()
+            response = client.put(
+                "/backup/upload",
+                content=body,
+                headers={
+                    **headers,
+                    "Content-Type": "application/octet-stream",
+                    "Content-Length": str(len(body)),
+                    "X-Backup-Checksum": hashlib.sha256(body).hexdigest(),
+                },
+            )
+            assert response.status_code == 200
+        listed = client.get("/backup/list", headers=headers)
+
+    assert len(listed.json()["backups"]) == 5
+    assert len(deleted) == 1

@@ -5,6 +5,7 @@ import re
 import unicodedata
 
 from .pdf_utils_v2 import PDFClient
+from .pdf_enrichment import enrich_articles_with_pdfs, new_pdf_deadline
 from ..models import Article, BookSection
 from ..sources.openalex import OpenAlexClient
 from ..sources.pmc import PMCClient
@@ -60,16 +61,15 @@ class MedicalKnowledgePipeline:
         except Exception as exc:
             self._source_failed("OpenAlex", "article enrichment", exc)
 
-        for article in articles:
-            if not article.full_text_available and article.pdf_url:
-                try:
-                    article.full_text = await self.pdf_client.get_pdf_content(article.pdf_url)
-                    article.full_text_available = bool(article.full_text)
-                except Exception as e:
-                    print(f"Error fetching PDF content for {article.pdf_url}: {e}")
+        pdf_deadline = new_pdf_deadline()
+        await enrich_articles_with_pdfs(articles, self.pdf_client, deadline=pdf_deadline)
 
         try:
-            openalex_articles = await self.openalex.search_directly(query, max_results=int(max_results*0.6))
+            openalex_articles = await self.openalex.search_directly(
+                query,
+                max_results=int(max_results*0.6),
+                pdf_deadline=pdf_deadline,
+            )
         except Exception as exc:
             self._source_failed("OpenAlex", "search", exc)
             openalex_articles = []

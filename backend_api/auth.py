@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import jwt
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from jwt import InvalidTokenError
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
@@ -16,6 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
 from .database import RefreshToken, User, db_session
+from .limits import (
+    LOGIN_IP_LIMIT,
+    LOGIN_USER_LIMIT,
+    REGISTER_LIMIT,
+    client_identity,
+    enforce_rate_limit,
+    username_identity,
+)
 
 from dotenv import load_dotenv
 
@@ -160,7 +168,12 @@ async def current_user(
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(credentials: Credentials, db: AsyncSession = Depends(db_session)) -> TokenResponse:
+async def register(
+    credentials: Credentials,
+    request: Request,
+    db: AsyncSession = Depends(db_session),
+) -> TokenResponse:
+    await enforce_rate_limit("register", client_identity(request), REGISTER_LIMIT)
     username = credentials.username.strip()
     if not username:
         raise HTTPException(status_code=422, detail="username is required")
@@ -179,8 +192,14 @@ async def register(credentials: Credentials, db: AsyncSession = Depends(db_sessi
 
 
 @router.post("/token", response_model=TokenResponse)
-async def token(credentials: Credentials, db: AsyncSession = Depends(db_session)) -> TokenResponse:
+async def token(
+    credentials: Credentials,
+    request: Request,
+    db: AsyncSession = Depends(db_session),
+) -> TokenResponse:
     username = credentials.username.strip()
+    await enforce_rate_limit("login-ip", client_identity(request), LOGIN_IP_LIMIT)
+    await enforce_rate_limit("login-user", username_identity(username), LOGIN_USER_LIMIT)
     user = await db.scalar(select(User).where(User.username == username))
     if user is None:
         hash_password(credentials.password)

@@ -41,11 +41,21 @@ type Worker struct {
 
 	pendingMu sync.Mutex
 	writeMu   sync.Mutex
-	pending   map[string]chan Response
+	pending   map[string]*pendingRequest
 
 	nextID atomic.Uint64
 	done   chan struct{}
 	err    error
+
+	closeOnce sync.Once
+	closeErr  error
+}
+
+type pendingRequest struct {
+	ctx        context.Context
+	cancel     context.CancelFunc
+	cancelSent bool
+	ch         chan Response
 }
 
 type workerInitInput struct {
@@ -172,7 +182,7 @@ func StartPythonWorker() (*Worker, error) {
 		cmd:     cmd,
 		stdin:   stdin,
 		scanner: scanner,
-		pending: make(map[string]chan Response),
+		pending: make(map[string]*pendingRequest),
 		done:    make(chan struct{}),
 	}
 
@@ -218,16 +228,20 @@ func (w *Worker) readLoop() {
 		}
 
 		w.pendingMu.Lock()
-		ch := w.pending[resp.ID]
+		pending := w.pending[resp.ID]
 		if resp.Done {
 			delete(w.pending, resp.ID)
 		}
 		w.pendingMu.Unlock()
 
-		if ch != nil {
-			ch <- resp
+		if pending != nil {
+			select {
+			case pending.ch <- resp:
+			case <-pending.ctx.Done():
+			}
 			if resp.Done {
-				close(ch)
+				close(pending.ch)
+				pending.cancel()
 			}
 		}
 	}
@@ -239,17 +253,22 @@ func (w *Worker) readLoop() {
 	}
 
 	w.pendingMu.Lock()
-	for id, ch := range w.pending {
-		delete(w.pending, id)
-		ch <- Response{
+	pending := w.pending
+	w.pending = make(map[string]*pendingRequest)
+	w.pendingMu.Unlock()
+	for id, request := range pending {
+		select {
+		case request.ch <- Response{
 			ID:    id,
 			OK:    false,
 			Error: w.err.Error(),
 			Done:  true,
+		}:
+		default:
 		}
-		close(ch)
+		close(request.ch)
+		request.cancel()
 	}
-	w.pendingMu.Unlock()
 }
 
 func (w *Worker) Call(ctx context.Context, action string, input any) (Response, error) {
@@ -284,11 +303,15 @@ func (w *Worker) Stream(ctx context.Context, action string, input any) (<-chan R
 
 func (w *Worker) call(ctx context.Context, action string, input any, buffer int) (chan Response, error) {
 	id := strconv.FormatUint(w.nextID.Add(1), 10)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	requestCtx, cancel := context.WithCancel(ctx)
 
 	ch := make(chan Response, buffer)
 
 	w.pendingMu.Lock()
-	w.pending[id] = ch
+	w.pending[id] = &pendingRequest{ctx: requestCtx, cancel: cancel, ch: ch}
 	w.pendingMu.Unlock()
 
 	req := Request{
@@ -303,21 +326,52 @@ func (w *Worker) call(ctx context.Context, action string, input any, buffer int)
 		return nil, err
 	}
 
-	w.writeMu.Lock()
-	_, err = fmt.Fprintln(w.stdin, string(data))
-	w.writeMu.Unlock()
+	err = w.write(data)
 
 	if err != nil {
 		w.removePending(id)
 		return nil, err
 	}
 
+	go w.cancelOnContext(id, requestCtx)
+
 	select {
 	case <-ctx.Done():
-		w.removePending(id)
-		return nil, ctx.Err()
+		return ch, nil
 	default:
 		return ch, nil
+	}
+}
+
+func (w *Worker) write(data []byte) error {
+	w.writeMu.Lock()
+	defer w.writeMu.Unlock()
+	_, err := fmt.Fprintln(w.stdin, string(data))
+	return err
+}
+
+func (w *Worker) cancelOnContext(id string, ctx context.Context) {
+	<-ctx.Done()
+	w.cancelRequest(id)
+}
+
+func (w *Worker) cancelRequest(id string) {
+	w.pendingMu.Lock()
+	pending := w.pending[id]
+	if pending == nil || pending.cancelSent {
+		w.pendingMu.Unlock()
+		return
+	}
+	pending.cancelSent = true
+	w.pendingMu.Unlock()
+
+	data, err := json.Marshal(Request{
+		ID:     strconv.FormatUint(w.nextID.Add(1), 10),
+		Action: "worker/cancel",
+		Input:  map[string]string{"request_id": id},
+	})
+	if err == nil {
+		_ = w.write(data)
 	}
 }
 
@@ -506,17 +560,47 @@ func (w *Worker) RunProfilerForChatSession(ctx context.Context, userid string, c
 
 func (w *Worker) removePending(id string) {
 	w.pendingMu.Lock()
+	pending := w.pending[id]
 	delete(w.pending, id)
 	w.pendingMu.Unlock()
+	if pending != nil {
+		pending.cancel()
+	}
 }
 
 func (w *Worker) Close() error {
-	_ = w.stdin.Close()
-
-	if w.cmd.Process != nil {
-		_ = w.cmd.Process.Kill()
+	if w == nil {
+		return nil
 	}
+	w.closeOnce.Do(func() {
+		w.pendingMu.Lock()
+		ids := make([]string, 0, len(w.pending))
+		requests := make([]*pendingRequest, 0, len(w.pending))
+		for id, pending := range w.pending {
+			ids = append(ids, id)
+			requests = append(requests, pending)
+		}
+		w.pendingMu.Unlock()
+		for _, pending := range requests {
+			pending.cancel()
+		}
+		for _, id := range ids {
+			w.cancelRequest(id)
+		}
 
-	<-w.done
-	return nil
+		if w.stdin != nil {
+			_ = w.stdin.Close()
+		}
+		if w.done != nil {
+			select {
+			case <-w.done:
+				return
+			case <-time.After(2 * time.Second):
+			}
+		}
+		if w.cmd != nil && w.cmd.Process != nil {
+			w.closeErr = w.cmd.Process.Kill()
+		}
+	})
+	return w.closeErr
 }

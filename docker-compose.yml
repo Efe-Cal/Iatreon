@@ -1,6 +1,21 @@
 services:
   redis:
     image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pdf-egress-proxy:
+    build:
+      context: .
+      dockerfile: pdf_worker/Dockerfile.proxy
+    healthcheck:
+      test: ["CMD", "squid", "-k", "check", "-f", "/etc/squid/squid.conf"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   pdf-api:
     build:
@@ -10,9 +25,8 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
     depends_on:
-      - redis
-    ports:
-      - "127.0.0.1:8000:8000"
+      redis:
+        condition: service_healthy
     volumes:
       - downloads:/app/downloads
     command: ["uvicorn", "pdf_worker.api:app", "--host", "0.0.0.0", "--port", "8000"]
@@ -24,11 +38,16 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      PDF_EGRESS_PROXY_URL: http://pdf-egress-proxy:3128
+      PDF_MAX_DOWNLOAD_BYTES: ${PDF_MAX_DOWNLOAD_BYTES:-104857600}
+      PDF_JOB_DIR_TTL_SECONDS: ${PDF_JOB_DIR_TTL_SECONDS:-3600}
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+      pdf-egress-proxy:
+        condition: service_healthy
     volumes:
       - downloads:/app/downloads
-      - worker-profile:/app/pdf_worker/chrome_profile
 
   backend-api:
     build:
@@ -37,8 +56,33 @@ services:
     environment:
       HCAI_API_KEY: ${HCAI_API_KEY}
       JWT_SECRET: ${JWT_SECRET}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-604800}
       REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-2592000}
+      HCAI_MAX_REQUEST_BYTES: ${HCAI_MAX_REQUEST_BYTES:-2097152}
+      HCAI_CONNECT_TIMEOUT_SECONDS: ${HCAI_CONNECT_TIMEOUT_SECONDS:-10}
+      HCAI_WRITE_TIMEOUT_SECONDS: ${HCAI_WRITE_TIMEOUT_SECONDS:-30}
+      HCAI_POOL_TIMEOUT_SECONDS: ${HCAI_POOL_TIMEOUT_SECONDS:-10}
+      HCAI_READ_TIMEOUT_SECONDS: ${HCAI_READ_TIMEOUT_SECONDS:-300}
+      BACKUP_MAX_BYTES: ${BACKUP_MAX_BYTES:-536870912}
+      BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-5}
+      BACKEND_REGISTER_RATE_COUNT: ${BACKEND_REGISTER_RATE_COUNT:-5}
+      BACKEND_REGISTER_RATE_WINDOW_SECONDS: ${BACKEND_REGISTER_RATE_WINDOW_SECONDS:-3600}
+      BACKEND_LOGIN_IP_RATE_COUNT: ${BACKEND_LOGIN_IP_RATE_COUNT:-10}
+      BACKEND_LOGIN_IP_RATE_WINDOW_SECONDS: ${BACKEND_LOGIN_IP_RATE_WINDOW_SECONDS:-60}
+      BACKEND_LOGIN_USER_RATE_COUNT: ${BACKEND_LOGIN_USER_RATE_COUNT:-5}
+      BACKEND_LOGIN_USER_RATE_WINDOW_SECONDS: ${BACKEND_LOGIN_USER_RATE_WINDOW_SECONDS:-300}
+      BACKEND_HCAI_RATE_COUNT: ${BACKEND_HCAI_RATE_COUNT:-60}
+      BACKEND_HCAI_RATE_WINDOW_SECONDS: ${BACKEND_HCAI_RATE_WINDOW_SECONDS:-60}
+      BACKEND_HCAI_MAX_ACTIVE: ${BACKEND_HCAI_MAX_ACTIVE:-3}
+      BACKEND_PDF_RATE_COUNT: ${BACKEND_PDF_RATE_COUNT:-30}
+      BACKEND_PDF_RATE_WINDOW_SECONDS: ${BACKEND_PDF_RATE_WINDOW_SECONDS:-3600}
+      BACKEND_PDF_MAX_ACTIVE: ${BACKEND_PDF_MAX_ACTIVE:-3}
+      BACKEND_BACKUP_RATE_COUNT: ${BACKEND_BACKUP_RATE_COUNT:-3}
+      BACKEND_BACKUP_RATE_WINDOW_SECONDS: ${BACKEND_BACKUP_RATE_WINDOW_SECONDS:-3600}
+      BACKEND_BACKUP_MAX_ACTIVE: ${BACKEND_BACKUP_MAX_ACTIVE:-1}
+      BACKEND_ACTIVE_LEASE_SECONDS: ${BACKEND_ACTIVE_LEASE_SECONDS:-600}
       BACKEND_API_DB_URL: postgresql+asyncpg://backend_api:backend_api@backend-db:5432/backend_api
       PDF_WORKER_BASE_URL: http://pdf-api:8000
       R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
@@ -46,6 +90,8 @@ services:
       R2_ENDPOINT_URL: ${R2_ENDPOINT_URL}
       R2_BUCKET_NAME: ${R2_BUCKET_NAME}
     depends_on:
+      redis:
+        condition: service_healthy
       backend-db:
         condition: service_healthy
       pdf-api:
@@ -71,5 +117,4 @@ services:
 
 volumes:
   downloads:
-  worker-profile:
   backend-api-data:

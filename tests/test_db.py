@@ -2,6 +2,10 @@ import base64
 import uuid
 import unittest
 
+import pytest
+
+pytest.importorskip("db.crypto", reason="The legacy server database was removed; local storage is tested separately.")
+
 from db.crypto import (
     decrypt_json,
     encrypt_json,

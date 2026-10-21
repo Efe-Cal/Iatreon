@@ -672,6 +672,14 @@ async def handle_message(msg: dict) -> None:
             "error_code": "backend_auth_unavailable",
             "done": True,
         })
+    except NotFoundError:
+        emit({
+            "id": request_id,
+            "ok": False,
+            "error": "Not found",
+            "error_code": "not_found",
+            "done": True,
+        })
     except Exception:
         emit({
             "id": request_id,
@@ -681,12 +689,63 @@ async def handle_message(msg: dict) -> None:
         })
 
 
+async def _run_request(msg: dict) -> None:
+    try:
+        await handle_message(msg)
+    except asyncio.CancelledError:
+        emit({
+            "id": msg.get("id"),
+            "ok": False,
+            "error": "Request cancelled",
+            "error_code": "cancelled",
+            "done": True,
+        })
+        raise
+
+
+def _emit_cancel_control_response(request_id, target_id: str, cancelled: bool) -> None:
+    emit({
+        "id": request_id,
+        "ok": True,
+        "result": {"request_id": target_id, "cancelled": cancelled},
+        "done": True,
+    })
+
+
 async def main():
+    read_task = asyncio.create_task(asyncio.to_thread(sys.stdin.readline))
+    active_task: asyncio.Task | None = None
+    active_request_id: str | None = None
+
     while True:
-        line = await asyncio.to_thread(sys.stdin.readline)
+        wait_for = {read_task}
+        if active_task is not None:
+            wait_for.add(active_task)
+        done, _ = await asyncio.wait(wait_for, return_when=asyncio.FIRST_COMPLETED)
+
+        if active_task in done:
+            try:
+                active_task.result()
+            except asyncio.CancelledError:
+                pass
+            active_task = None
+            active_request_id = None
+
+        if read_task not in done:
+            continue
+
+        line = read_task.result()
 
         if not line:
+            if active_task is not None:
+                active_task.cancel()
+                try:
+                    await active_task
+                except asyncio.CancelledError:
+                    pass
             break
+
+        read_task = asyncio.create_task(asyncio.to_thread(sys.stdin.readline))
 
         line = line.strip()
         if not line:
@@ -694,7 +753,32 @@ async def main():
 
         try:
             msg = json.loads(line)
-            await handle_message(msg)
+            if msg.get("action") == "worker/cancel":
+                target_id = str((msg.get("input") or {}).get("request_id") or "")
+                cancelled = bool(
+                    target_id
+                    and active_task is not None
+                    and not active_task.done()
+                    and target_id == active_request_id
+                )
+                if cancelled:
+                    active_task.cancel()
+                _emit_cancel_control_response(msg.get("id"), target_id, cancelled)
+                continue
+
+            if active_task is not None and not active_task.done():
+                emit({
+                    "id": msg.get("id"),
+                    "ok": False,
+                    "error": "Worker is busy",
+                    "error_code": "busy",
+                    "done": True,
+                })
+                continue
+
+            active_request_id = str(msg.get("id") or "")
+            active_task = asyncio.create_task(_run_request(msg))
+            await asyncio.sleep(0)
         except Exception:
             emit({
                 "id": None,

@@ -1,3 +1,6 @@
+import asyncio
+from pathlib import Path
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -47,6 +50,48 @@ async def no_sleep(_seconds):
 
 
 class PDFUtilsV2Tests(unittest.IsolatedAsyncioTestCase):
+    async def test_cancelled_parse_keeps_input_and_serializes_next_parse(self):
+        started = threading.Event()
+        finish = threading.Event()
+        second_started = threading.Event()
+        paths = []
+
+        def parse(path):
+            paths.append(Path(path))
+            if len(paths) == 1:
+                started.set()
+                if not finish.wait(5):
+                    raise TimeoutError("test parser was not released")
+            else:
+                second_started.set()
+            self.assertTrue(Path(path).is_file())
+            return "extracted text"
+
+        async def download(*args):
+            return b"%PDF fake"
+
+        with (
+            patch("context.processing.pdf_utils_v2.httpx.AsyncClient", return_value=FakeAsyncClient()),
+            patch.object(PDFClient, "download_pdf", side_effect=download),
+            patch.object(PDFClient, "extract_text_from_pdf_liteparse", side_effect=parse),
+        ):
+            first = asyncio.create_task(PDFClient().get_pdf_content("https://example.com/first.pdf"))
+            second = None
+            try:
+                self.assertTrue(await asyncio.to_thread(started.wait, 5))
+                first.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await first
+                self.assertTrue(paths[0].is_file())
+                second = asyncio.create_task(PDFClient().get_pdf_content("https://example.com/second.pdf"))
+                self.assertFalse(await asyncio.to_thread(second_started.wait, 0.05))
+                finish.set()
+                self.assertEqual(await second, "extracted text")
+                self.assertTrue(all(not path.exists() for path in paths))
+            finally:
+                finish.set()
+                await asyncio.gather(first, *([second] if second else []), return_exceptions=True)
+
     async def get_content(self, client):
         with patch("context.processing.pdf_utils_v2.httpx.AsyncClient", return_value=client):
             return await PDFClient().get_pdf_content("https://example.com/article.pdf")

@@ -51,6 +51,8 @@ type chatModel struct {
 	history          []messageItem
 	streamingMessage string
 	isStreaming      bool
+	streamCancel     context.CancelFunc
+	streamGeneration uint64
 
 	exit_chat bool
 	width     int
@@ -431,6 +433,7 @@ type chunkMsg struct {
 	conversationID    string
 	recoverable       bool
 	authRequired      bool
+	streamID          uint64
 	ch                chan chunkMsg
 	toolMessage
 }
@@ -445,77 +448,119 @@ func continueFromAgent(agentKind AgentKind) tea.Cmd {
 	}
 }
 
-func waitForChunk(ch chan chunkMsg) tea.Cmd {
+func waitForChunk(ch chan chunkMsg, streamID uint64) tea.Cmd {
 	return func() tea.Msg {
 		if ch == nil {
-			return chunkMsg{done: true}
+			return chunkMsg{done: true, streamID: streamID}
 		}
 		msg, ok := <-ch
 		if !ok {
-			return chunkMsg{done: true}
+			return chunkMsg{done: true, streamID: streamID}
 		}
 		return msg
 	}
 }
 
-func (m *chatModel) streamMessage(agent AgentHandler, conversationID, userid, msg string) tea.Cmd {
+func (m *chatModel) startStream(agent AgentHandler, conversationID, userid, msg string) tea.Cmd {
+	m.streamGeneration++
+	streamID := m.streamGeneration
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	m.streamCancel = cancel
+	if len(m.footerActions) > 1 {
+		m.UpdateFooter("Esc Cancel", 1)
+	}
+	return m.streamMessage(ctx, streamID, agent, conversationID, userid, msg)
+}
+
+func (m *chatModel) stopStream() {
+	if m.streamCancel != nil {
+		m.streamCancel()
+		m.streamCancel = nil
+	}
+	if m.agent != nil {
+		m.footerActions = m.agent.Footer()
+	}
+}
+
+func (m *chatModel) streamMessage(ctx context.Context, streamID uint64, agent AgentHandler, conversationID, userid, msg string) tea.Cmd {
 	return func() tea.Msg {
-		ch := make(chan chunkMsg)
+		ch := make(chan chunkMsg, 1)
 		go func() {
 			defer close(ch)
+			send := func(out chunkMsg) bool {
+				out.streamID = streamID
+				select {
+				case ch <- out:
+					return true
+				case <-ctx.Done():
+					return false
+				}
+			}
 
 			if m.worker == nil {
-				ch <- chunkMsg{err: fmt.Errorf("python worker is not available")}
+				_ = send(chunkMsg{err: fmt.Errorf("python worker is not available")})
 				return
 			}
 
 			responses, err := m.worker.Stream(
-				context.Background(),
+				ctx,
 				agent.Action(),
 				agent.BuildInput(conversationID, userid, msg, m.sessionID),
 			)
 			if err != nil {
-				ch <- chunkMsg{err: err}
+				_ = send(chunkMsg{err: err})
 				return
 			}
 
 			for resp := range responses {
 				if !resp.OK {
-					ch <- chunkMsg{
+					if resp.ErrorCode == "cancelled" {
+						_ = send(chunkMsg{done: true})
+						return
+					}
+					_ = send(chunkMsg{
 						err:          fmt.Errorf("%s", resp.Error),
 						authRequired: resp.ErrorCode == "backend_auth_required",
 						recoverable:  resp.ErrorCode == "backend_auth_unavailable",
-					}
+					})
 					return
 				}
 				if len(resp.Event) == 0 {
 					if resp.Done {
-						ch <- chunkMsg{done: true}
+						_ = send(chunkMsg{done: true})
 						return
 					}
 					continue
 				}
 				var ev sseEvent
 				if err := json.Unmarshal(resp.Event, &ev); err != nil {
-					ch <- chunkMsg{content: string(resp.Event), ch: ch}
+					if !send(chunkMsg{content: string(resp.Event), ch: ch}) {
+						return
+					}
 					continue
 				}
 
 				out := agent.HandleEvent(ev)
 				out.recoverable = ev.Recoverable
 				if out.done || out.err != nil {
-					ch <- out
+					_ = send(out)
 					return
 				}
 				if out.content != "" || out.toolMessage.toolID != "" || out.sessionID != "" || out.conversationID != "" {
 					out.ch = ch
-					ch <- out
+					if !send(out) {
+						return
+					}
 				}
 			}
-			ch <- chunkMsg{done: true}
+			_ = send(chunkMsg{done: true})
 		}()
 
-		return <-ch
+		msg, ok := <-ch
+		if !ok {
+			return chunkMsg{done: true, streamID: streamID}
+		}
+		return msg
 	}
 }
 
@@ -542,6 +587,9 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		return *m, tea.Batch(cmds...)
 
 	case chunkMsg:
+		if msg.streamID != 0 && msg.streamID != m.streamGeneration {
+			return *m, nil
+		}
 		if msg.sessionID != "" {
 			m.sessionID = msg.sessionID
 		}
@@ -549,9 +597,10 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			m.conversationID = msg.conversationID
 		}
 		if msg.err == nil && !msg.done && msg.content == "" && msg.toolMessage.toolID == "" {
-			return *m, waitForChunk(msg.ch)
+			return *m, waitForChunk(msg.ch, msg.streamID)
 		}
 		if msg.err != nil {
+			m.stopStream()
 			m.addStreamingMsgToHistory()
 			if msg.authRequired {
 				m.authRequired = true
@@ -569,6 +618,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			return *m, nil
 		}
 		if msg.done {
+			m.stopStream()
 			m.addStreamingMsgToHistory()
 			if msg.report != "" {
 				m.report = msg.report
@@ -619,7 +669,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			}
 		}
 		m.refreshViewport(true)
-		return *m, waitForChunk(msg.ch)
+		return *m, waitForChunk(msg.ch, msg.streamID)
 
 	case continueAgent:
 		switch msg.agentKind {
@@ -642,6 +692,16 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 
 	case tea.KeyMsg:
 		if m.isStreaming {
+			if msg.String() == "esc" {
+				m.addStreamingMsgToHistory()
+				m.history = append(m.history, messageItem{role: "system", text: "Request cancelled."})
+				m.isStreaming = false
+				m.streamGeneration++
+				m.stopStream()
+				m.input.Focus()
+				m.refreshViewport(true)
+				return *m, nil
+			}
 			// Let viewport keep scrolling (pgup/pgdown) but ignore typing.
 			m.viewport, cmd = m.viewport.Update(msg)
 			cmds = append(cmds, cmd)
@@ -655,7 +715,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 				m.history = append(m.history, messageItem{role: "system", text: "Retrying..."})
 				m.isStreaming = true
 				m.refreshViewport(true)
-				return *m, m.streamMessage(m.agent, m.conversationID, m.userid, m.retryMessage)
+				return *m, m.startStream(m.agent, m.conversationID, m.userid, m.retryMessage)
 			}
 			m.retryWithEnter = false
 			if m.invokeAgentWithEnter {
@@ -665,7 +725,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 				m.refreshViewport(true)
 				m.retryMessage = ""
 				return *m, tea.Batch(
-					m.streamMessage(m.agent, m.conversationID, m.userid, ""),
+					m.startStream(m.agent, m.conversationID, m.userid, ""),
 					m.spinner.Tick,
 				)
 			}
@@ -677,7 +737,7 @@ func (m *chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			m.retryMessage = text
 			m.isStreaming = true
 			m.refreshViewport(true)
-			cmds = append(cmds, m.streamMessage(m.agent, m.conversationID, m.userid, text))
+			cmds = append(cmds, m.startStream(m.agent, m.conversationID, m.userid, text))
 			cmds = append(cmds, m.spinner.Tick)
 			return *m, tea.Batch(cmds...)
 		case "esc":

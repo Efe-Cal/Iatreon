@@ -5,6 +5,10 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
+pytest.importorskip("legacy_api", reason="The legacy server API was removed.")
+
 from fastapi import HTTPException
 
 

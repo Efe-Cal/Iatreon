@@ -28,7 +28,6 @@ async def run_inference(summary: str) -> str:
     messages = [{"role": "user", "content": user_message}]
     try:
         response = await inference_agent.ainvoke({"messages": messages})
-        logging.debug(f"Inference agent response: {response}")
         return _content_to_text(response["messages"][-1].content)
     except Exception:
         logging.exception("Inference agent failed.")

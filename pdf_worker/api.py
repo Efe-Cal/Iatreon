@@ -18,6 +18,9 @@ redis_conn = Redis(
 
 queue = Queue("default", connection=redis_conn)
 
+JOB_TIMEOUT_SECONDS = 180
+JOB_TTL_SECONDS = 60 * 60
+
 
 class ScrapePDFRequest(BaseModel):
     pdf_url: str
@@ -28,7 +31,10 @@ def scrape_pdf(request: ScrapePDFRequest):
     try:
         job = queue.enqueue(
             "pdf_worker.jobs.fetch_pdf",
-            request.pdf_url
+            request.pdf_url,
+            job_timeout=JOB_TIMEOUT_SECONDS,
+            result_ttl=JOB_TTL_SECONDS,
+            failure_ttl=JOB_TTL_SECONDS,
         )
     except RedisError as exc:
         raise HTTPException(status_code=503, detail="PDF queue unavailable") from exc

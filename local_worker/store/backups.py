@@ -8,6 +8,13 @@ from local_worker.store.database import sqlcipher
 from local_worker.store.backend_session import backend_api_url, get_backend_session
 
 
+def _http_timeout():
+    # Imported lazily so the backup creation path does not need HTTPX.
+    import httpx
+
+    return httpx.Timeout(connect=10, write=30, pool=10, read=300)
+
+
 def calculate_sha256(path: Path) -> str:
     digest = hashlib.sha256()
 
@@ -74,44 +81,27 @@ async def upload_backup(backup_path: Path, user_id: str, checksum: str) -> None:
 
     headers = {"Authorization": f"Bearer {access_token}"}
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(api_url, headers=headers, timeout=30)
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"Failed to request backup upload: {response.status_code} {response.text}"
-            )
-        upload_url_request = response.json()
-        upload_url = upload_url_request["upload_url"]
-        backup_id = upload_url_request["backup_id"]
+    async def file_chunks():
+        with backup_path.open("rb") as file:
+            while chunk := await asyncio.to_thread(file.read, 1024 * 1024):
+                yield chunk
 
-        async def file_chunks():
-            with backup_path.open("rb") as file:
-                while chunk := await asyncio.to_thread(file.read, 1024 * 1024):
-                    yield chunk
-
-        upload_headers = {
-            "Content-Type": "application/octet-stream",
-            "Content-Length": str(backup_path.stat().st_size),
-        }
-        response = await client.put(
-            upload_url,
-            content=file_chunks(),
-            headers=upload_headers,
-            timeout=300,
-        )
-        if response.status_code != 200:
-            raise RuntimeError(f"Failed to upload backup: {response.status_code} {response.text}")
-
-        response = await client.post(
-            api_url + f"/{backup_id}/complete",
-            json={"checksum": checksum},
-            headers=headers,
-            timeout=30,
-        )
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"Failed to complete backup upload: {response.status_code} {response.text}"
-            )
+    upload_headers = {
+        **headers,
+        "Content-Type": "application/octet-stream",
+        "Content-Length": str(backup_path.stat().st_size),
+        "X-Backup-Checksum": checksum,
+    }
+    async with httpx.AsyncClient(timeout=_http_timeout()) as client:
+        response = await client.put(api_url, content=file_chunks(), headers=upload_headers)
+    if response.status_code != 200:
+        raise RuntimeError(f"Failed to upload backup: {response.status_code} {response.text}")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError("Backup upload returned an invalid response") from exc
+    if payload.get("checksum") != checksum or not payload.get("backup_id"):
+        raise RuntimeError("Backup upload returned an invalid response")
 
 
 async def download_backup(backup_id: str, user_id: str, destination_path: Path) -> None:
@@ -124,8 +114,8 @@ async def download_backup(backup_id: str, user_id: str, destination_path: Path) 
 
     headers = {"Authorization": f"Bearer {access_token}"}
 
-    async with httpx.AsyncClient() as client:
-        response = await client.get(api_url, headers=headers, timeout=30)
+    async with httpx.AsyncClient(timeout=_http_timeout()) as client:
+        response = await client.get(api_url, headers=headers)
         if response.status_code != 200:
             raise RuntimeError(
                 f"Failed to request backup download: {response.status_code} {response.text}"
@@ -133,13 +123,17 @@ async def download_backup(backup_id: str, user_id: str, destination_path: Path) 
         download_url_request = response.json()
         download_url = download_url_request["download_url"]
 
-        response = await client.get(download_url, timeout=300)
-        if response.status_code != 200:
-            raise RuntimeError(f"Failed to download backup: {response.status_code} {response.text}")
-
         destination_path.parent.mkdir(parents=True, exist_ok=True)
-        with destination_path.open("wb") as file:
-            file.write(response.content)
+        try:
+            async with client.stream("GET", download_url) as response:
+                if response.status_code != 200:
+                    raise RuntimeError(f"Failed to download backup: {response.status_code} {response.text}")
+                with destination_path.open("wb") as file:
+                    async for chunk in response.aiter_bytes(1024 * 1024):
+                        file.write(chunk)
+        except Exception:
+            destination_path.unlink(missing_ok=True)
+            raise
 
     checksum = calculate_sha256(destination_path)
     if checksum != download_url_request["checksum"]:

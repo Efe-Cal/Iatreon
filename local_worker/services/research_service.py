@@ -14,9 +14,14 @@ async def stream_research(req: ResearchRequest) -> AsyncIterable:
     session_id = req.session_id
     research_effort: ResearchEffort = req.research_effort
 
-    intake_record = store.get_intake(str(intake_id))
+    intake_record = store.get_intake(str(user_id), str(intake_id))
     if not intake_record:
         raise NotFoundError("Intake session not found.")
+    if session_id:
+        chat_session = store.get_chat_session_data(str(user_id), str(session_id))
+        linked_intake = chat_session.get("intake_session") if chat_session else None
+        if not linked_intake or str(linked_intake["id"]) != str(intake_id):
+            raise NotFoundError("Chat session with linked intake not found.")
 
     profile = intake_record.get("profile") or {}
     intake_session = IntakeSessionData(
@@ -67,7 +72,7 @@ async def stream_research(req: ResearchRequest) -> AsyncIterable:
 async def get_citation_text(req: CitationTextRequest) -> str:
     research_session_id = req.research_session_id
     citation_num = req.citation_num
-    local_text = store.get_citation_text(str(research_session_id), citation_num)
+    local_text = store.get_citation_text(str(req.user_id), str(research_session_id), citation_num)
     if local_text:
         return local_text
     raise NotFoundError("Citation not found.")

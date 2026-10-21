@@ -8,6 +8,7 @@ import requests
 
 from .pmc import PMCClient
 from ..processing.pdf_utils_v2 import PDFClient
+from ..processing.pdf_enrichment import enrich_articles_with_pdfs, new_pdf_deadline
 from ..processing.ranking import QualityRanker
 from ..models import Article
 from ..config import RATE_LIMIT_DELAY
@@ -67,7 +68,13 @@ class OpenAlexClient:
         return articles
        
 
-    async def search_directly(self, query: str, max_results: int = 10, semantic: bool = False) -> list[Article]:
+    async def search_directly(
+        self,
+        query: str,
+        max_results: int = 10,
+        semantic: bool = False,
+        pdf_deadline: float | None = None,
+    ) -> list[Article]:
         # print(f"\n[OpenAlex] Direct search: '{query}'")
 
         params = {
@@ -125,20 +132,6 @@ class OpenAlexClient:
                     a.full_text_available = bool(a.full_text)
                     a.source = "PMC XML Fetch"
 
-            if a.pdf_url and not a.full_text_available:
-                try:
-                    a.full_text = await self.pdf_client.get_pdf_content(a.pdf_url)
-                    a.full_text_available = bool(a.full_text)
-                except Exception as e:
-                    # print(f"[OpenAlex] PDF fetch failed for {a.pdf_url}: {e}")
-                    a.full_text = None
-                    a.full_text_available = False
-
-                if not a.full_text_available:
-                    a.source = "PDF Download Failed"
-                    if a.abstract:
-                        a.source += " (has abstract)"
-                
             for auth in item.get("authorships", [])[:5]:
                 name = auth.get("author", {}).get("display_name", "")
                 if name:
@@ -152,7 +145,17 @@ class OpenAlexClient:
             
             a.quality_score = quality_ranker.score(a)
             articles.append(a)
-        
+
+        await enrich_articles_with_pdfs(
+            articles,
+            self.pdf_client,
+            deadline=pdf_deadline if pdf_deadline is not None else new_pdf_deadline(),
+        )
+        for article in articles:
+            if article.pdf_url and not article.full_text_available:
+                article.source = "PDF Download Failed"
+                if article.abstract:
+                    article.source += " (has abstract)"
         return articles
 
     def _fetch_by_doi(self, doi: str) -> Optional[dict]:

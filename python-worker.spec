@@ -5,6 +5,7 @@ hiddenimports = []
 hiddenimports += collect_submodules('langchain_core')
 hiddenimports += collect_submodules('langgraph')
 hiddenimports += collect_submodules('pydantic')
+hiddenimports += collect_submodules('tiktoken_ext')
 
 
 a = Analysis(

@@ -4,14 +4,15 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, HttpUrl
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.background import BackgroundTask
 from starlette.responses import StreamingResponse
 
 from .auth import current_user
 from .database import PDFJob, User, db_session
+from .limits import PDF_LIMIT, PDF_MAX_ACTIVE, acquire_active_limit, enforce_rate_limit
 
 
 router = APIRouter(prefix="/api/v1/pdf", tags=["pdf"])
+HTTP_TIMEOUT = httpx.Timeout(connect=10, write=30, pool=10, read=300)
 
 
 class PDFJobRequest(BaseModel):
@@ -36,7 +37,7 @@ async def _owned_job(job_id: str, user: User, db: AsyncSession) -> PDFJob:
 
 async def _worker_request(method: str, path: str, **kwargs) -> httpx.Response:
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
             response = await client.request(method, f"{_worker_url()}{path}", **kwargs)
     except (httpx.HTTPError, OSError) as exc:
         raise HTTPException(status_code=503, detail="PDF service unavailable") from exc
@@ -51,17 +52,22 @@ async def create_job(
     user: User = Depends(current_user),
     db: AsyncSession = Depends(db_session),
 ) -> PDFJobResponse:
-    response = await _worker_request("POST", "/scrape_pdf/", json={"pdf_url": str(payload.pdf_url)})
-    if response.status_code != 202:
-        raise HTTPException(status_code=503, detail="PDF service unavailable")
+    await enforce_rate_limit("pdf", user.id, PDF_LIMIT)
+    lease = await acquire_active_limit("pdf", user.id, PDF_MAX_ACTIVE)
     try:
-        data = response.json()
-        job_id = str(data["job_id"])
-    except (ValueError, KeyError, TypeError) as exc:
-        raise HTTPException(status_code=503, detail="PDF service unavailable") from exc
-    db.add(PDFJob(job_id=job_id, user_id=user.id))
-    await db.commit()
-    return PDFJobResponse(job_id=job_id, status="queued")
+        response = await _worker_request("POST", "/scrape_pdf/", json={"pdf_url": str(payload.pdf_url)})
+        if response.status_code != 202:
+            raise HTTPException(status_code=503, detail="PDF service unavailable")
+        try:
+            data = response.json()
+            job_id = str(data["job_id"])
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(status_code=503, detail="PDF service unavailable") from exc
+        db.add(PDFJob(job_id=job_id, user_id=user.id))
+        await db.commit()
+        return PDFJobResponse(job_id=job_id, status="queued")
+    finally:
+        await lease.release()
 
 
 @router.get("/jobs/{job_id}", response_model=PDFJobResponse)
@@ -96,34 +102,43 @@ async def job_content(
     if status_response.status != "finished":
         raise HTTPException(status_code=409, detail="PDF job is not finished")
 
-    client = httpx.AsyncClient(timeout=30)
+    lease = await acquire_active_limit("pdf-content", user.id, PDF_MAX_ACTIVE)
+    client = httpx.AsyncClient(timeout=HTTP_TIMEOUT)
     try:
         response = await client.send(
             client.build_request("GET", f"{_worker_url()}/download/{job_id}"), stream=True
         )
     except (httpx.HTTPError, OSError) as exc:
         await client.aclose()
+        await lease.release()
         raise HTTPException(status_code=503, detail="PDF service unavailable") from exc
     if response.status_code == 410:
         await response.aclose()
         await client.aclose()
+        await lease.release()
         raise HTTPException(status_code=410, detail="PDF job expired")
     if response.status_code == 503:
         await response.aclose()
         await client.aclose()
+        await lease.release()
         raise HTTPException(status_code=503, detail="PDF service unavailable")
     if response.status_code != 200:
         await response.aclose()
         await client.aclose()
+        await lease.release()
         raise HTTPException(status_code=409, detail="PDF job is not finished")
 
-    async def close() -> None:
-        await response.aclose()
-        await client.aclose()
+    async def stream_content():
+        try:
+            async for chunk in response.aiter_raw():
+                yield chunk
+        finally:
+            await response.aclose()
+            await client.aclose()
+            await lease.release()
 
     return StreamingResponse(
-        response.aiter_raw(),
+        stream_content(),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{job_id}.pdf"'},
-        background=BackgroundTask(close),
     )
