@@ -7,6 +7,7 @@ Iatreon is an privacy-first AI-doctor platform, aiming to be error-free. It uses
 > professional medical advice, diagnosis, or treatment. Do not use it for
 > emergencies.
 
+<img width="1286" height="650" alt="image" src="https://github.com/user-attachments/assets/9f4c49ad-1746-4cec-abdf-6346e7c735ed" />
 
 https://github.com/user-attachments/assets/7c4aabfa-eb12-439c-a3ad-fd4d7255f691
 
